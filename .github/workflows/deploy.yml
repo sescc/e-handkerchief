@@ -1,0 +1,64 @@
+name: Deploy to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install TypeScript
+        run: npm install -g typescript
+
+      - name: Compile TypeScript (app)
+        run: tsc
+
+      - name: Compile TypeScript (service worker)
+        run: tsc -p tsconfig.sw.json
+
+      - name: Prepare deploy directory
+        run: |
+          mkdir -p _site
+          cp index.html app.css manifest.webmanifest sw.js _site/
+          cp -r src _site/src
+          cp -r icons _site/icons
+          # Ensure Jekyll processing is disabled on the deployed site
+          touch _site/.nojekyll
+          # Remove TypeScript sources from deploy (keep only compiled JS)
+          find _site/src -name '*.ts' -delete
+          rm -f _site/src/*.map _site/src/**/*.map 2>/dev/null || true
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

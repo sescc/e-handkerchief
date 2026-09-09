@@ -1,0 +1,871 @@
+{
+  "pbtResults": {},
+  "executionHistory": {
+    "1.1. Initialise project with `npm create vite@latest` using the `svelte-ts` template": [
+      {
+        "executionId": "0cec3969-9828-49d7-9b38-d87b21ab9ddc",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1788926914363
+      },
+      {
+        "executionId": "0cec3969-9828-49d7-9b38-d87b21ab9ddc",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1788926966941
+      }
+    ],
+    "1.2. Install runtime dependencies: `idb`, `vite-plugin-pwa`, `workbox-window`": [
+      {
+        "executionId": "0cec3969-9828-49d7-9b38-d87b21ab9ddc",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1788926914759
+      }
+    ],
+    "1.3. Install dev dependencies: `vitest`, `@vitest/coverage-v8`, `@svelte-testing-library/svelte`, `playwright`, `@playwright/test`, `fast-check`, `eslint`, `eslint-plugin-svelte`, `typescript-eslint`": [
+      {
+        "executionId": "0cec3969-9828-49d7-9b38-d87b21ab9ddc",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1788926915199
+      }
+    ],
+    "1.4. Configure `vite.config.ts` with `vite-plugin-pwa` using `injectManifest` strategy and a placeholder service worker entry point": [
+      {
+        "executionId": "0cec3969-9828-49d7-9b38-d87b21ab9ddc",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1788926915586
+      }
+    ],
+    "1.5. Configure `tsconfig.json` with strict mode and path aliases (`$lib`, `$stores`, `$services`, `$components`, `$routes`)": [
+      {
+        "executionId": "0cec3969-9828-49d7-9b38-d87b21ab9ddc",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1788926915822
+      }
+    ],
+    "1.6. Configure `eslint.config.js` with Svelte and TypeScript rules": [
+      {
+        "executionId": "0cec3969-9828-49d7-9b38-d87b21ab9ddc",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1788926916024
+      }
+    ],
+    "1.7. Scaffold directory structure: `src/lib/services/`, `src/lib/stores/`, `src/lib/components/`, `src/routes/`, `src/sw/`, `src/types/`, `static/icons/`": [
+      {
+        "executionId": "0cec3969-9828-49d7-9b38-d87b21ab9ddc",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1788926916230
+      }
+    ],
+    "1.8. Create `src/types/index.ts` exporting all shared TypeScript interfaces (`Note`, `NoteTimestamp`, `NoteLocation`, `MediaItem`, `AppSettings`, `EmailJob`, `CloudUploadJob`)": [
+      {
+        "executionId": "0cec3969-9828-49d7-9b38-d87b21ab9ddc",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1788926916502
+      }
+    ],
+    "1.9. Create base `src/app.css` with CSS custom properties for colour palette, spacing scale, and `prefers-color-scheme` dark-mode overrides": [
+      {
+        "executionId": "0cec3969-9828-49d7-9b38-d87b21ab9ddc",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1788926916758
+      }
+    ],
+    "1.10. Create `src/App.svelte` shell that imports the router and global CSS; verify `npm run dev`, `npm run build`, and `npm test` all run without errors": [
+      {
+        "executionId": "0cec3969-9828-49d7-9b38-d87b21ab9ddc",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1788926917049
+      }
+    ],
+    "2.1. Create `src/lib/services/db.ts` that opens the IndexedDB database (`e-handkerchief-db`, version 1) using `openDB` from `idb`": [
+      {
+        "executionId": "0cec3969-9828-49d7-9b38-d87b21ab9ddc",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1788926917336
+      }
+    ],
+    "2.2. Define the `notes` object store keyed on `id` with a `createdAt` numeric index; define `emailJobs`, `cloudUploadJobs` (both keyed on `id` with a `status` index), and `settings` stores": [
+      {
+        "executionId": "0cec3969-9828-49d7-9b38-d87b21ab9ddc",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1788926917608
+      }
+    ],
+    "2.3. Implement `save(note: Note): Promise<void>` — writes to the `notes` store": [
+      {
+        "executionId": "0cec3969-9828-49d7-9b38-d87b21ab9ddc",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1788926917915
+      }
+    ],
+    "2.4. Implement `get(id: string): Promise<Note | undefined>` — reads by primary key": [
+      {
+        "executionId": "0cec3969-9828-49d7-9b38-d87b21ab9ddc",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1788926918146
+      }
+    ],
+    "2.5. Implement `listAll(): Promise<Note[]>` — retrieves all notes via the `createdAt` index in descending order": [
+      {
+        "executionId": "0cec3969-9828-49d7-9b38-d87b21ab9ddc",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1788926918358
+      }
+    ],
+    "2.6. Implement `delete(id: string): Promise<void>` — removes the note record and all associated media blobs": [
+      {
+        "executionId": "0cec3969-9828-49d7-9b38-d87b21ab9ddc",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1788926918599
+      }
+    ],
+    "2.7. Write unit tests in `src/lib/services/noteStore.test.ts` using `fake-indexeddb`: save/get round-trip, `listAll` newest-first, `delete` removes the note, `get` returns `undefined` for missing ID, save with `navigator.onLine === false` resolves successfully": [
+      {
+        "executionId": "0cec3969-9828-49d7-9b38-d87b21ab9ddc",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1788926918826
+      }
+    ],
+    "3.1. Create `src/lib/stores/settingsStore.ts`": [
+      {
+        "executionId": "0cec3969-9828-49d7-9b38-d87b21ab9ddc",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1788926919073
+      }
+    ],
+    "3.2. Implement `load(): Promise<AppSettings>` — reads from the `settings` store and merges with hardcoded defaults for any absent key (`transcriptionEnabled: false`, `emailSummaryEnabled: false`, `emailSummaryRecipient: null`, `cloudBackupProvider: null`, `cloudBackupToken: null`, `notificationPermissionRequested: false`)": [
+      {
+        "executionId": "0cec3969-9828-49d7-9b38-d87b21ab9ddc",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1788926919302
+      }
+    ],
+    "3.3. Implement `save(patch: Partial<AppSettings>): Promise<void>` — merges patch into current state and writes to IndexedDB; must resolve within 500 ms": [
+      {
+        "executionId": "0cec3969-9828-49d7-9b38-d87b21ab9ddc",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1788926919528
+      }
+    ],
+    "3.4. Expose `current` as a Svelte `writable` store initialised from `load()` output and updated on every successful `save`": [
+      {
+        "executionId": "0cec3969-9828-49d7-9b38-d87b21ab9ddc",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1788926919748
+      }
+    ],
+    "3.5. Write unit tests in `src/lib/stores/settingsStore.test.ts` using `fake-indexeddb`: `load` on empty store returns all defaults, partial data merges defaults for missing keys, `save` persists a patch, `current` store updates after `save`": [
+      {
+        "executionId": "0cec3969-9828-49d7-9b38-d87b21ab9ddc",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1788926920087
+      }
+    ],
+    "4.1. Create `src/lib/router.ts` exporting a `currentRoute` Svelte readable store and a `navigate(path: string)` helper": [
+      {
+        "executionId": "0cec3969-9828-49d7-9b38-d87b21ab9ddc",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1788926920305
+      }
+    ],
+    "4.2. Parse `window.location.hash` on load and on `hashchange` events; extract named parameters (e.g., `:id` from `#/note/:id`)": [
+      {
+        "executionId": "0cec3969-9828-49d7-9b38-d87b21ab9ddc",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1788926920545
+      }
+    ],
+    "4.3. Export a `RouteParams` readable store providing the current route name and any extracted parameters": [
+      {
+        "executionId": "0cec3969-9828-49d7-9b38-d87b21ab9ddc",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1788926920768
+      }
+    ],
+    "4.4. Create `src/components/Router.svelte` that reactively renders the correct route component based on `currentRoute`": [
+      {
+        "executionId": "0cec3969-9828-49d7-9b38-d87b21ab9ddc",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1788926921005
+      }
+    ],
+    "4.5. Create stub route components: `CaptureScreen.svelte`, `JournalScreen.svelte`, `NoteDetailScreen.svelte`, `SettingsScreen.svelte` under `src/routes/`": [
+      {
+        "executionId": "0cec3969-9828-49d7-9b38-d87b21ab9ddc",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1788926921234
+      }
+    ],
+    "4.6. Create `src/components/NavBar.svelte` with persistent links to `#/journal` and `#/settings`, a prominent capture button linking to `#/`, and `aria-current=\"page\"` on the active link": [
+      {
+        "executionId": "0cec3969-9828-49d7-9b38-d87b21ab9ddc",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1788926921462
+      }
+    ],
+    "4.7. Mount `NavBar` and `Router` in `src/App.svelte`": [
+      {
+        "executionId": "0cec3969-9828-49d7-9b38-d87b21ab9ddc",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1788926921650
+      }
+    ],
+    "4.8. Write unit tests in `src/lib/router.test.ts`: `#/` → `capture`, `#/journal` → `journal`, `#/note/abc-123` → `note` with `id` param, unknown hash → `capture` fallback": [
+      {
+        "executionId": "0cec3969-9828-49d7-9b38-d87b21ab9ddc",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1788926921982
+      }
+    ],
+    "5.1. Create `src/lib/services/geoService.ts`": [
+      {
+        "executionId": "0cec3969-9828-49d7-9b38-d87b21ab9ddc",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1788926922298
+      }
+    ],
+    "5.2. Implement `getCurrentPosition(): Promise<NoteLocation | null>` — calls `navigator.geolocation.getCurrentPosition` with `timeout: 10000`, `maximumAge: 0`; resolves with `null` on `PERMISSION_DENIED`, `POSITION_UNAVAILABLE`, or `TIMEOUT`; always settles within 10 seconds": [
+      {
+        "executionId": "0cec3969-9828-49d7-9b38-d87b21ab9ddc",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1788926922587
+      }
+    ],
+    "5.3. Export a `geoError` readable Svelte store surfacing the latest error type: `\"denied\" | \"timeout\" | \"unavailable\" | null`": [
+      {
+        "executionId": "0cec3969-9828-49d7-9b38-d87b21ab9ddc",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1788926922828
+      }
+    ],
+    "5.4. Implement `reverseGeocode(lat: number, lng: number): Promise<string | null>` — fetch Nominatim `reverse?format=jsonv2`, return `display_name` truncated to 100 characters or `null` on any error; never throw": [
+      {
+        "executionId": "0cec3969-9828-49d7-9b38-d87b21ab9ddc",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1788926923053
+      }
+    ],
+    "5.5. Write unit tests in `src/lib/services/geoService.test.ts` mocking `navigator.geolocation` and `fetch`: success path, `PERMISSION_DENIED` → `null` + `\"denied\"` error, timeout within 10 s (fake timers), Nominatim 200 response, network error → `null`, address truncated to 100 chars": [
+      {
+        "executionId": "0cec3969-9828-49d7-9b38-d87b21ab9ddc",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1788926923313
+      }
+    ],
+    "6.1. Create `src/lib/services/mediaService.ts`; define and export custom error classes: `MediaUnsupportedError`, `FileSizeError`, `UnsupportedFormatError`, `MicrophoneDeniedError`": [
+      {
+        "executionId": "0cec3969-9828-49d7-9b38-d87b21ab9ddc",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1788926923540
+      }
+    ],
+    "6.2. Implement `startAudioRecording(): Promise<AudioRecordingHandle>` — calls `getUserMedia({ audio: true })`, creates a `MediaRecorder`, returns a handle with `result: Promise<Blob>`, `elapsedSeconds: Readable<number>`, and `stop()`; auto-stops at 600 seconds; throws `MediaUnsupportedError` if `MediaRecorder` is unavailable": [
+      {
+        "executionId": "0cec3969-9828-49d7-9b38-d87b21ab9ddc",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1788926923742
+      }
+    ],
+    "6.3. Implement `capturePhoto()` and `captureVideo()` — create hidden `<input type=\"file\" capture=\"environment\">` elements, resolve with the validated `File` Blob": [
+      {
+        "executionId": "0cec3969-9828-49d7-9b38-d87b21ab9ddc",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1788926923976
+      }
+    ],
+    "6.4. Implement `pickFromLibrary(): Promise<Blob>` — `<input type=\"file\">` accepting JPEG, PNG, GIF, WEBP, MP4, MOV without `capture`": [
+      {
+        "executionId": "0cec3969-9828-49d7-9b38-d87b21ab9ddc",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1788926924202
+      }
+    ],
+    "6.5. Implement `generateThumbnail(source: Blob): Promise<Blob>` — draw onto an 80×80 canvas and export as `image/jpeg`; for video, seek to 0 and capture first frame": [
+      {
+        "executionId": "0cec3969-9828-49d7-9b38-d87b21ab9ddc",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1788926924445
+      }
+    ],
+    "6.6. Implement shared `validateMedia(blob: Blob): void` — throws `FileSizeError` for > 100 MB or `UnsupportedFormatError` for disallowed MIME types before any blob is persisted": [
+      {
+        "executionId": "0cec3969-9828-49d7-9b38-d87b21ab9ddc",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1788926925040
+      }
+    ],
+    "6.7. Write unit tests in `src/lib/services/mediaService.test.ts` mocking `navigator.mediaDevices`, `MediaRecorder`, and `HTMLInputElement`: recording handle/stop, auto-stop at 600 s (fake timers), `FileSizeError` for 101 MB, `UnsupportedFormatError` for `image/bmp`, all six allowed MIME types accepted, `MediaUnsupportedError` when `MediaRecorder` unavailable": [
+      {
+        "executionId": "0cec3969-9828-49d7-9b38-d87b21ab9ddc",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1788926925376
+      }
+    ],
+    "7.1. Implement `src/routes/CaptureScreen.svelte`; on mount, record `NoteTimestamp` (local ISO string + UTC offset) and call `GeoService.getCurrentPosition()` with a 10-second deadline; show a spinner while `locationStatus === \"loading\"`": [
+      {
+        "executionId": "0cec3969-9828-49d7-9b38-d87b21ab9ddc",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1788926925598
+      }
+    ],
+    "7.2. Render a `<textarea>` with a live character counter (`2000 - text.length` remaining); stop accepting input at 2000 characters": [
+      {
+        "executionId": "0cec3969-9828-49d7-9b38-d87b21ab9ddc",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1788926925819
+      }
+    ],
+    "7.3. Render a mic button that calls `MediaService.startAudioRecording()`; show recording indicator and elapsed-time counter; attach the resulting `AudioMediaItem` on stop": [
+      {
+        "executionId": "0cec3969-9828-49d7-9b38-d87b21ab9ddc",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1788926926074
+      }
+    ],
+    "7.4. Render a camera button that calls `capturePhoto()` or `captureVideo()` and a library picker button calling `pickFromLibrary()`; generate thumbnails and display inline previews (≥ 80×80 px)": [
+      {
+        "executionId": "0cec3969-9828-49d7-9b38-d87b21ab9ddc",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1788926926301
+      }
+    ],
+    "7.5. Display inline error messages for `FileSizeError`, `UnsupportedFormatError`, `MicrophoneDeniedError`, and `MediaUnsupportedError` without clearing existing media items": [
+      {
+        "executionId": "0cec3969-9828-49d7-9b38-d87b21ab9ddc",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1788926926538
+      }
+    ],
+    "7.6. Implement the save button: validate at least one `mediaItem` is present; call `NoteStore.save()`; fire optional post-save side-effects (transcription, email queue, cloud sync) without blocking navigation; navigate to `#/journal`": [
+      {
+        "executionId": "0cec3969-9828-49d7-9b38-d87b21ab9ddc",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1788926926759
+      }
+    ],
+    "7.7. Show \"Please add at least one item before saving.\" when save is attempted with no media items; disable save button and show a spinner while `isSaving` is true": [
+      {
+        "executionId": "0cec3969-9828-49d7-9b38-d87b21ab9ddc",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1788926926994
+      }
+    ],
+    "7.8. Write component tests in `src/routes/CaptureScreen.test.ts`: no-media save shows error without calling `NoteStore.save`, text item save navigates to `#/journal`, location spinner appears while loading, textarea truncates at 2000 chars, character counter is correct": [
+      {
+        "executionId": "0cec3969-9828-49d7-9b38-d87b21ab9ddc",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1788926927242
+      }
+    ],
+    "8.1. Implement `src/routes/JournalScreen.svelte`; call `NoteStore.listAll()` on mount and on each `hashchange` navigation to `#/journal`": [
+      {
+        "executionId": "0cec3969-9828-49d7-9b38-d87b21ab9ddc",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1788926927461
+      }
+    ],
+    "8.2. Render each note as an `<article>` with timestamp formatted as `\"Day Mon DD, YYYY HH:MM AM/PM\"` and location as resolved address (≤ 100 chars) or `±DD.DDDDD, ±DDD.DDDDD`": [
+      {
+        "executionId": "0cec3969-9828-49d7-9b38-d87b21ab9ddc",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1788926927637
+      }
+    ],
+    "8.3. Render full text content with `white-space: pre-wrap`, `<audio controls>` for audio (object URL src), `<img>` thumbnail for photos, and `<video controls>` with poster for videos": [
+      {
+        "executionId": "0cec3969-9828-49d7-9b38-d87b21ab9ddc",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1788926927847
+      }
+    ],
+    "8.4. On any media load error, render a grey placeholder `<div>` with \"Media unavailable\" label without hiding the rest of the entry": [
+      {
+        "executionId": "0cec3969-9828-49d7-9b38-d87b21ab9ddc",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1788926928012
+      }
+    ],
+    "8.5. Wrap each note entry in an `<a>` linking to `#/note/{note.id}`; revoke object URLs on component destroy": [
+      {
+        "executionId": "0cec3969-9828-49d7-9b38-d87b21ab9ddc",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1788926928175
+      }
+    ],
+    "8.6. Render empty-state message \"No notes yet — tap + to capture your first.\" when the note list is empty": [
+      {
+        "executionId": "0cec3969-9828-49d7-9b38-d87b21ab9ddc",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1788926928326
+      }
+    ],
+    "8.7. Write component tests in `src/routes/JournalScreen.test.ts`: newest-first order, empty-state message, link to `#/note/{id}`, correct timestamp format, media unavailable placeholder on `onerror`": [
+      {
+        "executionId": "0cec3969-9828-49d7-9b38-d87b21ab9ddc",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1788926928513
+      }
+    ],
+    "9.1. Implement `src/routes/NoteDetailScreen.svelte`; on mount, read the `id` parameter from `RouteParams` and call `NoteStore.get(id)`; show a loading indicator while fetching": [
+      {
+        "executionId": "0cec3969-9828-49d7-9b38-d87b21ab9ddc",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1788926928668
+      }
+    ],
+    "9.2. When `status === \"found\"`, render: timestamp, location, `<audio controls>` with object-URL src, `<img>` at full displayable resolution, `<video controls>` with poster thumbnail, text with `white-space: pre-wrap`, and `transcription` if present": [
+      {
+        "executionId": "0cec3969-9828-49d7-9b38-d87b21ab9ddc",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1788926928834
+      }
+    ],
+    "9.3. On any media load error, show a grey placeholder with \"Media unavailable\" without hiding other note content": [
+      {
+        "executionId": "0cec3969-9828-49d7-9b38-d87b21ab9ddc",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1788926929017
+      }
+    ],
+    "9.4. When `status === \"not-found\"`, display \"Note not found\" and a \"Go to Journal\" button linking to `#/journal`": [
+      {
+        "executionId": "0cec3969-9828-49d7-9b38-d87b21ab9ddc",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1788926929177
+      }
+    ],
+    "9.5. Render a visible \"Back to Journal\" button that navigates to `#/journal`; revoke object URLs on component destroy": [
+      {
+        "executionId": "0cec3969-9828-49d7-9b38-d87b21ab9ddc",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1788926929861
+      }
+    ],
+    "9.6. Write component tests in `src/routes/NoteDetailScreen.test.ts`: renders note on `get` resolve, \"Note not found\" on `undefined`, \"Back to Journal\" navigates correctly, media unavailable placeholder on `onerror`": [
+      {
+        "executionId": "0cec3969-9828-49d7-9b38-d87b21ab9ddc",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1788926930144
+      }
+    ],
+    "10.1. Create `src/sw/sw.ts`; import and call `precacheAndRoute` with `self.__WB_MANIFEST`; call `skipWaiting()` and `clientsClaim()` from `workbox-core`": [
+      {
+        "executionId": "0cec3969-9828-49d7-9b38-d87b21ab9ddc",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1788926930360
+      }
+    ],
+    "10.2. Register a `NetworkFirst` runtime route for `https://nominatim.openstreetmap.org/` with a 7-day cache, 50-entry limit, and `networkTimeoutSeconds: 5`": [
+      {
+        "executionId": "0cec3969-9828-49d7-9b38-d87b21ab9ddc",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1788926930580
+      }
+    ],
+    "10.3. Register `BackgroundSyncPlugin`-backed queues named `email-sync` and `cloud-sync` for the email relay and Google Drive upload endpoints respectively": [
+      {
+        "executionId": "0cec3969-9828-49d7-9b38-d87b21ab9ddc",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1788926930815
+      }
+    ],
+    "10.4. Add a catch handler returning `new Response(\"Offline – resource unavailable\", { status: 503 })` for any uncached navigation or asset request when offline": [
+      {
+        "executionId": "0cec3969-9828-49d7-9b38-d87b21ab9ddc",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1788926931061
+      }
+    ],
+    "10.5. Update `vite.config.ts` to point `vite-plugin-pwa`'s `srcDir` and `filename` to `src/sw/sw.ts` with correct `injectManifest` options": [
+      {
+        "executionId": "0cec3969-9828-49d7-9b38-d87b21ab9ddc",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1788926931337
+      }
+    ],
+    "10.6. Implement the update-available banner in `src/App.svelte` using `workbox-window`'s `Workbox` class: listen for `waiting` event, render \"New version available — tap to reload\" banner, call `wb.messageSkipWaiting()` then `location.reload()` on tap": [
+      {
+        "executionId": "0cec3969-9828-49d7-9b38-d87b21ab9ddc",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1788926931551
+      }
+    ],
+    "10.7. Add a `navigator.onLine` fallback in `src/App.svelte` that calls `emailQueue.flush()` and `cloudSyncService.uploadPending()` on the `online` event for browsers without Background Sync": [
+      {
+        "executionId": "0cec3969-9828-49d7-9b38-d87b21ab9ddc",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1788926931760
+      }
+    ],
+    "10.8. Verify `npm run build` produces `dist/sw.js` with an injected precache manifest": [
+      {
+        "executionId": "0cec3969-9828-49d7-9b38-d87b21ab9ddc",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1788926932013
+      }
+    ],
+    "11.1. Configure `vite-plugin-pwa` (or create `static/manifest.webmanifest`) with `name: \"e-Handkerchief\"`, `short_name: \"e-HK\"`, `start_url: \"/#/\"`, `display: \"standalone\"`, matching `background_color` and `theme_color`, and `lang: \"en\"`": [
+      {
+        "executionId": "0cec3969-9828-49d7-9b38-d87b21ab9ddc",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1788926932207
+      }
+    ],
+    "11.2. Add a `shortcuts` array entry: `{ \"name\": \"New Note\", \"short_name\": \"Capture\", \"url\": \"/#/\", \"icons\": [{ \"src\": \"/icons/shortcut-capture.png\", \"sizes\": \"192x192\" }] }`": [
+      {
+        "executionId": "0cec3969-9828-49d7-9b38-d87b21ab9ddc",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1788926932419
+      }
+    ],
+    "11.3. Create or source an SVG master icon; export PNG icons at sizes 72, 96, 128, 144, 152, 192, 384, and 512 px": [
+      {
+        "executionId": "0cec3969-9828-49d7-9b38-d87b21ab9ddc",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1788926932600
+      }
+    ],
+    "11.4. Create `static/icons/shortcut-capture.png` at 192×192 px, `static/favicon.ico`, and `static/favicon.svg`": [
+      {
+        "executionId": "0cec3969-9828-49d7-9b38-d87b21ab9ddc",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1788926932853
+      }
+    ],
+    "11.5. Add `<link rel=\"manifest\" href=\"/manifest.webmanifest\">` and `<meta name=\"theme-color\">` to `index.html`": [
+      {
+        "executionId": "0cec3969-9828-49d7-9b38-d87b21ab9ddc",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1788926933109
+      }
+    ],
+    "11.6. Verify the manifest passes Lighthouse PWA checks: installable, correct icon sizes, `shortcuts` entry present, `start_url` is `\"/#/\"`": [
+      {
+        "executionId": "0cec3969-9828-49d7-9b38-d87b21ab9ddc",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1788926933345
+      }
+    ],
+    "12.1. Create `src/lib/services/transcriptionService.ts`; detect API availability via `window.SpeechRecognition ?? window.webkitSpeechRecognition`; expose `isSupported: boolean`": [
+      {
+        "executionId": "0cec3969-9828-49d7-9b38-d87b21ab9ddc",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1788926933552
+      }
+    ],
+    "12.2. Implement `transcribe(audioBlob: Blob): Promise<string | null>` — if unsupported, resolve immediately with `null`; create a `SpeechRecognition` instance with `continuous: false`, `interimResults: false`; resolve with the first `result` transcript or `null` on `error`, `end` without result, or 30-second timeout; never reject": [
+      {
+        "executionId": "0cec3969-9828-49d7-9b38-d87b21ab9ddc",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1788926933812
+      }
+    ],
+    "12.3. Write unit tests in `src/lib/services/transcriptionService.test.ts` mocking `SpeechRecognition`: success returns transcript, `error` event resolves `null`, no result within 30 s resolves `null` (fake timers), `isSupported` false when API undefined": [
+      {
+        "executionId": "0cec3969-9828-49d7-9b38-d87b21ab9ddc",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1788926934042
+      }
+    ],
+    "12.4. Integrate into `CaptureScreen.svelte`: after `NoteStore.save()`, if `transcriptionEnabled && isSupported`, call `transcribe()` and patch the note; show a 5-second auto-dismissing toast on failure": [
+      {
+        "executionId": "0cec3969-9828-49d7-9b38-d87b21ab9ddc",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1788926934292
+      }
+    ],
+    "12.5. Verify all unit tests pass": [
+      {
+        "executionId": "0cec3969-9828-49d7-9b38-d87b21ab9ddc",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1788926934494
+      }
+    ],
+    "13.1. Create `src/lib/services/emailQueue.ts`": [
+      {
+        "executionId": "0cec3969-9828-49d7-9b38-d87b21ab9ddc",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1788926934722
+      }
+    ],
+    "13.2. Implement `enqueue(note: Note, recipient: string): Promise<void>` — build an `EmailJob` (UUID, `status: \"pending\"`, `attempts: 0`), compose `subject` and `bodyText`, populate `attachmentRefs`, write to `emailJobs` IndexedDB store": [
+      {
+        "executionId": "0cec3969-9828-49d7-9b38-d87b21ab9ddc",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1788926934964
+      }
+    ],
+    "13.3. Implement `flush(): Promise<void>` — query all `\"pending\"` jobs; for each, mark `\"in-flight\"`, increment `attempts`, attempt delivery (POST to relay or `mailto:` fallback); on success remove/mark delivered; on failure, if `attempts >= 3` mark `\"failed\"` and emit a toast, otherwise reset to `\"pending\"`; no-op when no pending jobs": [
+      {
+        "executionId": "0cec3969-9828-49d7-9b38-d87b21ab9ddc",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1788926935234
+      }
+    ],
+    "13.4. Export `emailQueue` as a singleton": [
+      {
+        "executionId": "0cec3969-9828-49d7-9b38-d87b21ab9ddc",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1788926935446
+      }
+    ],
+    "13.5. Write unit tests in `src/lib/services/emailQueue.test.ts` using `fake-indexeddb` and mocked `fetch`: `enqueue` persists `\"pending\"` job, successful flush removes job, 3 failures → `\"failed\"`, no pending jobs is a no-op, `attempts` never exceeds 3": [
+      {
+        "executionId": "0cec3969-9828-49d7-9b38-d87b21ab9ddc",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1788926935660
+      }
+    ],
+    "14.1. Create `src/lib/services/notificationService.ts`": [
+      {
+        "executionId": "0cec3969-9828-49d7-9b38-d87b21ab9ddc",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1788926935893
+      }
+    ],
+    "14.2. Implement `requestAndRegister(): Promise<void>` — return immediately if `notificationPermissionRequested` is `true`; call `Notification.requestPermission()`; if granted, call `registration.showNotification(\"e-Handkerchief\", { tag: \"capture-shortcut\", requireInteraction: true, actions: [{ action: \"open-capture\", title: \"New Note\" }] })`; always call `settingsStore.save({ notificationPermissionRequested: true })` after any outcome": [
+      {
+        "executionId": "0cec3969-9828-49d7-9b38-d87b21ab9ddc",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1788926936186
+      }
+    ],
+    "14.3. Handle `notificationclick` in `src/sw/sw.ts`: open `/#/` via `clients.openWindow` for any action": [
+      {
+        "executionId": "0cec3969-9828-49d7-9b38-d87b21ab9ddc",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1788926936385
+      }
+    ],
+    "14.4. Call `notificationService.requestAndRegister()` from `src/App.svelte` after `SettingsStore.load()` resolves, only when `window.matchMedia(\"(display-mode: standalone)\").matches`": [
+      {
+        "executionId": "0cec3969-9828-49d7-9b38-d87b21ab9ddc",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1788926936730
+      }
+    ],
+    "14.5. Write unit tests in `src/lib/services/notificationService.test.ts` mocking `Notification` and SW registration: shows prompt when flag is false, no-op when flag is true, denial sets flag to `true`, `showNotification` uses correct `tag` and `requireInteraction`": [
+      {
+        "executionId": "0cec3969-9828-49d7-9b38-d87b21ab9ddc",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1788926936986
+      }
+    ],
+    "15.1. Create `src/lib/services/cloudSyncService.ts`": [
+      {
+        "executionId": "0cec3969-9828-49d7-9b38-d87b21ab9ddc",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1788926937254
+      }
+    ],
+    "15.2. Implement `connect(): Promise<void>` — generate PKCE `code_verifier`/`code_challenge` via `crypto.getRandomValues` and SHA-256; open Google OAuth2 authorisation URL; exchange code for tokens; store `OAuthToken` via `settingsStore.save`; show error toast on failure": [
+      {
+        "executionId": "0cec3969-9828-49d7-9b38-d87b21ab9ddc",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1788926937538
+      }
+    ],
+    "15.3. Implement `disconnect(): Promise<void>` — POST to revoke endpoint; call `settingsStore.save({ cloudBackupToken: null, cloudBackupProvider: null })`": [
+      {
+        "executionId": "0cec3969-9828-49d7-9b38-d87b21ab9ddc",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1788926937770
+      }
+    ],
+    "15.4. Implement `uploadNote(note: Note): Promise<void>` — serialise note as JSON (blobs as base64 data URIs); POST to Drive upload API with bearer token; on failure, write a `CloudUploadJob` to IndexedDB and throw": [
+      {
+        "executionId": "0cec3969-9828-49d7-9b38-d87b21ab9ddc",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1788926938030
+      }
+    ],
+    "15.5. Implement `uploadPending(): Promise<void>` — retry pending `cloudUploadJobs` up to 3 times; mark `\"failed\"` after 3 attempts and show toast": [
+      {
+        "executionId": "0cec3969-9828-49d7-9b38-d87b21ab9ddc",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1788926938308
+      }
+    ],
+    "15.6. Implement `importAll(): Promise<{ imported: number; skipped: number }>` — list Drive `appDataFolder` files; skip any note whose `id` + `createdAt` already exists locally; save new notes via `NoteStore.save`": [
+      {
+        "executionId": "0cec3969-9828-49d7-9b38-d87b21ab9ddc",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1788926938581
+      }
+    ],
+    "15.7. Expose `connectionStatus` as a Svelte writable store (`\"connected\"` when a valid token is stored, `\"disconnected\"` otherwise)": [
+      {
+        "executionId": "0cec3969-9828-49d7-9b38-d87b21ab9ddc",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1788926938874
+      }
+    ],
+    "15.8. Write unit tests mocking `fetch` and `settingsStore`: `connect` stores token on success, `uploadNote` queues job on failure, `importAll` skips duplicate `id`+`createdAt`, `importAll` twice imports once, `uploadPending` marks `\"failed\"` after 3 attempts": [
+      {
+        "executionId": "0cec3969-9828-49d7-9b38-d87b21ab9ddc",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1788926939107
+      }
+    ],
+    "16.1. Implement `src/routes/SettingsScreen.svelte`; bind all controls reactively to `$settingsStore.current`": [
+      {
+        "executionId": "0cec3969-9828-49d7-9b38-d87b21ab9ddc",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1788926939345
+      }
+    ],
+    "16.2. Render Voice Transcription toggle (`<input type=\"checkbox\">`) bound to `transcriptionEnabled`; each `change` calls `settingsStore.save({ transcriptionEnabled })`": [
+      {
+        "executionId": "0cec3969-9828-49d7-9b38-d87b21ab9ddc",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1788926939641
+      }
+    ],
+    "16.3. Render Email Summary toggle bound to `emailSummaryEnabled`; render recipient text field (`<input type=\"email\">`, max 254 chars) bound to `emailSummaryRecipient`; disable field when `emailSummaryEnabled` is `false`": [
+      {
+        "executionId": "0cec3969-9828-49d7-9b38-d87b21ab9ddc",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1788926939884
+      }
+    ],
+    "16.4. Validate email address on `blur` using an RFC 5321-compatible regex; display inline error \"Invalid email address\" and do not call `settingsStore.save` if invalid": [
+      {
+        "executionId": "0cec3969-9828-49d7-9b38-d87b21ab9ddc",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1788926940100
+      }
+    ],
+    "16.5. Render Cloud Backup section with status badge (`\"Connected\"` / `\"Disconnected\"`) and a connect/disconnect button calling `cloudSyncService.connect()` or `cloudSyncService.disconnect()`": [
+      {
+        "executionId": "0cec3969-9828-49d7-9b38-d87b21ab9ddc",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1788926940316
+      }
+    ],
+    "16.6. Render \"Import from Cloud\" button calling `cloudSyncService.importAll()` and displaying a result toast `\"Imported {n} notes ({m} skipped)\"`": [
+      {
+        "executionId": "0cec3969-9828-49d7-9b38-d87b21ab9ddc",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1788926940966
+      }
+    ],
+    "16.7. On any `settingsStore.save` failure, show an error toast and revert the control to its previous value": [
+      {
+        "executionId": "0cec3969-9828-49d7-9b38-d87b21ab9ddc",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1788926941292
+      }
+    ],
+    "16.8. Write component tests in `src/routes/SettingsScreen.test.ts`: email field disabled when toggle off, enabled when on, invalid email shows error without save, valid email calls save with correct patch, toggle changes call save with correct patch": [
+      {
+        "executionId": "0cec3969-9828-49d7-9b38-d87b21ab9ddc",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1788926941582
+      }
+    ],
+    "17.1. Create `src/tests/properties/noteStore.property.test.ts` — **Property 1 (Round-trip fidelity):** use `fc.record` to generate arbitrary `Note` values; assert `save` then `get` returns a deep-equal copy (**Validates: Requirements 5.1**)": [
+      {
+        "executionId": "0cec3969-9828-49d7-9b38-d87b21ab9ddc",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1788926941872
+      }
+    ],
+    "17.2. Add **Property 2 (Journal order invariant)** to the same file: generate arrays of notes with distinct `createdAt` values; assert `listAll` returns them in non-increasing `createdAt` order (**Validates: Requirements 6.2**)": [
+      {
+        "executionId": "0cec3969-9828-49d7-9b38-d87b21ab9ddc",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1788926942110
+      }
+    ],
+    "17.3. Add **Property 3 (Offline save always succeeds)** to the same file: stub `navigator.onLine` to `false`; assert `save` resolves for any `Note` (**Validates: Requirements 5.1**)": [
+      {
+        "executionId": "0cec3969-9828-49d7-9b38-d87b21ab9ddc",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1788926942366
+      }
+    ],
+    "17.4. Create `src/tests/properties/emailQueue.property.test.ts` — **Property 4 (Email queue delivery convergence):** enqueue arbitrary job sets; assert no job has `status: \"pending\"` after at most 3 `flush` calls (**Validates: Requirements 8.4**)": [
+      {
+        "executionId": "0cec3969-9828-49d7-9b38-d87b21ab9ddc",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1788926942614
+      }
+    ],
+    "17.5. Create `src/tests/properties/settingsStore.property.test.ts` — **Property 5 (Settings defaults):** generate arbitrary `Partial<AppSettings>` subsets; assert `load` fills missing keys with documented defaults (**Validates: Requirements 12.10**)": [
+      {
+        "executionId": "0cec3969-9828-49d7-9b38-d87b21ab9ddc",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1788926942843
+      }
+    ],
+    "17.6. Create `src/tests/properties/textTruncation.property.test.ts` — **Property 6 (Text truncation):** generate arbitrary strings; assert `TextMediaItem.content.length <= 2000` after save (**Validates: Requirements 4.1**)": [
+      {
+        "executionId": "0cec3969-9828-49d7-9b38-d87b21ab9ddc",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1788926943150
+      }
+    ],
+    "17.7. Create `src/tests/properties/cloudSync.property.test.ts` — **Property 7 (Cloud import idempotency):** generate arbitrary note sets; assert `importAll` called twice yields the same local store state as once (**Validates: Requirements 11.6**)": [
+      {
+        "executionId": "0cec3969-9828-49d7-9b38-d87b21ab9ddc",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1788926943419
+      }
+    ],
+    "17.8. Run `npm test -- --reporter=verbose src/tests/properties`; verify all seven properties pass with at least 100 generated samples each": [
+      {
+        "executionId": "0cec3969-9828-49d7-9b38-d87b21ab9ddc",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1788926943655
+      }
+    ],
+    "18.1. Create `playwright.config.ts` targeting `http://localhost:5173` (dev) and `http://localhost:4173` (preview for SW tests); configure `webServer` to start `npm run preview`": [
+      {
+        "executionId": "0cec3969-9828-49d7-9b38-d87b21ab9ddc",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1788926943898
+      }
+    ],
+    "18.2. Create `tests/e2e/helpers/shims.ts` exporting `addBrowserShims(page)` — inject stubs for `navigator.geolocation.getCurrentPosition` (fixed coords after 100 ms), `MediaRecorder` (fires `dataavailable` with minimal Blob after 200 ms), and `SpeechRecognition` (fires `result` with `\"test transcript\"` after 500 ms)": [
+      {
+        "executionId": "0cec3969-9828-49d7-9b38-d87b21ab9ddc",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1788926944538
+      }
+    ],
+    "18.3. Write `tests/e2e/capture.spec.ts`: text note save → Journal entry visible; save with no media → validation message shown; save → navigate to detail view showing the text": [
+      {
+        "executionId": "0cec3969-9828-49d7-9b38-d87b21ab9ddc",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1788926944899
+      }
+    ],
+    "18.4. Write `tests/e2e/offline.spec.ts`: go offline → save text note → go online → note in Journal; navigate while offline → Journal loads from cache (no browser error page)": [
+      {
+        "executionId": "0cec3969-9828-49d7-9b38-d87b21ab9ddc",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1788926945634
+      }
+    ],
+    "18.5. Write `tests/e2e/settings.spec.ts`: enable Email Summary → enter `\"test@example.com\"` → reload → toggle on and address retained; enter `\"notanemail\"` → tab away → inline error visible": [
+      {
+        "executionId": "0cec3969-9828-49d7-9b38-d87b21ab9ddc",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1788926946110
+      }
+    ],
+    "18.6. Write `tests/e2e/sw-update.spec.ts`: register second SW at same scope → \"New version available — tap to reload\" banner appears": [
+      {
+        "executionId": "0cec3969-9828-49d7-9b38-d87b21ab9ddc",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1788926946433
+      }
+    ],
+    "18.7. Run `npx playwright test`; verify all tests pass; add `playwright test` to `package.json` as `test:e2e` script": [
+      {
+        "executionId": "0cec3969-9828-49d7-9b38-d87b21ab9ddc",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1788926946783
+      }
+    ]
+  }
+}
