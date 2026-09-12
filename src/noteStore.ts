@@ -3,7 +3,7 @@
 // CRUD operations on Notes in IndexedDB.
 // ============================================================
 
-import { openDB, dbGet, dbPut, dbDelete, dbGetAll } from './db.js';
+import { openDB, dbGet, dbPut, dbDelete, dbGetAll, resetDBCache } from './db.js';
 import type { Note } from './types.js';
 
 export interface NoteStoreAPI {
@@ -17,10 +17,22 @@ export interface NoteStoreAPI {
   delete(id: string): Promise<void>;
 }
 
-export const noteStore: NoteStoreAPI = {
-  async save(note: Note): Promise<void> {
+async function saveWithRetry(note: Note): Promise<void> {
+  try {
     const db = await openDB();
     await dbPut(db, 'notes', note);
+  } catch {
+    // The cached connection may be stale (e.g. after a tab was killed).
+    // Reset the cache and try one more time with a fresh connection.
+    resetDBCache();
+    const db = await openDB();
+    await dbPut(db, 'notes', note);
+  }
+}
+
+export const noteStore: NoteStoreAPI = {
+  async save(note: Note): Promise<void> {
+    await saveWithRetry(note);
   },
 
   async get(id: string): Promise<Note | undefined> {

@@ -40,13 +40,40 @@ export function openDB(): Promise<IDBDatabase> {
       }
     };
 
+    req.onblocked = () => {
+      reject(new Error('Database open blocked by another open connection'));
+    };
+
     req.onsuccess = (event) => {
-      _db = (event.target as IDBOpenDBRequest).result;
-      resolve(_db);
+      const db = (event.target as IDBOpenDBRequest).result;
+
+      // If another tab/version upgrade requests it, close cleanly and clear cache
+      db.onversionchange = () => {
+        db.close();
+        _db = null;
+      };
+
+      // If the connection is abnormally closed (e.g. OS kills the tab on hang),
+      // clear the cache so the next call reopens a fresh connection.
+      // Guard with a cast — onclose is not in all lib.dom versions.
+      (db as IDBDatabase & { onclose?: (() => void) | null }).onclose = () => {
+        _db = null;
+      };
+
+      _db = db;
+      resolve(db);
     };
 
     req.onerror = () => reject(req.error);
   });
+}
+
+/**
+ * Reset the cached DB connection.
+ * The next `openDB()` call will open a fresh connection.
+ */
+export function resetDBCache(): void {
+  _db = null;
 }
 
 /**
@@ -77,11 +104,14 @@ export function dbPut<T>(
   key?: string
 ): Promise<void> {
   return new Promise((resolve, reject) => {
+    let reqError: DOMException | null = null;
     const tx = db.transaction(storeName, 'readwrite');
     const store = tx.objectStore(storeName);
     const req = key !== undefined ? store.put(value, key) : store.put(value);
-    req.onsuccess = () => resolve();
-    req.onerror = () => reject(req.error);
+    req.onerror = () => { reqError = req.error; };
+    tx.oncomplete = () => resolve();
+    tx.onabort = () => reject(reqError ?? tx.error ?? new Error('Transaction aborted'));
+    tx.onerror = () => reject(reqError ?? tx.error ?? new Error('Transaction error'));
   });
 }
 
@@ -94,10 +124,13 @@ export function dbDelete(
   key: string
 ): Promise<void> {
   return new Promise((resolve, reject) => {
+    let reqError: DOMException | null = null;
     const tx = db.transaction(storeName, 'readwrite');
     const req = tx.objectStore(storeName).delete(key);
-    req.onsuccess = () => resolve();
-    req.onerror = () => reject(req.error);
+    req.onerror = () => { reqError = req.error; };
+    tx.oncomplete = () => resolve();
+    tx.onabort = () => reject(reqError ?? tx.error ?? new Error('Transaction aborted'));
+    tx.onerror = () => reject(reqError ?? tx.error ?? new Error('Transaction error'));
   });
 }
 

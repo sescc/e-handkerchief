@@ -536,13 +536,12 @@ export function renderCapture(container: HTMLElement): () => void {
 
     try {
       await noteStore.save(note);
-    } catch {
+    } catch (err) {
       isSaving = false;
       updateSaveBtnState();
-      toastService.show(
-        'Could not save note — storage may be full. Please free up space and try again.',
-        8000
-      );
+      const detail = err instanceof Error ? err.message : String(err);
+      console.error('Note save failed:', err);
+      toastService.show(`Could not save note: ${detail}`, 8000);
       return;
     }
 
