@@ -56,9 +56,20 @@ From this folder:
    GitHub Pages origin, e.g.:
    ```toml
    [vars]
-   ALLOWED_ORIGIN = "https://YOUR_USERNAME.github.io"
+   ALLOWED_ORIGIN = "https://sescc.github.io"
    ```
    If left unset, the Worker allows all origins (`*`) — convenient for testing, less secure.
+
+   **Multiple origins:** `ALLOWED_ORIGIN` also accepts a **comma-separated list**, so you can
+   allow both your `github.io` origin and a future custom domain at the same time:
+   ```toml
+   [vars]
+   ALLOWED_ORIGIN = "https://sescc.github.io,https://notes.mydomain.com"
+   ```
+   The Worker reflects the request's `Origin` header back in `Access-Control-Allow-Origin` when it
+   matches one of the listed origins (and adds `Vary: Origin` so caches stay correct). This makes a
+   domain move seamless: add the new origin to the list and deploy, migrate traffic, then later
+   remove the old origin and deploy again — no downtime for either origin during the transition.
 
 5. **Deploy**
    ```bash
@@ -135,7 +146,8 @@ All responses include CORS headers.
 - The Groq API key is a **Cloudflare secret** (`wrangler secret put GROQ_API_KEY`). It is never in
   this source tree, so **this repo is safe to push publicly**.
 - Set `ALLOWED_ORIGIN` in `wrangler.toml` to restrict CORS to your PWA's origin so other sites
-  can't use your Worker (and your Groq quota).
+  can't use your Worker (and your Groq quota). A comma-separated list is supported for allowing
+  multiple origins (e.g. your `github.io` origin plus a custom domain).
 - `.dev.vars` (local secrets) is git-ignored — do not commit it.
 
 ---
