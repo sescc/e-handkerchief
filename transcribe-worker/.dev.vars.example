@@ -1,0 +1,2 @@
+# Copy to .dev.vars for local `wrangler dev` testing. NEVER commit .dev.vars.
+GROQ_API_KEY=your_groq_api_key_here

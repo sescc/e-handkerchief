@@ -30,6 +30,41 @@ Then open http://localhost:8080 in your browser.
 > ngrok http 8080
 > ```
 
+## Voice Transcription
+
+Voice notes can be turned into text in two ways.
+
+### How transcription works (two modes)
+
+- **Live (online):** When "Voice Transcription" is enabled in Settings and you record a voice note while online in a supporting browser (Chrome on Android), the note is transcribed live on-device via the Web Speech API as you speak. The audio is also saved.
+- **Deferred (offline / later):** If you record while offline (or live transcription isn't available), the audio is saved and the note is marked "transcription pending." Later, when online, open the note and tap "🎧 Transcribe voice" to transcribe the saved audio via your transcription server (Groq Whisper via a Cloudflare Worker). The transcript is appended to the note.
+
+### Setting up the transcription server (optional)
+
+Deferred/offline transcription requires a small backend proxy that holds the Groq API key securely. The key must never live in the PWA or its repo.
+
+- That backend lives in the `transcribe-worker/` folder in this repo (a Cloudflare Worker). See `transcribe-worker/README.md` for full setup.
+- Quick version: create a free Cloudflare account and a free Groq API key, then in `transcribe-worker/`:
+
+  ```sh
+  npm install
+  npx wrangler login
+  npx wrangler secret put GROQ_API_KEY
+  npx wrangler deploy
+  ```
+
+  Copy the resulting Worker URL.
+- In the PWA: **Settings → Transcription** → paste the Worker URL into "Transcription server URL".
+- Live transcription does NOT need this server — it only needs internet and a supporting browser.
+
+### Repo structure note
+
+The `transcribe-worker/` folder lives in this SAME repository (a monorepo) and is committed alongside the PWA.
+
+- The two parts deploy independently: the PWA deploys to GitHub Pages via the Actions workflow; the Worker deploys to Cloudflare via `wrangler deploy`. They share a repo but not a deploy pipeline.
+- The GitHub Pages workflow only publishes the PWA's own files (`index.html`, `app.css`, `manifest.webmanifest`, `sw.js`, `src/`, `icons/`); the `transcribe-worker/` folder is not part of the deployed site.
+- The repo contains NO secrets (the Groq key is a Cloudflare secret set via `wrangler secret put`), so the whole repo — worker subfolder included — is safe to push publicly.
+
 ## Deploy to GitHub Pages
 
 The app is designed to run from a **subpath** such as
@@ -80,5 +115,6 @@ e-Handkerchief/
 │       ├── journalScreen.ts
 │       ├── noteDetailScreen.ts
 │       └── settingsScreen.ts
-└── static/icons/           # PWA icon assets
+├── static/icons/           # PWA icon assets
+└── transcribe-worker/      # Cloudflare Worker: Groq Whisper transcription proxy (deploys separately via wrangler)
 ```

@@ -10,6 +10,8 @@ import { eventBus } from '../eventBus.js';
 import { toastService } from '../toastService.js';
 import { googleMapsUrl } from '../mapsLink.js';
 import { formatNoteTimestamp } from '../dateFormat.js';
+import { remoteTranscribe } from '../remoteTranscribe.js';
+import { settingsStore } from '../settingsStore.js';
 import type {
   Note,
   MediaItem,
@@ -141,6 +143,9 @@ export function renderNoteDetail(
     // Media items
     const mediaEl = document.createElement('div');
     mediaEl.className = 'note-detail-media';
+    // Append up-front so text items inserted via insertBefore(textEl, mediaEl)
+    // have a valid reference child.
+    contentEl.appendChild(mediaEl);
 
     for (const item of note.mediaItems) {
       if (item.type === 'text') {
@@ -193,14 +198,76 @@ export function renderNoteDetail(
       }
     }
 
-    contentEl.appendChild(mediaEl);
-
     // Transcription
     if (note.transcription) {
       const transEl = document.createElement('div');
       transEl.className = 'transcription-block';
       transEl.textContent = note.transcription;
       contentEl.appendChild(transEl);
+    }
+
+    // Transcribe affordance — only when there's audio and no transcript yet
+    // (or the note is explicitly pending/failed).
+    const audioItem = note.mediaItems.find(
+      (m): m is AudioMediaItem => m.type === 'audio'
+    );
+    const needsTranscribe =
+      !!audioItem &&
+      (note.transcriptionStatus === 'pending' ||
+        note.transcriptionStatus === 'failed' ||
+        !note.transcription);
+    if (audioItem && needsTranscribe) {
+      const panel = document.createElement('div');
+      panel.className = 'transcribe-panel';
+
+      const statusLine = document.createElement('div');
+      statusLine.className = 'transcribe-status settings-row-desc';
+      statusLine.textContent =
+        note.transcriptionStatus === 'failed'
+          ? 'Last transcription attempt failed.'
+          : 'Voice not yet transcribed.';
+      panel.appendChild(statusLine);
+
+      const transcribeBtn = document.createElement('button');
+      transcribeBtn.className = 'btn btn-ghost';
+      transcribeBtn.textContent = '🎧 Transcribe voice';
+      transcribeBtn.addEventListener('click', () => {
+        void (async () => {
+          if (!settingsStore.getCurrent().transcriptionServerUrl.trim()) {
+            toastService.show('Set a transcription server URL in Settings first.');
+            return;
+          }
+          if (!navigator.onLine) {
+            toastService.show('No internet connection — try again later.');
+            return;
+          }
+
+          transcribeBtn.disabled = true;
+          transcribeBtn.textContent = 'Transcribing…';
+
+          const result = await remoteTranscribe(audioItem.blob);
+          if (result.ok && result.text !== undefined) {
+            note.transcription = result.text;
+            note.transcriptionStatus = 'done';
+            note.updatedAt = Date.now();
+            await noteStore.save(note);
+            eventBus.emit('note:saved', note);
+            toastService.show('Transcription added');
+            renderNote(note);
+          } else {
+            note.transcriptionStatus = 'failed';
+            note.updatedAt = Date.now();
+            await noteStore.save(note);
+            eventBus.emit('note:saved', note);
+            toastService.show(result.error ?? 'Transcription failed');
+            transcribeBtn.disabled = false;
+            transcribeBtn.textContent = '🎧 Transcribe voice';
+          }
+        })();
+      });
+      panel.appendChild(transcribeBtn);
+
+      contentEl.appendChild(panel);
     }
   }
 

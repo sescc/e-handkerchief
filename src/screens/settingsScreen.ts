@@ -42,7 +42,8 @@ export function renderSettings(container: HTMLElement): () => void {
   transcriptionLabel.textContent = 'Voice Transcription';
   const transcriptionDesc = document.createElement('div');
   transcriptionDesc.className = 'settings-row-desc';
-  transcriptionDesc.textContent = 'Automatically transcribe voice recordings to text';
+  transcriptionDesc.textContent =
+    'Live transcription while recording (needs internet, Chrome on Android). Offline recordings can be transcribed later.';
   transcriptionLabelWrap.appendChild(transcriptionLabel);
   transcriptionLabelWrap.appendChild(transcriptionDesc);
   transcriptionRow.appendChild(transcriptionLabelWrap);
@@ -50,7 +51,48 @@ export function renderSettings(container: HTMLElement): () => void {
   const transcriptionToggle = buildToggle(current.transcriptionEnabled);
   transcriptionRow.appendChild(transcriptionToggle.wrapper);
   transcriptionSection.appendChild(transcriptionRow);
+
+  // --- Transcription server URL (optional) ---
+  const serverUrlGroup = document.createElement('div');
+  serverUrlGroup.className = 'form-group mt-sm';
+
+  const serverUrlLabel = document.createElement('label');
+  serverUrlLabel.className = 'form-label';
+  serverUrlLabel.textContent = 'Transcription server URL (optional)';
+  serverUrlGroup.appendChild(serverUrlLabel);
+
+  const serverUrlHelp = document.createElement('div');
+  serverUrlHelp.className = 'settings-row-desc';
+  serverUrlHelp.textContent =
+    'For transcribing offline recordings later via your Groq/Cloudflare Worker. Leave blank to use live transcription only.';
+  serverUrlGroup.appendChild(serverUrlHelp);
+
+  const serverUrlInput = document.createElement('input');
+  serverUrlInput.type = 'url';
+  serverUrlInput.className = 'form-input';
+  serverUrlInput.placeholder = 'https://ehk-transcribe.you.workers.dev';
+  serverUrlInput.value = current.transcriptionServerUrl;
+  serverUrlGroup.appendChild(serverUrlInput);
+
+  transcriptionSection.appendChild(serverUrlGroup);
   root.appendChild(transcriptionSection);
+
+  const onServerUrlBlur = async (): Promise<void> => {
+    const value = serverUrlInput.value.trim();
+    const prev = settingsStore.getCurrent().transcriptionServerUrl;
+    if (value === prev) return;
+    try {
+      await settingsStore.save({ transcriptionServerUrl: value });
+      serverUrlInput.value = value;
+    } catch {
+      serverUrlInput.value = prev;
+      toastService.show('Could not save setting');
+    }
+  };
+  serverUrlInput.addEventListener('blur', () => void onServerUrlBlur());
+  listenerCleanups.push(() =>
+    serverUrlInput.removeEventListener('blur', () => void onServerUrlBlur())
+  );
 
   const onTranscriptionChange = async (): Promise<void> => {
     const prev = settingsStore.getCurrent().transcriptionEnabled;
@@ -368,6 +410,9 @@ export function renderSettings(container: HTMLElement): () => void {
   // Subscribe to settings changes (keep controls in sync)
   unsubscribeSettings = settingsStore.onChange((settings: AppSettings) => {
     transcriptionToggle.input.checked = settings.transcriptionEnabled;
+    if (document.activeElement !== serverUrlInput) {
+      serverUrlInput.value = settings.transcriptionServerUrl;
+    }
     emailToggle.input.checked = settings.emailSummaryEnabled;
     recipientInput.disabled = !settings.emailSummaryEnabled;
     if (document.activeElement !== recipientInput) {
