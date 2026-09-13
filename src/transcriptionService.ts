@@ -1,23 +1,25 @@
 // ============================================================
 // e-Handkerchief — TranscriptionService
-// Web Speech API wrapper with 30-second timeout guard.
-//
-// Note: The Web Speech API processes live microphone input, not
-// pre-recorded Blobs. The audioBlob parameter is accepted for API
-// consistency but is not directly fed to SpeechRecognition —
-// recognition runs on live audio captured by the browser.
+// Live Web Speech API wrapper. Recognition runs concurrently with
+// microphone recording (the Web Speech API processes live mic input,
+// not pre-recorded Blobs), accumulating final results until stopped.
 // ============================================================
 
-export interface TranscriptionServiceAPI {
-  /**
-   * Attempt to transcribe audio. Resolves with the transcript string
-   * or null on timeout, error, or unsupported browser.
-   * Never rejects.
-   */
-  transcribe(audioBlob: Blob): Promise<string | null>;
+export interface LiveTranscriptionHandle {
+  /** Resolves with the accumulated final transcript when stop() is called (or null). */
+  readonly result: Promise<string | null>;
+  /** Stop live recognition and resolve `result`. */
+  stop(): void;
+}
 
-  /** True if the Web Speech API is available in this browser. */
+export interface TranscriptionServiceAPI {
   readonly isSupported: boolean;
+  /**
+   * Start live speech recognition. Call stop() when the recording stops.
+   * Accumulates final results; resolves with the combined transcript.
+   * Returns null result on error/unsupported.
+   */
+  startLive(): LiveTranscriptionHandle;
 }
 
 // ---------------------------------------------------------------------------
@@ -28,12 +30,14 @@ interface SpeechRecognitionResultLike {
 }
 interface SpeechRecognitionResultEntry {
   readonly [index: number]: SpeechRecognitionResultLike;
+  readonly isFinal: boolean;
 }
 interface SpeechRecognitionResultList {
   readonly [index: number]: SpeechRecognitionResultEntry;
   readonly length: number;
 }
 interface SpeechRecognitionEventLike {
+  readonly resultIndex: number;
   readonly results: SpeechRecognitionResultList;
 }
 interface SpeechRecognitionLike {
@@ -64,52 +68,76 @@ const SpeechRecognitionCtor: (new () => SpeechRecognitionLike) | undefined =
       }
   ).webkitSpeechRecognition;
 
+/** A no-op handle used when recognition is unsupported or fails to start. */
+function nullHandle(): LiveTranscriptionHandle {
+  return {
+    result: Promise.resolve(null),
+    stop(): void {
+      /* no-op */
+    },
+  };
+}
+
 export const transcriptionService: TranscriptionServiceAPI = {
   get isSupported(): boolean {
     return !!SpeechRecognitionCtor;
   },
 
-  transcribe(_audioBlob: Blob): Promise<string | null> {
-    if (!SpeechRecognitionCtor) return Promise.resolve(null);
+  startLive(): LiveTranscriptionHandle {
+    if (!SpeechRecognitionCtor) return nullHandle();
 
-    return new Promise((resolve) => {
-      const recognition = new SpeechRecognitionCtor();
-      recognition.continuous = false;
-      recognition.interimResults = false;
-      recognition.lang = navigator.language || 'en-US';
+    const recognition = new SpeechRecognitionCtor();
+    recognition.continuous = true;
+    recognition.interimResults = false;
+    recognition.lang = navigator.language || 'en-US';
 
-      let resolved = false;
-      const finish = (value: string | null): void => {
-        if (!resolved) {
-          resolved = true;
-          resolve(value);
-        }
-      };
-
-      const timeout = setTimeout(() => finish(null), 30_000);
-
-      recognition.onresult = (event: SpeechRecognitionEventLike): void => {
-        clearTimeout(timeout);
-        const transcript = event.results[0]?.[0]?.transcript ?? null;
-        finish(transcript);
-      };
-
-      recognition.onerror = (): void => {
-        clearTimeout(timeout);
-        finish(null);
-      };
-
-      recognition.onend = (): void => {
-        clearTimeout(timeout);
-        finish(null);
-      };
-
-      try {
-        recognition.start();
-      } catch {
-        clearTimeout(timeout);
-        finish(null);
-      }
+    let accumulated = '';
+    let resolved = false;
+    let resolveResult!: (value: string | null) => void;
+    const result = new Promise<string | null>((resolve) => {
+      resolveResult = resolve;
     });
+
+    const finish = (): void => {
+      if (resolved) return;
+      resolved = true;
+      const text = accumulated.trim();
+      resolveResult(text.length > 0 ? text : null);
+    };
+
+    recognition.onresult = (event: SpeechRecognitionEventLike): void => {
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        const entry = event.results[i];
+        if (entry && entry.isFinal) {
+          const piece = entry[0]?.transcript ?? '';
+          if (piece) accumulated += (accumulated ? ' ' : '') + piece.trim();
+        }
+      }
+    };
+
+    recognition.onerror = (): void => {
+      finish();
+    };
+
+    recognition.onend = (): void => {
+      finish();
+    };
+
+    try {
+      recognition.start();
+    } catch {
+      return nullHandle();
+    }
+
+    return {
+      result,
+      stop(): void {
+        try {
+          recognition.stop();
+        } catch {
+          finish();
+        }
+      },
+    };
   },
 };

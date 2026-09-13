@@ -1,4 +1,4 @@
-# Dependencies
+﻿# Dependencies
 node_modules/
 
 # Build output
@@ -50,3 +50,4 @@ _site/
 /sw.js.map
 /src/**/*.js
 /src/**/*.js.map
+

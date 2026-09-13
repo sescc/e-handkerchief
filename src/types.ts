@@ -65,6 +65,8 @@ export interface Note {
   mediaItems: MediaItem[];
   /** Attached if transcription succeeded */
   transcription?: string;
+  /** Transcription lifecycle for any audio in this note. */
+  transcriptionStatus?: 'none' | 'live' | 'pending' | 'done' | 'failed';
   /** Unix ms — used for Journal sort order */
   createdAt: number;
   updatedAt: number;
@@ -79,6 +81,8 @@ export interface OAuthToken {
 
 export interface AppSettings {
   transcriptionEnabled: boolean;
+  /** URL of the Groq/Whisper transcription proxy (Cloudflare Worker). Empty = not configured. */
+  transcriptionServerUrl: string;
   emailSummaryEnabled: boolean;
   emailSummaryRecipient: string | null;
   cloudBackupProvider: 'google-drive' | null;

@@ -1,0 +1,14 @@
+{
+  "name": "ehk-transcribe-worker",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Cloudflare Worker proxying audio transcription to Groq Whisper for e-Handkerchief",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "secret": "wrangler secret put GROQ_API_KEY"
+  },
+  "devDependencies": {
+    "wrangler": "^3.90.0"
+  }
+}

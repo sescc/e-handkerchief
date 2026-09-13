@@ -22,6 +22,7 @@ export interface SettingsStoreAPI {
 
 const DEFAULT_SETTINGS: AppSettings = {
   transcriptionEnabled: false,
+  transcriptionServerUrl: '',
   emailSummaryEnabled: false,
   emailSummaryRecipient: null,
   cloudBackupProvider: null,

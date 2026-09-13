@@ -105,6 +105,9 @@ export function renderJournal(container: HTMLElement): () => void {
     // Media items
     const mediaWrapper = document.createElement('div');
     mediaWrapper.className = 'note-media';
+    // Append the media wrapper up-front so text items inserted via
+    // insertBefore(textEl, mediaWrapper) have a valid reference child.
+    entry.appendChild(mediaWrapper);
 
     for (const item of note.mediaItems) {
       if (item.type === 'text') {
@@ -179,8 +182,6 @@ export function renderJournal(container: HTMLElement): () => void {
         mediaWrapper.appendChild(videoWrapper);
       }
     }
-
-    entry.appendChild(mediaWrapper);
 
     // Transcription (if present)
     if (note.transcription) {

@@ -16,6 +16,7 @@ import { toastService } from '../toastService.js';
 import { eventBus } from '../eventBus.js';
 import { navigate } from '../router.js';
 import { formatNoteTimestamp } from '../dateFormat.js';
+import { transcriptionService } from '../transcriptionService.js';
 import type {
   Note,
   NoteTimestamp,
@@ -27,6 +28,7 @@ import type {
   TextMediaItem,
 } from '../types.js';
 import type { AudioRecordingHandle } from '../mediaService.js';
+import type { LiveTranscriptionHandle } from '../transcriptionService.js';
 
 /** A draft item before the note is persisted. Includes a preview URL for cleanup. */
 interface DraftMediaItem {
@@ -70,6 +72,13 @@ export function renderCapture(container: HTMLElement): () => void {
   let pendingRecordingPromise: Promise<void> | null = null;
   let isSaving = false;
   let micDisabled = false;
+
+  // ---- Live transcription tracking (for the single audio recording) ----
+  let liveTranscription: LiveTranscriptionHandle | null = null;
+  /** Text captured live via Web Speech during recording (if any). */
+  let recordedTranscript: string | null = null;
+  /** True when transcription was requested but live capture was unavailable/offline. */
+  let transcriptionDeferred = false;
 
   // Cleanup registry
   const objUrls: string[] = [];
@@ -334,6 +343,20 @@ export function renderCapture(container: HTMLElement): () => void {
       isRecording = true;
       recordingElapsed = 0;
 
+      // Reset transcription tracking for this recording.
+      recordedTranscript = null;
+      transcriptionDeferred = false;
+
+      const transcriptionRequested = settingsStore.getCurrent().transcriptionEnabled;
+      const canLiveTranscribe =
+        transcriptionRequested && transcriptionService.isSupported && navigator.onLine;
+      if (canLiveTranscribe) {
+        liveTranscription = transcriptionService.startLive();
+      } else if (transcriptionRequested) {
+        // Transcription wanted but live capture is unavailable (offline / unsupported).
+        transcriptionDeferred = true;
+      }
+
       micBtn.textContent = '⏹ Stop';
       recordingIndicator.style.display = 'flex';
       const elapsedEl = recordingIndicator.querySelector<HTMLElement>('.elapsed-counter');
@@ -343,11 +366,25 @@ export function renderCapture(container: HTMLElement): () => void {
         if (elapsedEl) elapsedEl.textContent = formatElapsed(sec);
       });
 
-      pendingRecordingPromise = handle.result.then((blob) => {
+      pendingRecordingPromise = handle.result.then(async (blob) => {
         isRecording = false;
         activeRecording = null;
         micBtn.textContent = '🎤 Mic';
         recordingIndicator.style.display = 'none';
+
+        // Stop live recognition (if running) and gather the transcript.
+        if (liveTranscription) {
+          liveTranscription.stop();
+          const transcript = await liveTranscription.result;
+          liveTranscription = null;
+          if (transcript) {
+            recordedTranscript = transcript;
+            transcriptionDeferred = false;
+          } else if (settingsStore.getCurrent().transcriptionEnabled) {
+            // Live recognition produced nothing — allow deferred transcription.
+            transcriptionDeferred = true;
+          }
+        }
 
         const audioUrl = trackUrl(URL.createObjectURL(blob));
         const item: AudioMediaItem = {
@@ -366,6 +403,11 @@ export function renderCapture(container: HTMLElement): () => void {
       activeRecording = null;
       micBtn.textContent = '🎤 Mic';
       recordingIndicator.style.display = 'none';
+
+      if (liveTranscription) {
+        liveTranscription.stop();
+        liveTranscription = null;
+      }
 
       if (err instanceof MediaUnsupportedError) {
         micDisabled = true;
@@ -523,11 +565,26 @@ export function renderCapture(container: HTMLElement): () => void {
     isSaving = true;
     updateSaveBtnState();
 
+    // Determine transcription status — only meaningful when the note has audio.
+    const hasAudio = allItems.some((m) => m.type === 'audio');
+    const transcriptionEnabled = settingsStore.getCurrent().transcriptionEnabled;
+
+    let transcriptionStatus: Note['transcriptionStatus'] = 'none';
+    if (hasAudio) {
+      if (recordedTranscript) {
+        transcriptionStatus = 'live';
+      } else if (transcriptionEnabled && transcriptionDeferred) {
+        transcriptionStatus = 'pending';
+      }
+    }
+
     const note: Note = {
       id: crypto.randomUUID(),
       timestamp,
       location,
       mediaItems: allItems,
+      transcription: (hasAudio && recordedTranscript) ? recordedTranscript : undefined,
+      transcriptionStatus,
       createdAt: Date.now(),
       updatedAt: Date.now(),
     };
@@ -549,24 +606,11 @@ export function renderCapture(container: HTMLElement): () => void {
     // Optional side-effects (fire-and-forget)
     const settings = settingsStore.getCurrent();
 
-    if (settings.transcriptionEnabled) {
-      const audioItem = allItems.find((m) => m.type === 'audio') as AudioMediaItem | undefined;
-      if (audioItem) {
-        import('../transcriptionService.js')
-          .then(({ transcriptionService }) =>
-            transcriptionService.transcribe(audioItem.blob)
-          )
-          .then(async (transcript) => {
-            if (transcript) {
-              const patched: Note = { ...note, transcription: transcript, updatedAt: Date.now() };
-              await noteStore.save(patched);
-              eventBus.emit('note:saved', patched);
-            } else {
-              toastService.show('Transcription unavailable', 5000);
-            }
-          })
-          .catch(() => toastService.show('Transcription unavailable', 5000));
-      }
+    if (note.transcriptionStatus === 'pending') {
+      toastService.show(
+        'Saved. Voice transcription is deferred — open the note and tap "Transcribe" when online.',
+        6000
+      );
     }
 
     if (settings.emailSummaryEnabled && settings.emailSummaryRecipient) {
@@ -593,6 +637,10 @@ export function renderCapture(container: HTMLElement): () => void {
     if (activeRecording) {
       activeRecording.stop();
       activeRecording = null;
+    }
+    if (liveTranscription) {
+      liveTranscription.stop();
+      liveTranscription = null;
     }
 
     // Revoke all object URLs

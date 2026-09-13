@@ -1,0 +1,13 @@
+name = "ehk-transcribe"
+main = "src/index.js"
+compatibility_date = "2024-11-01"
+
+# Public (non-secret) variables:
+# Set ALLOWED_ORIGIN to your GitHub Pages origin, e.g.
+#   https://<username>.github.io
+# Leave commented to allow all origins (less secure).
+[vars]
+# ALLOWED_ORIGIN = "https://YOUR_USERNAME.github.io"
+
+# GROQ_API_KEY is NOT set here — it is a secret set via:
+#   npx wrangler secret put GROQ_API_KEY
