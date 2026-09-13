@@ -81,6 +81,22 @@ export function renderCapture(container: HTMLElement): () => void {
   let transcriptionDeferred = false;
   /** Last live-recognition error code (e.g. 'not-allowed', 'no-speech'), for messaging. */
   let liveTranscriptionError: string | null = null;
+  /** True once live transcription has produced real (non-placeholder) text. */
+  let liveProducedText = false;
+  /** Watchdog: if live transcription produces nothing within a window, show an inline hint. */
+  let liveWatchdog: ReturnType<typeof setTimeout> | null = null;
+
+  /** Placeholder shown in the live-transcript box while waiting for speech results. */
+  const LIVE_PLACEHOLDER = 'Listening…';
+  /** How long to wait for live text before showing the "not producing text" hint. */
+  const LIVE_WATCHDOG_MS = 8000;
+
+  function clearLiveWatchdog(): void {
+    if (liveWatchdog !== null) {
+      clearTimeout(liveWatchdog);
+      liveWatchdog = null;
+    }
+  }
 
   // Cleanup registry
   const objUrls: string[] = [];
@@ -355,6 +371,8 @@ export function renderCapture(container: HTMLElement): () => void {
       recordedTranscript = null;
       transcriptionDeferred = false;
       liveTranscriptionError = null;
+      liveProducedText = false;
+      clearLiveWatchdog();
 
       const transcriptionRequested = settingsStore.getCurrent().transcriptionEnabled;
       const canLiveTranscribe =
@@ -362,11 +380,29 @@ export function renderCapture(container: HTMLElement): () => void {
       if (canLiveTranscribe) {
         liveTranscription = transcriptionService.startLive();
         // Show the live transcript box and stream text in real time.
-        liveTranscriptEl.textContent = 'Listening…';
+        liveTranscriptEl.textContent = LIVE_PLACEHOLDER;
         liveTranscriptEl.style.display = 'block';
         liveTranscription.onText((txt) => {
-          liveTranscriptEl.textContent = txt || 'Listening…';
+          const trimmed = (txt || '').trim();
+          if (trimmed && trimmed !== LIVE_PLACEHOLDER) {
+            // Real live text arrived — mark it and stand down the watchdog.
+            liveProducedText = true;
+            clearLiveWatchdog();
+          }
+          liveTranscriptEl.textContent = txt || LIVE_PLACEHOLDER;
         });
+
+        // Watchdog: on devices where MediaRecorder holds the mic (e.g. Android
+        // Chrome), SpeechRecognition often yields no results and no error, so the
+        // box would stay stuck on "Listening…". Replace it with an honest hint.
+        clearLiveWatchdog();
+        liveWatchdog = setTimeout(() => {
+          liveWatchdog = null;
+          if (!liveProducedText) {
+            liveTranscriptEl.textContent =
+              "Live transcription isn't producing text on this device. Your audio is being recorded and can be transcribed after saving.";
+          }
+        }, LIVE_WATCHDOG_MS);
       } else if (transcriptionRequested) {
         // Transcription wanted but live capture is unavailable (offline / unsupported).
         transcriptionDeferred = true;
@@ -389,6 +425,7 @@ export function renderCapture(container: HTMLElement): () => void {
 
         // Stop live recognition (if running) and gather the transcript.
         if (liveTranscription) {
+          clearLiveWatchdog();
           liveTranscription.stop();
           const transcript = await liveTranscription.result;
           const errCode = liveTranscription.getError();
@@ -400,13 +437,26 @@ export function renderCapture(container: HTMLElement): () => void {
 
           if (transcript) {
             recordedTranscript = transcript;
+            liveProducedText = true;
             transcriptionDeferred = false;
           } else if (settingsStore.getCurrent().transcriptionEnabled) {
-            // Live recognition produced nothing — allow deferred transcription.
+            // Live recognition produced nothing — allow deferred transcription so
+            // the note can be transcribed later via the Worker.
             transcriptionDeferred = true;
             // Capture the error reason (if any) for accurate messaging.
             if (errCode) liveTranscriptionError = errCode;
           }
+        }
+
+        // Robustness: if live was attempted but never produced text (and there was
+        // no explicit transcript above), keep transcription deferred so status
+        // becomes 'pending' and the audio can be transcribed later.
+        if (
+          !liveProducedText &&
+          !recordedTranscript &&
+          settingsStore.getCurrent().transcriptionEnabled
+        ) {
+          transcriptionDeferred = true;
         }
 
         const audioUrl = trackUrl(URL.createObjectURL(blob));
@@ -427,6 +477,7 @@ export function renderCapture(container: HTMLElement): () => void {
       micBtn.textContent = '🎤 Mic';
       recordingIndicator.style.display = 'none';
 
+      clearLiveWatchdog();
       if (liveTranscription) {
         liveTranscription.stop();
         liveTranscription = null;
@@ -643,6 +694,11 @@ export function renderCapture(container: HTMLElement): () => void {
         deferredMsg = "Saved. Live transcription isn't supported in this browser.";
       } else if (!navigator.onLine) {
         deferredMsg = 'Saved. Offline — transcribe later from the note when online.';
+      } else if (transcriptionEnabled && !liveProducedText) {
+        // Live was attempted online with no specific error, but produced no text —
+        // most likely the mic-sharing platform constraint (e.g. Android Chrome).
+        deferredMsg =
+          "Saved. Live transcription didn't work on this device — open the note and tap 'Transcribe voice' to transcribe it via your server.";
       } else {
         deferredMsg =
           'Saved. Voice transcription was unavailable — you can transcribe later from the note.';
@@ -675,6 +731,7 @@ export function renderCapture(container: HTMLElement): () => void {
       activeRecording.stop();
       activeRecording = null;
     }
+    clearLiveWatchdog();
     if (liveTranscription) {
       liveTranscription.stop();
       liveTranscription = null;

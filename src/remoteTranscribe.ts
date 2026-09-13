@@ -19,6 +19,7 @@ export interface RemoteTranscribeResult {
 export async function remoteTranscribe(blob: Blob, language?: string): Promise<RemoteTranscribeResult> {
   const url = settingsStore.getCurrent().transcriptionServerUrl.trim();
   if (!url) return { ok: false, error: 'No transcription server configured in Settings.' };
+  if (!url.startsWith('http')) return { ok: false, error: 'Transcription server URL must start with https://' };
   if (!navigator.onLine) return { ok: false, error: 'No internet connection.' };
 
   try {
@@ -37,7 +38,9 @@ export async function remoteTranscribe(blob: Blob, language?: string): Promise<R
     const data = await res.json() as { text?: string };
     if (typeof data.text !== 'string') return { ok: false, error: 'Unexpected server response.' };
     return { ok: true, text: data.text };
-  } catch {
-    return { ok: false, error: 'Could not reach the transcription server.' };
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err);
+    console.error('remoteTranscribe failed:', err);
+    return { ok: false, error: `Could not reach the transcription server: ${detail}` };
   }
 }
