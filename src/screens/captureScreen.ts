@@ -15,6 +15,7 @@ import { settingsStore } from '../settingsStore.js';
 import { toastService } from '../toastService.js';
 import { eventBus } from '../eventBus.js';
 import { navigate } from '../router.js';
+import { formatNoteTimestamp } from '../dateFormat.js';
 import type {
   Note,
   NoteTimestamp,
@@ -49,23 +50,6 @@ function getUTCOffset(date: Date): string {
   return `${sign}${hh}:${mm}`;
 }
 
-function formatTimestamp(localISO: string): string {
-  try {
-    const d = new Date(localISO);
-    return new Intl.DateTimeFormat('en-US', {
-      weekday: 'short',
-      year: 'numeric',
-      month: 'short',
-      day: '2-digit',
-      hour: '2-digit',
-      minute: '2-digit',
-      hour12: true,
-    }).format(d);
-  } catch {
-    return localISO;
-  }
-}
-
 const MAX_TEXT_LEN = 2000;
 const MAX_RECORD_SEC = 600;
 
@@ -78,6 +62,12 @@ export function renderCapture(container: HTMLElement): () => void {
   let activeRecording: AudioRecordingHandle | null = null;
   let isRecording = false;
   let recordingElapsed = 0;
+  /**
+   * Resolves after the recorded AudioMediaItem has been pushed into draftItems.
+   * Lets the save path deterministically wait for an in-progress recording to
+   * finish and attach its audio before snapshotting the draft items.
+   */
+  let pendingRecordingPromise: Promise<void> | null = null;
   let isSaving = false;
   let micDisabled = false;
 
@@ -105,7 +95,7 @@ export function renderCapture(container: HTMLElement): () => void {
 
   const metaTimestamp = document.createElement('div');
   metaTimestamp.className = 'capture-meta';
-  metaTimestamp.textContent = formatTimestamp(timestamp.localISO);
+  metaTimestamp.textContent = formatNoteTimestamp(timestamp.localISO);
   header.appendChild(metaTimestamp);
 
   const metaLocation = document.createElement('div');
@@ -353,7 +343,7 @@ export function renderCapture(container: HTMLElement): () => void {
         if (elapsedEl) elapsedEl.textContent = formatElapsed(sec);
       });
 
-      handle.result.then((blob) => {
+      pendingRecordingPromise = handle.result.then((blob) => {
         isRecording = false;
         activeRecording = null;
         micBtn.textContent = '🎤 Mic';
@@ -369,6 +359,7 @@ export function renderCapture(container: HTMLElement): () => void {
         };
         draftItems.push({ item, previewUrl: audioUrl });
         refreshPreviewList();
+        pendingRecordingPromise = null;
       });
     } catch (err) {
       isRecording = false;
@@ -501,6 +492,13 @@ export function renderCapture(container: HTMLElement): () => void {
 
   // ---- Save ----
   const onSaveClick = async (): Promise<void> => {
+    // If a recording is still in progress, stop it and wait for the audio item
+    // to be pushed to draftItems before proceeding, so the user doesn't lose it.
+    if (isRecording && activeRecording) {
+      activeRecording.stop();
+      if (pendingRecordingPromise) await pendingRecordingPromise;
+    }
+
     // Collect text item if textarea has content
     const textValue = textarea.value.trim();
     const allItems: MediaItem[] = draftItems.map((d) => d.item);

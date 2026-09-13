@@ -6,6 +6,7 @@
 import { settingsStore } from '../settingsStore.js';
 import { cloudSyncService } from '../cloudSyncService.js';
 import { toastService } from '../toastService.js';
+import { formatNoteTimestamp, getTimezoneOptions } from '../dateFormat.js';
 import type { AppSettings } from '../types.js';
 
 // RFC 5321-compatible email regex (local-part@domain)
@@ -168,6 +169,119 @@ export function renderSettings(container: HTMLElement): () => void {
   );
 
   // =========================================================
+  // Section: Date & Time
+  // =========================================================
+  const dateTimeSection = document.createElement('div');
+  dateTimeSection.className = 'settings-section';
+
+  const dateTimeHeading = document.createElement('h2');
+  dateTimeHeading.textContent = 'Date & Time';
+  dateTimeSection.appendChild(dateTimeHeading);
+
+  // --- Timezone ---
+  const tzGroup = document.createElement('div');
+  tzGroup.className = 'form-group';
+  const tzLabel = document.createElement('label');
+  tzLabel.className = 'form-label';
+  tzLabel.textContent = 'Timezone';
+  tzGroup.appendChild(tzLabel);
+  const tzControl = buildSelect(getTimezoneOptions(), current.timezone);
+  tzGroup.appendChild(tzControl.wrapper);
+  dateTimeSection.appendChild(tzGroup);
+
+  // --- Date Format ---
+  const dateFormatOptions: Array<{ value: string; label: string }> = [
+    { value: 'DD MMM YYYY', label: 'DD MMM YYYY' },
+    { value: 'MMM DD, YYYY', label: 'MMM DD, YYYY' },
+    { value: 'YYYY-MM-DD', label: 'YYYY-MM-DD' },
+    { value: 'DD/MM/YYYY', label: 'DD/MM/YYYY' },
+    { value: 'MM/DD/YYYY', label: 'MM/DD/YYYY' },
+  ];
+  const dateFormatGroup = document.createElement('div');
+  dateFormatGroup.className = 'form-group mt-sm';
+  const dateFormatLabel = document.createElement('label');
+  dateFormatLabel.className = 'form-label';
+  dateFormatLabel.textContent = 'Date Format';
+  dateFormatGroup.appendChild(dateFormatLabel);
+  const dateFormatControl = buildSelect(dateFormatOptions, current.dateFormat);
+  dateFormatGroup.appendChild(dateFormatControl.wrapper);
+  dateTimeSection.appendChild(dateFormatGroup);
+
+  // --- Time Format ---
+  const timeFormatOptions: Array<{ value: string; label: string }> = [
+    { value: '24h', label: '24-hour' },
+    { value: '12h', label: '12-hour (AM/PM)' },
+  ];
+  const timeFormatGroup = document.createElement('div');
+  timeFormatGroup.className = 'form-group mt-sm';
+  const timeFormatLabel = document.createElement('label');
+  timeFormatLabel.className = 'form-label';
+  timeFormatLabel.textContent = 'Time Format';
+  timeFormatGroup.appendChild(timeFormatLabel);
+  const timeFormatControl = buildSelect(timeFormatOptions, current.timeFormat);
+  timeFormatGroup.appendChild(timeFormatControl.wrapper);
+  dateTimeSection.appendChild(timeFormatGroup);
+
+  // --- Live preview ---
+  const previewLine = document.createElement('div');
+  previewLine.className = 'settings-row-desc mt-sm';
+  function updateDateTimePreview(): void {
+    previewLine.textContent = `Preview: ${formatNoteTimestamp(new Date().toISOString())}`;
+  }
+  updateDateTimePreview();
+  dateTimeSection.appendChild(previewLine);
+
+  root.appendChild(dateTimeSection);
+
+  const onTimezoneChange = async (): Promise<void> => {
+    const prev = settingsStore.getCurrent().timezone;
+    const next = tzControl.select.value;
+    try {
+      await settingsStore.save({ timezone: next });
+      updateDateTimePreview();
+    } catch {
+      tzControl.select.value = prev;
+      toastService.show('Could not save setting');
+    }
+  };
+  tzControl.select.addEventListener('change', () => void onTimezoneChange());
+  listenerCleanups.push(() =>
+    tzControl.select.removeEventListener('change', () => void onTimezoneChange())
+  );
+
+  const onDateFormatChange = async (): Promise<void> => {
+    const prev = settingsStore.getCurrent().dateFormat;
+    const next = dateFormatControl.select.value as AppSettings['dateFormat'];
+    try {
+      await settingsStore.save({ dateFormat: next });
+      updateDateTimePreview();
+    } catch {
+      dateFormatControl.select.value = prev;
+      toastService.show('Could not save setting');
+    }
+  };
+  dateFormatControl.select.addEventListener('change', () => void onDateFormatChange());
+  listenerCleanups.push(() =>
+    dateFormatControl.select.removeEventListener('change', () => void onDateFormatChange())
+  );
+
+  const onTimeFormatChange = async (): Promise<void> => {
+    const prev = settingsStore.getCurrent().timeFormat;
+    const next = timeFormatControl.select.value as AppSettings['timeFormat'];
+    try {
+      await settingsStore.save({ timeFormat: next });
+      updateDateTimePreview();
+    } catch {
+      timeFormatControl.select.value = prev;
+      toastService.show('Could not save setting');
+    }
+  };
+  timeFormatControl.select.addEventListener('change', () => void onTimeFormatChange());
+  listenerCleanups.push(() =>
+    timeFormatControl.select.removeEventListener('change', () => void onTimeFormatChange())
+  );
+
+  // =========================================================
   // Section: Cloud Backup
   // =========================================================
   const cloudSection = document.createElement('div');
@@ -259,6 +373,16 @@ export function renderSettings(container: HTMLElement): () => void {
     if (document.activeElement !== recipientInput) {
       recipientInput.value = settings.emailSummaryRecipient ?? '';
     }
+    if (document.activeElement !== tzControl.select) {
+      tzControl.select.value = settings.timezone;
+    }
+    if (document.activeElement !== dateFormatControl.select) {
+      dateFormatControl.select.value = settings.dateFormat;
+    }
+    if (document.activeElement !== timeFormatControl.select) {
+      timeFormatControl.select.value = settings.timeFormat;
+    }
+    updateDateTimePreview();
   });
 
   container.appendChild(root);
@@ -289,4 +413,30 @@ function buildToggle(checked: boolean): { wrapper: HTMLElement; input: HTMLInput
   wrapper.appendChild(slider);
 
   return { wrapper, input };
+}
+
+// ---------------------------------------------------------------------------
+// Select dropdown builder
+// ---------------------------------------------------------------------------
+function buildSelect(
+  options: Array<{ value: string; label: string }>,
+  currentValue: string
+): { wrapper: HTMLElement; select: HTMLSelectElement } {
+  const wrapper = document.createElement('div');
+  wrapper.className = 'select-wrapper';
+
+  const select = document.createElement('select');
+  select.className = 'form-input';
+
+  for (const opt of options) {
+    const optionEl = document.createElement('option');
+    optionEl.value = opt.value;
+    optionEl.textContent = opt.label;
+    if (opt.value === currentValue) optionEl.selected = true;
+    select.appendChild(optionEl);
+  }
+  select.value = currentValue;
+
+  wrapper.appendChild(select);
+  return { wrapper, select };
 }

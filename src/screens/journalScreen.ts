@@ -5,24 +5,11 @@
 
 import { noteStore } from '../noteStore.js';
 import { eventBus } from '../eventBus.js';
+import { navigate } from '../router.js';
+import { toastService } from '../toastService.js';
+import { googleMapsUrl } from '../mapsLink.js';
+import { formatNoteTimestamp } from '../dateFormat.js';
 import type { Note, AudioMediaItem, PhotoMediaItem, VideoMediaItem, TextMediaItem } from '../types.js';
-
-function formatTimestamp(localISO: string): string {
-  try {
-    const d = new Date(localISO);
-    return new Intl.DateTimeFormat('en-US', {
-      weekday: 'short',
-      year: 'numeric',
-      month: 'short',
-      day: '2-digit',
-      hour: '2-digit',
-      minute: '2-digit',
-      hour12: true,
-    }).format(d);
-  } catch {
-    return localISO;
-  }
-}
 
 function formatCoords(lat: number, lng: number): string {
   const latStr = (lat >= 0 ? '+' : '') + lat.toFixed(5);
@@ -33,6 +20,7 @@ function formatCoords(lat: number, lng: number): string {
 export function renderJournal(container: HTMLElement): () => void {
   const objUrls: string[] = [];
   let unsubscribeNotesSaved: (() => void) | null = null;
+  let unsubscribeNotesDeleted: (() => void) | null = null;
 
   function trackUrl(url: string): string {
     objUrls.push(url);
@@ -54,25 +42,64 @@ export function renderJournal(container: HTMLElement): () => void {
   container.appendChild(root);
 
   function renderNoteEntry(note: Note): HTMLElement {
-    // Outer link wrapping the whole entry
-    const link = document.createElement('a');
-    link.href = `#/note/${note.id}`;
-    link.className = 'note-entry';
+    // The entry is a div (not an anchor) so we can safely nest a
+    // location <a> inside it without producing invalid nested-link HTML.
+    const entry = document.createElement('div');
+    entry.className = 'note-entry';
+    entry.setAttribute('role', 'link');
+    entry.tabIndex = 0;
+
+    const goToNote = () => navigate(`#/note/${note.id}`);
+    entry.addEventListener('click', goToNote);
+    entry.addEventListener('keydown', (ev) => {
+      if (ev.key === 'Enter' || ev.key === ' ') {
+        ev.preventDefault();
+        goToNote();
+      }
+    });
+
+    // Header row: timestamp + delete quick action
+    const headerRow = document.createElement('div');
+    headerRow.className = 'note-entry-header';
 
     // Timestamp
     const tsEl = document.createElement('div');
     tsEl.className = 'note-timestamp';
-    tsEl.textContent = formatTimestamp(note.timestamp.localISO);
-    link.appendChild(tsEl);
+    tsEl.textContent = formatNoteTimestamp(note.timestamp.localISO);
+    headerRow.appendChild(tsEl);
 
-    // Location
+    // Delete quick action — must not trigger navigation
+    const deleteBtn = document.createElement('button');
+    deleteBtn.className = 'note-delete-btn';
+    deleteBtn.textContent = '🗑';
+    deleteBtn.setAttribute('aria-label', 'Delete note');
+    deleteBtn.addEventListener('click', (ev) => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      void (async () => {
+        if (!confirm('Delete this note permanently? This cannot be undone.')) return;
+        await noteStore.delete(note.id);
+        eventBus.emit('note:deleted', note.id);
+        toastService.show('Note deleted');
+      })();
+    });
+    headerRow.appendChild(deleteBtn);
+
+    entry.appendChild(headerRow);
+
+    // Location — clickable Google Maps link
     if (note.location) {
-      const locEl = document.createElement('div');
-      locEl.className = 'note-location';
-      locEl.textContent = note.location.resolvedAddress
+      const locLink = document.createElement('a');
+      locLink.className = 'note-location-link';
+      locLink.href = googleMapsUrl(note.location);
+      locLink.target = '_blank';
+      locLink.rel = 'noopener noreferrer';
+      locLink.textContent = note.location.resolvedAddress
         ? note.location.resolvedAddress
         : formatCoords(note.location.latitude, note.location.longitude);
-      link.appendChild(locEl);
+      // Tapping the location should open Maps, not navigate to the note.
+      locLink.addEventListener('click', (ev) => ev.stopPropagation());
+      entry.appendChild(locLink);
     }
 
     // Media items
@@ -86,7 +113,7 @@ export function renderJournal(container: HTMLElement): () => void {
         textEl.className = 'note-text';
         textEl.style.whiteSpace = 'pre-wrap';
         textEl.textContent = textItem.content; // safe — never innerHTML
-        link.insertBefore(textEl, mediaWrapper);
+        entry.insertBefore(textEl, mediaWrapper);
       } else if (item.type === 'audio') {
         const audioItem = item as AudioMediaItem;
         const audioWrapper = document.createElement('div');
@@ -96,6 +123,8 @@ export function renderJournal(container: HTMLElement): () => void {
         audio.controls = true;
         const audioUrl = trackUrl(URL.createObjectURL(audioItem.blob));
         audio.src = audioUrl;
+        // Prevent the media control clicks from bubbling to the entry.
+        audioWrapper.addEventListener('click', (ev) => ev.stopPropagation());
 
         audio.addEventListener('error', () => {
           const placeholder = makeMediaUnavailable();
@@ -138,6 +167,8 @@ export function renderJournal(container: HTMLElement): () => void {
         video.style.width = '80px';
         video.style.height = '80px';
         video.style.objectFit = 'cover';
+        // Prevent the media control clicks from bubbling to the entry.
+        videoWrapper.addEventListener('click', (ev) => ev.stopPropagation());
 
         video.addEventListener('error', () => {
           const placeholder = makeMediaUnavailable();
@@ -149,17 +180,17 @@ export function renderJournal(container: HTMLElement): () => void {
       }
     }
 
-    link.appendChild(mediaWrapper);
+    entry.appendChild(mediaWrapper);
 
     // Transcription (if present)
     if (note.transcription) {
       const transEl = document.createElement('div');
       transEl.className = 'transcription-block';
       transEl.textContent = note.transcription;
-      link.appendChild(transEl);
+      entry.appendChild(transEl);
     }
 
-    return link;
+    return entry;
   }
 
   function makeMediaUnavailable(): HTMLElement {
@@ -203,14 +234,18 @@ export function renderJournal(container: HTMLElement): () => void {
 
   void loadAndRender();
 
-  // Subscribe to note:saved to reload without a route change
+  // Subscribe to note:saved and note:deleted to reload without a route change
   unsubscribeNotesSaved = eventBus.on('note:saved', () => {
+    void loadAndRender();
+  });
+  unsubscribeNotesDeleted = eventBus.on('note:deleted', () => {
     void loadAndRender();
   });
 
   // Cleanup
   return () => {
     unsubscribeNotesSaved?.();
+    unsubscribeNotesDeleted?.();
 
     for (const url of objUrls) {
       URL.revokeObjectURL(url);

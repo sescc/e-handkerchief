@@ -7,6 +7,7 @@ import type { Note, AppSettings } from './types.js';
 
 type EventMap = {
   'note:saved': Note;
+  'note:deleted': string; // the deleted note's id
   'settings:changed': AppSettings;
   'sw:waiting': void;
 };
