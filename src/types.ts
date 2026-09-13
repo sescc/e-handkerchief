@@ -84,6 +84,12 @@ export interface AppSettings {
   cloudBackupProvider: 'google-drive' | null;
   cloudBackupToken: OAuthToken | null;
   notificationPermissionRequested: boolean;
+  /** IANA timezone name (e.g. "Asia/Singapore") or "auto" to follow the OS. Default "auto". */
+  timezone: string;
+  /** Date format token. Default "DD MMM YYYY". */
+  dateFormat: 'DD MMM YYYY' | 'MMM DD, YYYY' | 'YYYY-MM-DD' | 'DD/MM/YYYY' | 'MM/DD/YYYY';
+  /** Time format. Default "24h". */
+  timeFormat: '24h' | '12h';
 }
 
 export type EmailJobStatus = 'pending' | 'in-flight' | 'failed';

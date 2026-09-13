@@ -10,7 +10,10 @@ export {};
 // ServiceWorker-specific members. Alias a correctly-typed reference.
 const sw = self as unknown as ServiceWorkerGlobalScope;
 
-const CACHE_NAME = 'e-hk-v1';
+// __BUILD_VERSION__ is replaced at deploy time by the CI pipeline with a unique
+// value (git SHA + timestamp). During local dev it stays literal, which is fine.
+const BUILD_VERSION = '__BUILD_VERSION__';
+const CACHE_NAME = `e-hk-${BUILD_VERSION}`;
 
 // sw.js lives at <base>/sw.js — derive <base> (with trailing slash) so the
 // same code works whether the app is hosted at the origin root ("/") or on a
@@ -54,7 +57,7 @@ const INDEX_URL = BASE + 'index.html';
 
 const NOMINATIM_HOST = 'nominatim.openstreetmap.org';
 const NOMINATIM_MAX_ENTRIES = 50;
-const NOMINATIM_CACHE = 'e-hk-nominatim-v1';
+const NOMINATIM_CACHE = `e-hk-nominatim-${BUILD_VERSION}`;
 
 // ------------------------------------------------------------
 // Install — precache all static assets, then activate immediately
@@ -90,59 +93,74 @@ sw.addEventListener('activate', (event: ExtendableEvent) => {
 // Fetch
 // ------------------------------------------------------------
 sw.addEventListener('fetch', (event: FetchEvent) => {
-  const url = new URL(event.request.url);
+  const req = event.request;
+  if (req.method !== 'GET') return;
 
-  // Nominatim reverse geocoding — network-first with 5s timeout + LRU cache
+  const url = new URL(req.url);
+
+  // Nominatim — network-first with timeout + LRU cache
   if (url.hostname === NOMINATIM_HOST) {
-    event.respondWith(handleNominatim(event.request));
+    event.respondWith(handleNominatim(req));
     return;
   }
 
-  // Precached assets — cache-first
-  const isPrecached =
-    url.origin === sw.location.origin &&
-    (PRECACHE_URLS.includes(url.pathname) || url.pathname === BASE);
+  // Only handle same-origin requests beyond this point
+  if (url.origin !== sw.location.origin) return;
 
-  if (isPrecached) {
-    event.respondWith(
-      caches.match(event.request).then((cached) => cached ?? fetch(event.request))
-    );
+  const path = url.pathname;
+  const isAppCode =
+    req.mode === 'navigate' ||
+    path === BASE ||
+    path === INDEX_URL ||
+    /\.(?:js|css|html|webmanifest)$/.test(path);
+
+  if (isAppCode) {
+    event.respondWith(networkFirst(req));
     return;
   }
 
-  // Navigation requests (deep links like <base>#/note/xyz) — network-first,
-  // fall back to the cached index document so the SPA can boot offline.
-  if (event.request.mode === 'navigate') {
-    event.respondWith(
-      fetch(event.request).catch(async () => {
-        const cached =
-          (await caches.match(event.request)) ??
-          (await caches.match(INDEX_URL)) ??
-          (await caches.match(BASE));
-        if (cached) return cached;
-        return new Response('Offline – resource unavailable', {
-          status: 503,
-          headers: { 'Content-Type': 'text/plain' },
-        });
-      })
-    );
-    return;
-  }
-
-  // Everything else — network-first, fall back to cache, then 503
-  event.respondWith(
-    fetch(event.request)
-      .then((res) => res)
-      .catch(async () => {
-        const cached = await caches.match(event.request);
-        if (cached) return cached;
-        return new Response('Offline – resource unavailable', {
-          status: 503,
-          headers: { 'Content-Type': 'text/plain' },
-        });
-      })
-  );
+  // Everything else (icons, images) — cache-first
+  event.respondWith(cacheFirst(req));
 });
+
+async function networkFirst(req: Request): Promise<Response> {
+  const cache = await caches.open(CACHE_NAME);
+  try {
+    const fresh = await fetch(req);
+    if (fresh && fresh.ok) {
+      cache.put(req, fresh.clone());
+    }
+    return fresh;
+  } catch {
+    const cached = await cache.match(req);
+    if (cached) return cached;
+    // For navigations, fall back to the cached index (SPA shell)
+    if (req.mode === 'navigate') {
+      const indexCached = await cache.match(INDEX_URL) ?? await cache.match(BASE);
+      if (indexCached) return indexCached;
+    }
+    return new Response('Offline – resource unavailable', {
+      status: 503,
+      headers: { 'Content-Type': 'text/plain' },
+    });
+  }
+}
+
+async function cacheFirst(req: Request): Promise<Response> {
+  const cache = await caches.open(CACHE_NAME);
+  const cached = await cache.match(req);
+  if (cached) return cached;
+  try {
+    const fresh = await fetch(req);
+    if (fresh && fresh.ok) cache.put(req, fresh.clone());
+    return fresh;
+  } catch {
+    return new Response('Offline – resource unavailable', {
+      status: 503,
+      headers: { 'Content-Type': 'text/plain' },
+    });
+  }
+}
 
 async function handleNominatim(request: Request): Promise<Response> {
   const cache = await caches.open(NOMINATIM_CACHE);

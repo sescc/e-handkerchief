@@ -35,6 +35,17 @@ jobs:
       - name: Compile TypeScript (service worker)
         run: tsc -p tsconfig.sw.json
 
+      - name: Inject build version into service worker
+        run: |
+          BUILD_VERSION="${GITHUB_SHA::8}-${GITHUB_RUN_NUMBER}"
+          echo "Injecting build version: $BUILD_VERSION"
+          sed -i "s/__BUILD_VERSION__/${BUILD_VERSION}/g" sw.js
+          # Verify the placeholder was replaced
+          if grep -q "__BUILD_VERSION__" sw.js; then
+            echo "ERROR: build version placeholder not replaced" >&2
+            exit 1
+          fi
+
       - name: Prepare deploy directory
         run: |
           mkdir -p _site
