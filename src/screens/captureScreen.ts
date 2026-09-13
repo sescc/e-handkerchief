@@ -79,6 +79,8 @@ export function renderCapture(container: HTMLElement): () => void {
   let recordedTranscript: string | null = null;
   /** True when transcription was requested but live capture was unavailable/offline. */
   let transcriptionDeferred = false;
+  /** Last live-recognition error code (e.g. 'not-allowed', 'no-speech'), for messaging. */
+  let liveTranscriptionError: string | null = null;
 
   // Cleanup registry
   const objUrls: string[] = [];
@@ -187,6 +189,12 @@ export function renderCapture(container: HTMLElement): () => void {
   recordingIndicator.innerHTML =
     '<span class="recording-dot"></span><span class="elapsed-counter">0:00</span>';
   root.appendChild(recordingIndicator);
+
+  // Live transcript display (hidden by default; shown while live transcription runs)
+  const liveTranscriptEl = document.createElement('div');
+  liveTranscriptEl.className = 'live-transcript';
+  liveTranscriptEl.style.display = 'none';
+  root.appendChild(liveTranscriptEl);
 
   // Media preview list
   const previewList = document.createElement('div');
@@ -346,12 +354,19 @@ export function renderCapture(container: HTMLElement): () => void {
       // Reset transcription tracking for this recording.
       recordedTranscript = null;
       transcriptionDeferred = false;
+      liveTranscriptionError = null;
 
       const transcriptionRequested = settingsStore.getCurrent().transcriptionEnabled;
       const canLiveTranscribe =
         transcriptionRequested && transcriptionService.isSupported && navigator.onLine;
       if (canLiveTranscribe) {
         liveTranscription = transcriptionService.startLive();
+        // Show the live transcript box and stream text in real time.
+        liveTranscriptEl.textContent = 'Listening…';
+        liveTranscriptEl.style.display = 'block';
+        liveTranscription.onText((txt) => {
+          liveTranscriptEl.textContent = txt || 'Listening…';
+        });
       } else if (transcriptionRequested) {
         // Transcription wanted but live capture is unavailable (offline / unsupported).
         transcriptionDeferred = true;
@@ -376,13 +391,21 @@ export function renderCapture(container: HTMLElement): () => void {
         if (liveTranscription) {
           liveTranscription.stop();
           const transcript = await liveTranscription.result;
+          const errCode = liveTranscription.getError();
           liveTranscription = null;
+
+          // Hide and clear the live transcript box.
+          liveTranscriptEl.style.display = 'none';
+          liveTranscriptEl.textContent = '';
+
           if (transcript) {
             recordedTranscript = transcript;
             transcriptionDeferred = false;
           } else if (settingsStore.getCurrent().transcriptionEnabled) {
             // Live recognition produced nothing — allow deferred transcription.
             transcriptionDeferred = true;
+            // Capture the error reason (if any) for accurate messaging.
+            if (errCode) liveTranscriptionError = errCode;
           }
         }
 
@@ -408,6 +431,8 @@ export function renderCapture(container: HTMLElement): () => void {
         liveTranscription.stop();
         liveTranscription = null;
       }
+      liveTranscriptEl.style.display = 'none';
+      liveTranscriptEl.textContent = '';
 
       if (err instanceof MediaUnsupportedError) {
         micDisabled = true;
@@ -607,10 +632,22 @@ export function renderCapture(container: HTMLElement): () => void {
     const settings = settingsStore.getCurrent();
 
     if (note.transcriptionStatus === 'pending') {
-      toastService.show(
-        'Saved. Voice transcription is deferred — open the note and tap "Transcribe" when online.',
-        6000
-      );
+      // Craft a message that reflects WHY live transcription didn't produce text.
+      let deferredMsg: string;
+      if (liveTranscriptionError === 'not-allowed') {
+        deferredMsg =
+          'Saved. Live transcription was blocked (mic permission). You can transcribe later from the note.';
+      } else if (liveTranscriptionError === 'no-speech') {
+        deferredMsg = 'Saved. No speech detected for live transcription.';
+      } else if (transcriptionEnabled && !transcriptionService.isSupported) {
+        deferredMsg = "Saved. Live transcription isn't supported in this browser.";
+      } else if (!navigator.onLine) {
+        deferredMsg = 'Saved. Offline — transcribe later from the note when online.';
+      } else {
+        deferredMsg =
+          'Saved. Voice transcription was unavailable — you can transcribe later from the note.';
+      }
+      toastService.show(deferredMsg, 6000);
     }
 
     if (settings.emailSummaryEnabled && settings.emailSummaryRecipient) {

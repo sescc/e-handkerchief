@@ -12,6 +12,13 @@ import { googleMapsUrl } from '../mapsLink.js';
 import { formatNoteTimestamp } from '../dateFormat.js';
 import { remoteTranscribe } from '../remoteTranscribe.js';
 import { settingsStore } from '../settingsStore.js';
+import {
+  mediaService,
+  MediaUnsupportedError,
+  FileSizeError,
+  UnsupportedFormatError,
+} from '../mediaService.js';
+import type { AudioRecordingHandle } from '../mediaService.js';
 import type {
   Note,
   MediaItem,
@@ -276,6 +283,14 @@ export function renderNoteDetail(
     contentEl.innerHTML = '';
     actionsEl.innerHTML = ''; // hide view-mode actions while editing
 
+    // ---- Newly added media items for this edit session ----
+    const addedItems: MediaItem[] = [];
+    // Object URLs for added-item previews; revoked at teardown via trackUrl and
+    // on individual remove.
+    let editRecording: AudioRecordingHandle | null = null;
+    let isEditRecording = false;
+    let editRecordElapsed = 0;
+
     // Timestamp (read-only)
     const tsEl = document.createElement('div');
     tsEl.className = 'note-detail-timestamp';
@@ -361,6 +376,267 @@ export function renderNoteDetail(
 
     contentEl.appendChild(mediaEl);
 
+    // ---- Add-media controls (mic / photo / video / library) ----
+    const addControls = document.createElement('div');
+    addControls.className = 'media-controls';
+
+    const micBtn = document.createElement('button');
+    micBtn.className = 'btn btn-ghost';
+    micBtn.setAttribute('aria-label', 'Record voice note');
+    micBtn.textContent = '🎤 Mic';
+    addControls.appendChild(micBtn);
+
+    const photoBtn = document.createElement('button');
+    photoBtn.className = 'btn btn-ghost';
+    photoBtn.setAttribute('aria-label', 'Capture photo');
+    photoBtn.textContent = '📷 Photo';
+    addControls.appendChild(photoBtn);
+
+    const videoBtn = document.createElement('button');
+    videoBtn.className = 'btn btn-ghost';
+    videoBtn.setAttribute('aria-label', 'Capture video');
+    videoBtn.textContent = '🎬 Video';
+    addControls.appendChild(videoBtn);
+
+    const libraryBtn = document.createElement('button');
+    libraryBtn.className = 'btn btn-ghost';
+    libraryBtn.setAttribute('aria-label', 'Pick from library');
+    libraryBtn.textContent = '🖼️ Library';
+    addControls.appendChild(libraryBtn);
+
+    contentEl.appendChild(addControls);
+
+    // Recording indicator for edit-mode mic capture (hidden by default)
+    const recIndicator = document.createElement('div');
+    recIndicator.className = 'recording-indicator';
+    recIndicator.style.display = 'none';
+    recIndicator.innerHTML =
+      '<span class="recording-dot"></span><span class="elapsed-counter">0:00</span>';
+    contentEl.appendChild(recIndicator);
+    const recElapsedEl = recIndicator.querySelector<HTMLElement>('.elapsed-counter');
+
+    // Preview list for newly added items
+    const addedPreviewList = document.createElement('div');
+    addedPreviewList.className = 'media-preview-list';
+    contentEl.appendChild(addedPreviewList);
+
+    // Inline media-capture error message
+    const mediaErrorEl = document.createElement('div');
+    mediaErrorEl.className = 'error-message';
+    mediaErrorEl.style.display = 'none';
+    contentEl.appendChild(mediaErrorEl);
+
+    function setEditMediaError(msg: string): void {
+      mediaErrorEl.textContent = msg;
+      mediaErrorEl.style.display = 'flex';
+    }
+    function clearEditMediaError(): void {
+      mediaErrorEl.style.display = 'none';
+    }
+
+    function handleEditMediaError(err: unknown): void {
+      if (err instanceof FileSizeError) {
+        setEditMediaError('File exceeds the 100 MB size limit. Please choose a smaller file.');
+      } else if (err instanceof UnsupportedFormatError) {
+        setEditMediaError('Unsupported file format. Please use JPEG, PNG, GIF, WEBP, MP4, or MOV.');
+      } else if (err instanceof MediaUnsupportedError) {
+        setEditMediaError('Media capture is not supported in this browser.');
+      } else if (err instanceof Error && err.message !== 'File selection cancelled') {
+        setEditMediaError(`Could not capture media: ${err.message}`);
+      }
+      // Cancelled by user — no error message
+    }
+
+    function formatElapsed(sec: number): string {
+      const m = Math.floor(sec / 60);
+      const s = sec % 60;
+      return `${m}:${String(s).padStart(2, '0')}`;
+    }
+
+    // Renders a preview tile for a newly added item with a remove (×) button.
+    function renderAddedItem(item: MediaItem, previewUrl?: string): void {
+      const wrapper = document.createElement('div');
+      wrapper.className = 'preview-item';
+
+      let inner: HTMLElement;
+      if (item.type === 'audio') {
+        const audio = document.createElement('audio');
+        audio.controls = true;
+        if (previewUrl) audio.src = previewUrl;
+        audio.className = 'audio-item';
+        inner = audio;
+      } else if (item.type === 'photo' || item.type === 'video') {
+        const img = document.createElement('img');
+        img.src = previewUrl ?? '';
+        img.width = 80;
+        img.height = 80;
+        img.alt = item.type === 'photo' ? 'Photo preview' : 'Video thumbnail';
+        img.style.objectFit = 'cover';
+        img.style.borderRadius = '4px';
+        inner = img;
+      } else {
+        const txt = document.createElement('div');
+        txt.textContent = 'Item';
+        inner = txt;
+      }
+      wrapper.appendChild(inner);
+
+      const removeBtn = document.createElement('button');
+      removeBtn.className = 'remove-btn';
+      removeBtn.setAttribute('aria-label', 'Remove item');
+      removeBtn.textContent = '×';
+      removeBtn.addEventListener('click', () => {
+        const idx = addedItems.indexOf(item);
+        if (idx !== -1) addedItems.splice(idx, 1);
+        if (previewUrl) URL.revokeObjectURL(previewUrl);
+        wrapper.remove();
+      });
+      wrapper.appendChild(removeBtn);
+
+      addedPreviewList.appendChild(wrapper);
+    }
+
+    // ---- Mic (audio) — start/stop toggle, no live transcription here. ----
+    const onEditMicClick = async (): Promise<void> => {
+      clearEditMediaError();
+
+      if (isEditRecording && editRecording) {
+        editRecording.stop();
+        return;
+      }
+
+      try {
+        const handle = await mediaService.startAudioRecording();
+        editRecording = handle;
+        isEditRecording = true;
+        editRecordElapsed = 0;
+        micBtn.textContent = '⏹ Stop';
+        recIndicator.style.display = 'flex';
+        if (recElapsedEl) recElapsedEl.textContent = '0:00';
+
+        handle.onElapsed((sec) => {
+          editRecordElapsed = sec;
+          if (recElapsedEl) recElapsedEl.textContent = formatElapsed(sec);
+        });
+
+        void handle.result.then((blob) => {
+          isEditRecording = false;
+          editRecording = null;
+          micBtn.textContent = '🎤 Mic';
+          recIndicator.style.display = 'none';
+
+          const audioUrl = trackUrl(URL.createObjectURL(blob));
+          const item: AudioMediaItem = {
+            id: crypto.randomUUID(),
+            type: 'audio',
+            createdAt: Date.now(),
+            blob,
+            durationSeconds: editRecordElapsed,
+          };
+          addedItems.push(item);
+          renderAddedItem(item, audioUrl);
+        });
+      } catch (err) {
+        isEditRecording = false;
+        editRecording = null;
+        micBtn.textContent = '🎤 Mic';
+        recIndicator.style.display = 'none';
+        if (err instanceof MediaUnsupportedError) {
+          setEditMediaError('Voice recording is not supported in this browser.');
+        } else {
+          setEditMediaError('Microphone access required. Please allow microphone permissions.');
+        }
+      }
+    };
+    micBtn.addEventListener('click', () => void onEditMicClick());
+
+    // ---- Photo ----
+    const onEditPhotoClick = async (): Promise<void> => {
+      clearEditMediaError();
+      try {
+        const blob = await mediaService.capturePhoto();
+        const thumbBlob = await mediaService.generateThumbnail(blob);
+        const url = trackUrl(URL.createObjectURL(thumbBlob));
+        const dims = await getImageDimensions(blob);
+        const item: PhotoMediaItem = {
+          id: crypto.randomUUID(),
+          type: 'photo',
+          createdAt: Date.now(),
+          blob,
+          widthPx: dims.width,
+          heightPx: dims.height,
+          thumbnailBlob: thumbBlob,
+        };
+        addedItems.push(item);
+        renderAddedItem(item, url);
+      } catch (err) {
+        handleEditMediaError(err);
+      }
+    };
+    photoBtn.addEventListener('click', () => void onEditPhotoClick());
+
+    // ---- Video ----
+    const onEditVideoClick = async (): Promise<void> => {
+      clearEditMediaError();
+      try {
+        const blob = await mediaService.captureVideo();
+        const thumbBlob = await mediaService.generateThumbnail(blob);
+        const thumbUrl = trackUrl(URL.createObjectURL(thumbBlob));
+        const item: VideoMediaItem = {
+          id: crypto.randomUUID(),
+          type: 'video',
+          createdAt: Date.now(),
+          blob,
+          durationSeconds: 0,
+          thumbnailBlob: thumbBlob,
+        };
+        addedItems.push(item);
+        renderAddedItem(item, thumbUrl);
+      } catch (err) {
+        handleEditMediaError(err);
+      }
+    };
+    videoBtn.addEventListener('click', () => void onEditVideoClick());
+
+    // ---- Library ----
+    const onEditLibraryClick = async (): Promise<void> => {
+      clearEditMediaError();
+      try {
+        const blob = await mediaService.pickFromLibrary();
+        const thumbBlob = await mediaService.generateThumbnail(blob);
+        const thumbUrl = trackUrl(URL.createObjectURL(thumbBlob));
+
+        if (blob.type.startsWith('image/')) {
+          const dims = await getImageDimensions(blob);
+          const item: PhotoMediaItem = {
+            id: crypto.randomUUID(),
+            type: 'photo',
+            createdAt: Date.now(),
+            blob,
+            widthPx: dims.width,
+            heightPx: dims.height,
+            thumbnailBlob: thumbBlob,
+          };
+          addedItems.push(item);
+          renderAddedItem(item, thumbUrl);
+        } else {
+          const item: VideoMediaItem = {
+            id: crypto.randomUUID(),
+            type: 'video',
+            createdAt: Date.now(),
+            blob,
+            durationSeconds: 0,
+            thumbnailBlob: thumbBlob,
+          };
+          addedItems.push(item);
+          renderAddedItem(item, thumbUrl);
+        }
+      } catch (err) {
+        handleEditMediaError(err);
+      }
+    };
+    libraryBtn.addEventListener('click', () => void onEditLibraryClick());
+
     // Inline error placeholder
     const errorEl = document.createElement('div');
     errorEl.className = 'validation-error';
@@ -377,12 +653,18 @@ export function renderNoteDetail(
     saveBtn.addEventListener('click', () => {
       const text = textarea.value.trim();
 
-      // Rebuild media items: keep non-removed non-text items.
+      // Stop any in-progress edit-mode recording so its audio is captured.
+      if (isEditRecording && editRecording) {
+        editRecording.stop();
+      }
+
+      // Rebuild media items: keep non-removed non-text items, then append
+      // the newly added items from this edit session.
       const keptMedia: MediaItem[] = nonTextItems.filter(
         (m) => !removedIds.has(m.id)
       );
 
-      const newMediaItems: MediaItem[] = [...keptMedia];
+      const newMediaItems: MediaItem[] = [...keptMedia, ...addedItems];
 
       if (text.length > 0) {
         if (textItem) {
@@ -418,6 +700,13 @@ export function renderNoteDetail(
         updatedAt: Date.now(),
       };
 
+      // If a newly added audio item was attached and the note has no
+      // transcription yet, mark it pending so the Transcribe affordance shows.
+      const addedAudio = addedItems.some((m) => m.type === 'audio');
+      if (addedAudio && !updatedNote.transcription) {
+        updatedNote.transcriptionStatus = 'pending';
+      }
+
       void (async () => {
         await noteStore.save(updatedNote);
         eventBus.emit('note:saved', updatedNote);
@@ -430,7 +719,15 @@ export function renderNoteDetail(
     const cancelBtn = document.createElement('button');
     cancelBtn.className = 'btn btn-ghost';
     cancelBtn.textContent = 'Cancel';
-    cancelBtn.addEventListener('click', () => renderNote(note));
+    cancelBtn.addEventListener('click', () => {
+      // Stop any in-progress edit-mode recording before leaving edit mode.
+      if (isEditRecording && editRecording) {
+        editRecording.stop();
+        editRecording = null;
+        isEditRecording = false;
+      }
+      renderNote(note);
+    });
     editActions.appendChild(cancelBtn);
 
     contentEl.appendChild(editActions);
@@ -479,4 +776,21 @@ export function renderNoteDetail(
     }
     root.remove();
   };
+}
+
+/** Resolve the pixel dimensions of an image Blob. */
+function getImageDimensions(blob: Blob): Promise<{ width: number; height: number }> {
+  return new Promise((resolve) => {
+    const url = URL.createObjectURL(blob);
+    const img = new Image();
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      resolve({ width: img.naturalWidth, height: img.naturalHeight });
+    };
+    img.onerror = () => {
+      URL.revokeObjectURL(url);
+      resolve({ width: 0, height: 0 });
+    };
+    img.src = url;
+  });
 }
