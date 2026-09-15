@@ -212,15 +212,21 @@ export function renderCalendar(container: HTMLElement): () => void {
           `${friendlyDayLabel(key)} — ${count} knot${count === 1 ? '' : 's'}`
         );
 
-        const dots = document.createElement('div');
-        dots.className = 'calendar-dots';
-        const dotCount = Math.min(count, 3);
-        for (let i = 0; i < dotCount; i++) {
-          const dot = document.createElement('span');
-          dot.className = 'calendar-dot';
-          dots.appendChild(dot);
+        if (count <= 4) {
+          const dots = document.createElement('div');
+          dots.className = 'calendar-dots';
+          for (let i = 0; i < count; i++) {
+            const dot = document.createElement('span');
+            dot.className = 'calendar-dot';
+            dots.appendChild(dot);
+          }
+          cell.appendChild(dots);
+        } else {
+          const badge = document.createElement('div');
+          badge.className = 'calendar-count-badge';
+          badge.textContent = String(count);
+          cell.appendChild(badge);
         }
-        cell.appendChild(dots);
 
         const onTap = () => {
           if (openDayKey === key) {
