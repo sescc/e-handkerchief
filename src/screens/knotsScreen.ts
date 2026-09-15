@@ -17,6 +17,20 @@ function formatCoords(lat: number, lng: number): string {
   return `${latStr}, ${lngStr}`;
 }
 
+/**
+ * Gather all transcripts to display for a note.
+ * Prefers per-audio-item transcripts (in media order); falls back to the
+ * legacy note-level transcription for back-compat with old notes.
+ */
+function collectTranscripts(note: Note): string[] {
+  const perItem = note.mediaItems
+    .filter((m): m is AudioMediaItem => m.type === 'audio' && !!m.transcript && m.transcript.trim().length > 0)
+    .map((m) => m.transcript!.trim());
+  if (perItem.length > 0) return perItem;
+  if (note.transcription && note.transcription.trim().length > 0) return [note.transcription.trim()];
+  return [];
+}
+
 export function renderKnots(container: HTMLElement): () => void {
   const objUrls: string[] = [];
   let unsubscribeNotesSaved: (() => void) | null = null;
@@ -49,7 +63,7 @@ export function renderKnots(container: HTMLElement): () => void {
     entry.setAttribute('role', 'link');
     entry.tabIndex = 0;
 
-    const goToNote = () => navigate(`#/note/${note.id}`);
+    const goToNote = () => navigate(`#/knot/${note.id}`);
     entry.addEventListener('click', goToNote);
     entry.addEventListener('keydown', (ev) => {
       if (ev.key === 'Enter' || ev.key === ' ') {
@@ -183,11 +197,11 @@ export function renderKnots(container: HTMLElement): () => void {
       }
     }
 
-    // Transcription (if present)
-    if (note.transcription) {
+    // Transcriptions (per-audio-item, with legacy fallback)
+    for (const transcript of collectTranscripts(note)) {
       const transEl = document.createElement('div');
       transEl.className = 'transcription-block';
-      transEl.textContent = note.transcription;
+      transEl.textContent = transcript;
       entry.appendChild(transEl);
     }
 

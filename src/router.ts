@@ -33,7 +33,9 @@ export function parseHash(hash: string): RouteMatch {
     return { route: 'settings', params: {} };
   }
 
-  const noteMatch = path.match(/^\/note\/(.+)$/);
+  // '/knot/{id}' is the current form; '/note/{id}' is kept as a back-compat
+  // alias so stale links/bookmarks and SW notification deep-links resolve.
+  const noteMatch = path.match(/^\/(?:knot|note)\/(.+)$/);
   if (noteMatch) {
     return { route: 'note', params: { id: noteMatch[1] } };
   }
