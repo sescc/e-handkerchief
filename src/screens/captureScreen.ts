@@ -38,7 +38,9 @@ interface DraftMediaItem {
 
 function makeTimestamp(): NoteTimestamp {
   const now = new Date();
-  const localISO = now.toISOString().replace('Z', getUTCOffset(now));
+  // Store the true instant as a UTC ISO string (…Z). formatNoteTimestamp()
+  // converts this instant into the user's chosen timezone for display.
+  const localISO = now.toISOString();
   const utcOffset = getUTCOffset(now);
   return { localISO, utcOffset };
 }
