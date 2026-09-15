@@ -129,7 +129,7 @@ export function renderCalendar(container: HTMLElement): () => void {
       previewEl.textContent = notePreview(note);
       row.appendChild(previewEl);
 
-      const go = () => navigate(`#/note/${note.id}`);
+      const go = () => navigate(`#/knot/${note.id}`);
       row.addEventListener('click', go);
       row.addEventListener('keydown', (ev) => {
         if (ev.key === 'Enter' || ev.key === ' ') {

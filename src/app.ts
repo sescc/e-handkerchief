@@ -85,7 +85,16 @@ function buildNavBar(): HTMLElement {
   const calendarLink = document.createElement('a');
   calendarLink.href = '#/calendar';
   calendarLink.className = 'nav-link';
-  calendarLink.innerHTML = '<span class="nav-icon">📅</span><span>Calendar</span>';
+  const calIcon = document.createElement('span');
+  calIcon.className = 'nav-icon cal-icon';
+  const calDay = document.createElement('span');
+  calDay.className = 'cal-icon-day';
+  calDay.textContent = String(new Date().getDate());
+  calIcon.appendChild(calDay);
+  const calLabel = document.createElement('span');
+  calLabel.textContent = 'Calendar';
+  calendarLink.appendChild(calIcon);
+  calendarLink.appendChild(calLabel);
 
   const captureBtn = document.createElement('a');
   captureBtn.href = '#/';
