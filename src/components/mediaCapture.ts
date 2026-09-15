@@ -392,6 +392,18 @@ export function renderMediaCapture(
           blob,
           durationSeconds: recordingElapsed,
         };
+        // Attach per-item transcription state so each recording carries its own
+        // transcript + status. The note-level CapturedMedia fields are kept in
+        // sync for the capture screen's post-save toast messaging, but this
+        // item is now the authoritative source of the transcript.
+        if (recordedTranscript) {
+          item.transcript = recordedTranscript;
+          item.transcriptionStatus = 'live';
+        } else if (transcriptionDeferred) {
+          item.transcriptionStatus = 'pending';
+        } else {
+          item.transcriptionStatus = 'none';
+        }
         draftItems.push({ item, previewUrl: audioUrl });
         refreshPreviewList();
         pendingRecordingPromise = null;

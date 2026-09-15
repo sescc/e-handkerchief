@@ -3,7 +3,7 @@
 // Hash-based single-page routing.
 // ============================================================
 
-export type Route = 'capture' | 'journal' | 'note' | 'settings';
+export type Route = 'capture' | 'knots' | 'calendar' | 'note' | 'settings';
 
 export interface RouteMatch {
   route: Route;
@@ -21,8 +21,13 @@ export function parseHash(hash: string): RouteMatch {
   if (path === '' || path === '/') {
     return { route: 'capture', params: {} };
   }
-  if (path === '/journal') {
-    return { route: 'journal', params: {} };
+  // '/journal' is kept as a back-compat alias so stale links/bookmarks and
+  // the SW notification deep-links continue to resolve to the Knots screen.
+  if (path === '/knots' || path === '/journal') {
+    return { route: 'knots', params: {} };
+  }
+  if (path === '/calendar') {
+    return { route: 'calendar', params: {} };
   }
   if (path === '/settings') {
     return { route: 'settings', params: {} };
@@ -39,7 +44,7 @@ export function parseHash(hash: string): RouteMatch {
 
 /**
  * Navigate to a hash-based path.
- * e.g. navigate('#/journal') or navigate('#/note/some-uuid')
+ * e.g. navigate('#/knots') or navigate('#/note/some-uuid')
  */
 export function navigate(path: string): void {
   window.location.hash = path;
@@ -72,9 +77,14 @@ export function initRouter(container: HTMLElement): void {
         _currentCleanup = renderCapture(container);
         break;
       }
-      case 'journal': {
-        const { renderJournal } = await import('./screens/journalScreen.js');
-        _currentCleanup = renderJournal(container);
+      case 'knots': {
+        const { renderKnots } = await import('./screens/knotsScreen.js');
+        _currentCleanup = renderKnots(container);
+        break;
+      }
+      case 'calendar': {
+        const { renderCalendar } = await import('./screens/calendarScreen.js');
+        _currentCleanup = renderCalendar(container);
         break;
       }
       case 'note': {

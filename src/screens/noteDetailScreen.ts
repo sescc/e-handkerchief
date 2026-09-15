@@ -58,8 +58,8 @@ export function renderNoteDetail(
 
   const backBtn = document.createElement('button');
   backBtn.className = 'back-btn';
-  backBtn.textContent = '← Back to Journal';
-  backBtn.addEventListener('click', () => navigate('#/journal'));
+  backBtn.textContent = '← Back to Knots';
+  backBtn.addEventListener('click', () => navigate('#/knots'));
   headerEl.appendChild(backBtn);
 
   // Container for Delete / Edit actions (shown only when a note is loaded)
@@ -118,7 +118,7 @@ export function renderNoteDetail(
         await noteStore.delete(note.id);
         eventBus.emit('note:deleted', note.id);
         toastService.show('Note deleted');
-        navigate('#/journal');
+        navigate('#/knots');
       })();
     });
     actionsEl.appendChild(deleteBtn);
@@ -148,7 +148,7 @@ export function renderNoteDetail(
     // have a valid reference child.
     contentEl.appendChild(mediaEl);
 
-    for (const item of note.mediaItems) {
+    note.mediaItems.forEach((item, index) => {
       if (item.type === 'text') {
         const textItem = item as TextMediaItem;
         const textEl = document.createElement('div');
@@ -167,6 +167,9 @@ export function renderNoteDetail(
         });
 
         mediaEl.appendChild(audio);
+
+        // Per-audio transcription sub-panel beneath THIS player.
+        mediaEl.appendChild(renderAudioTranscribePanel(note, audioItem, index));
       } else if (item.type === 'photo') {
         const photoItem = item as PhotoMediaItem;
         const img = document.createElement('img');
@@ -197,79 +200,149 @@ export function renderNoteDetail(
 
         mediaEl.appendChild(video);
       }
-    }
+    });
 
-    // Transcription
-    if (note.transcription) {
+    // Legacy edge case: an old note carrying a note-level transcription but no
+    // audio item at all. Show it read-only so nothing is lost. (When audio
+    // exists, the legacy transcript is surfaced via the first audio item's
+    // per-item panel instead — see renderAudioTranscribePanel.)
+    const hasAudio = note.mediaItems.some((m) => m.type === 'audio');
+    if (note.transcription && !hasAudio) {
       const transEl = document.createElement('div');
       transEl.className = 'transcription-block';
       transEl.textContent = note.transcription;
       contentEl.appendChild(transEl);
     }
+  }
 
-    // Transcribe affordance — only when there's audio and no transcript yet
-    // (or the note is explicitly pending/failed).
-    const audioItem = note.mediaItems.find(
-      (m): m is AudioMediaItem => m.type === 'audio'
-    );
-    const needsTranscribe =
-      !!audioItem &&
-      (note.transcriptionStatus === 'pending' ||
-        note.transcriptionStatus === 'failed' ||
-        !note.transcription);
-    if (audioItem && needsTranscribe) {
-      const panel = document.createElement('div');
-      panel.className = 'transcribe-panel';
+  /**
+   * Build the per-audio-item transcription sub-panel shown beneath a specific
+   * audio player. Each audio item carries its own transcript + status and can
+   * be transcribed, re-transcribed, or hand-edited independently.
+   *
+   * Backward compat: if this item has no per-item transcript but the note has a
+   * legacy note-level `transcription` AND this is the first audio item, that
+   * legacy text is used as the initial editable value. It's promoted to the
+   * per-item transcript the moment the user saves an edit or (re-)transcribes.
+   */
+  function renderAudioTranscribePanel(
+    note: Note,
+    audioItem: AudioMediaItem,
+    index: number
+  ): HTMLElement {
+    const panel = document.createElement('div');
+    panel.className = 'transcribe-item-panel';
 
+    // Determine whether an earlier audio item precedes this one, so the legacy
+    // note-level transcript only backfills the FIRST audio item.
+    const isFirstAudio =
+      note.mediaItems.findIndex((m) => m.type === 'audio') === index;
+
+    // Effective transcript for display: prefer the per-item transcript; else
+    // fall back to the legacy note-level transcript for the first audio item.
+    const legacyFallback =
+      !audioItem.transcript && isFirstAudio && note.transcription
+        ? note.transcription
+        : '';
+    const effectiveTranscript = audioItem.transcript ?? legacyFallback;
+
+    /** Shared remote-transcribe action for both Transcribe and Re-transcribe. */
+    function runTranscribe(btn: HTMLButtonElement, isRetry: boolean): void {
+      void (async () => {
+        if (!settingsStore.getCurrent().transcriptionServerUrl.trim()) {
+          toastService.show('Set a transcription server URL in Settings first.');
+          return;
+        }
+        if (!navigator.onLine) {
+          toastService.show('No internet connection — try again later.');
+          return;
+        }
+
+        btn.disabled = true;
+        btn.textContent = 'Transcribing…';
+
+        const result = await remoteTranscribe(audioItem.blob);
+        if (result.ok && result.text !== undefined) {
+          audioItem.transcript = result.text;
+          audioItem.transcriptionStatus = 'done';
+          note.updatedAt = Date.now();
+          await noteStore.save(note);
+          eventBus.emit('note:saved', note);
+          toastService.show(isRetry ? 'Re-transcribed' : 'Transcription added');
+          renderNote(note);
+        } else {
+          audioItem.transcriptionStatus = 'failed';
+          note.updatedAt = Date.now();
+          await noteStore.save(note);
+          eventBus.emit('note:saved', note);
+          toastService.show(result.error ?? 'Transcription failed');
+          btn.disabled = false;
+          btn.textContent = isRetry ? '🎧 Re-transcribe' : '🎧 Transcribe voice';
+        }
+      })();
+    }
+
+    if (effectiveTranscript) {
+      // Editable transcript + Save transcript + Re-transcribe.
+      const textarea = document.createElement('textarea');
+      textarea.className = 'transcript-edit';
+      textarea.maxLength = 5000;
+      textarea.value = effectiveTranscript;
+      panel.appendChild(textarea);
+
+      const actions = document.createElement('div');
+      actions.className = 'transcribe-actions';
+
+      const saveBtn = document.createElement('button');
+      saveBtn.className = 'btn btn-ghost btn-sm';
+      saveBtn.textContent = 'Save transcript';
+      saveBtn.addEventListener('click', () => {
+        void (async () => {
+          audioItem.transcript = textarea.value;
+          audioItem.transcriptionStatus = 'done';
+          note.updatedAt = Date.now();
+          await noteStore.save(note);
+          eventBus.emit('note:saved', note);
+          toastService.show('Transcript saved');
+          renderNote(note);
+        })();
+      });
+      actions.appendChild(saveBtn);
+
+      const retranscribeBtn = document.createElement('button');
+      retranscribeBtn.className = 'btn btn-ghost btn-sm';
+      retranscribeBtn.textContent = '🎧 Re-transcribe';
+      retranscribeBtn.addEventListener('click', () =>
+        runTranscribe(retranscribeBtn, true)
+      );
+      actions.appendChild(retranscribeBtn);
+
+      panel.appendChild(actions);
+    } else {
+      // No transcript yet — status line + Transcribe button.
       const statusLine = document.createElement('div');
       statusLine.className = 'transcribe-status settings-row-desc';
       statusLine.textContent =
-        note.transcriptionStatus === 'failed'
+        audioItem.transcriptionStatus === 'failed'
           ? 'Last transcription attempt failed.'
           : 'Voice not yet transcribed.';
       panel.appendChild(statusLine);
 
+      const actions = document.createElement('div');
+      actions.className = 'transcribe-actions';
+
       const transcribeBtn = document.createElement('button');
-      transcribeBtn.className = 'btn btn-ghost';
+      transcribeBtn.className = 'btn btn-ghost btn-sm';
       transcribeBtn.textContent = '🎧 Transcribe voice';
-      transcribeBtn.addEventListener('click', () => {
-        void (async () => {
-          if (!settingsStore.getCurrent().transcriptionServerUrl.trim()) {
-            toastService.show('Set a transcription server URL in Settings first.');
-            return;
-          }
-          if (!navigator.onLine) {
-            toastService.show('No internet connection — try again later.');
-            return;
-          }
+      transcribeBtn.addEventListener('click', () =>
+        runTranscribe(transcribeBtn, false)
+      );
+      actions.appendChild(transcribeBtn);
 
-          transcribeBtn.disabled = true;
-          transcribeBtn.textContent = 'Transcribing…';
-
-          const result = await remoteTranscribe(audioItem.blob);
-          if (result.ok && result.text !== undefined) {
-            note.transcription = result.text;
-            note.transcriptionStatus = 'done';
-            note.updatedAt = Date.now();
-            await noteStore.save(note);
-            eventBus.emit('note:saved', note);
-            toastService.show('Transcription added');
-            renderNote(note);
-          } else {
-            note.transcriptionStatus = 'failed';
-            note.updatedAt = Date.now();
-            await noteStore.save(note);
-            eventBus.emit('note:saved', note);
-            toastService.show(result.error ?? 'Transcription failed');
-            transcribeBtn.disabled = false;
-            transcribeBtn.textContent = '🎧 Transcribe voice';
-          }
-        })();
-      });
-      panel.appendChild(transcribeBtn);
-
-      contentEl.appendChild(panel);
+      panel.appendChild(actions);
     }
+
+    return panel;
   }
 
   function renderEditMode(note: Note): void {
@@ -428,23 +501,16 @@ export function renderNoteDetail(
           return;
         }
 
+        // Transcription now lives on each AudioMediaItem. Kept items retain
+        // their own transcript/status (they're the same objects), and newly
+        // captured audio items already carry their per-item transcript/status
+        // from the media-capture component. We do NOT copy the legacy
+        // note-level transcript onto any item here.
         const updatedNote: Note = {
           ...note,
           mediaItems: newMediaItems,
           updatedAt: Date.now(),
         };
-
-        // If live transcription produced text for a newly captured recording and
-        // the note has no transcription yet, attach it as a live transcript.
-        const addedAudio = captured.items.some((m) => m.type === 'audio');
-        if (captured.transcript && !updatedNote.transcription) {
-          updatedNote.transcription = captured.transcript;
-          updatedNote.transcriptionStatus = 'live';
-        } else if (addedAudio && !updatedNote.transcription) {
-          // A newly added audio item exists but there's no transcript yet —
-          // mark it pending so the Transcribe affordance shows.
-          updatedNote.transcriptionStatus = 'pending';
-        }
 
         mediaCapture.destroy();
 
@@ -487,8 +553,8 @@ export function renderNoteDetail(
 
     const goBtn = document.createElement('button');
     goBtn.className = 'btn btn-primary mt-md';
-    goBtn.textContent = 'Go to Journal';
-    goBtn.addEventListener('click', () => navigate('#/journal'));
+    goBtn.textContent = 'Go to Knots';
+    goBtn.addEventListener('click', () => navigate('#/knots'));
     contentEl.appendChild(goBtn);
   }
 

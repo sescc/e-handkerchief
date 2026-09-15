@@ -45,7 +45,8 @@ const ASSETS: string[] = [
   'src/types.js',
   'src/components/mediaCapture.js',
   'src/screens/captureScreen.js',
-  'src/screens/journalScreen.js',
+  'src/screens/knotsScreen.js',
+  'src/screens/calendarScreen.js',
   'src/screens/noteDetailScreen.js',
   'src/screens/settingsScreen.js',
   // icons
