@@ -125,9 +125,9 @@ main {
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: center;
+  justify-content: flex-end;
   flex: 1;
-  padding: var(--space-sm);
+  padding: var(--space-xs) var(--space-sm) var(--space-sm);
   text-decoration: none;
   color: var(--color-text-muted);
   font-size: 11px;
@@ -164,6 +164,7 @@ main {
   display: flex;
   align-items: center;
   justify-content: center;
+  align-self: center;
   background: var(--color-primary);
   color: white;
   border-radius: var(--radius-full);
@@ -187,6 +188,9 @@ main {
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  box-sizing: border-box;
+  flex-shrink: 0;
+  flex: 0 0 auto;
   width: 20px;
   height: 20px;
   border: 1.5px solid currentColor;
@@ -208,7 +212,7 @@ main {
   opacity: 0.6;
 }
 .cal-icon-day {
-  font-size: 10px;
+  font-size: 9px;
   font-weight: 700;
   line-height: 1;
   font-variant-numeric: tabular-nums;
