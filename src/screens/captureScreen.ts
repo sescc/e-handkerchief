@@ -202,26 +202,23 @@ export function renderCapture(container: HTMLElement): () => void {
     isSaving = true;
     updateSaveBtnState();
 
-    // Determine transcription status — only meaningful when the note has audio.
+    // Transcription now lives on each AudioMediaItem (set by the media-capture
+    // component). New notes leave the legacy note-level transcription fields
+    // undefined and rely on per-item transcript/status.
     const hasAudio = allItems.some((m) => m.type === 'audio');
     const transcriptionEnabled = settingsStore.getCurrent().transcriptionEnabled;
 
-    let transcriptionStatus: Note['transcriptionStatus'] = 'none';
-    if (hasAudio) {
-      if (captured.transcript) {
-        transcriptionStatus = 'live';
-      } else if (transcriptionEnabled && captured.transcriptionDeferred) {
-        transcriptionStatus = 'pending';
-      }
-    }
+    // Derive the deferred/pending signal from the captured audio items for the
+    // post-save toast messaging below.
+    const hasPendingAudio = allItems.some(
+      (m) => m.type === 'audio' && m.transcriptionStatus === 'pending'
+    );
 
     const note: Note = {
       id: crypto.randomUUID(),
       timestamp,
       location,
       mediaItems: allItems,
-      transcription: (hasAudio && captured.transcript) ? captured.transcript : undefined,
-      transcriptionStatus,
       createdAt: Date.now(),
       updatedAt: Date.now(),
     };
@@ -243,7 +240,7 @@ export function renderCapture(container: HTMLElement): () => void {
     // Optional side-effects (fire-and-forget)
     const settings = settingsStore.getCurrent();
 
-    if (note.transcriptionStatus === 'pending') {
+    if (hasAudio && hasPendingAudio) {
       // Craft a message that reflects WHY live transcription didn't produce text.
       let deferredMsg: string;
       if (captured.liveTranscriptionError === 'not-allowed') {
@@ -279,7 +276,7 @@ export function renderCapture(container: HTMLElement): () => void {
         .catch(() => {/* queued internally */});
     }
 
-    navigate('#/journal');
+    navigate('#/knots');
   };
 
   saveBtn.addEventListener('click', () => void onSaveClick());

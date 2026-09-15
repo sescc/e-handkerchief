@@ -77,10 +77,15 @@ function buildNavBar(): HTMLElement {
   const nav = document.createElement('nav');
   nav.className = 'nav-bar';
 
-  const journalLink = document.createElement('a');
-  journalLink.href = '#/journal';
-  journalLink.className = 'nav-link';
-  journalLink.innerHTML = '<span class="nav-icon">📓</span><span>Journal</span>';
+  const knotsLink = document.createElement('a');
+  knotsLink.href = '#/knots';
+  knotsLink.className = 'nav-link';
+  knotsLink.innerHTML = '<span class="nav-icon">🪢</span><span>Knots</span>';
+
+  const calendarLink = document.createElement('a');
+  calendarLink.href = '#/calendar';
+  calendarLink.className = 'nav-link';
+  calendarLink.innerHTML = '<span class="nav-icon">📅</span><span>Calendar</span>';
 
   const captureBtn = document.createElement('a');
   captureBtn.href = '#/';
@@ -95,11 +100,15 @@ function buildNavBar(): HTMLElement {
 
   function updateActive(): void {
     const hash = window.location.hash;
-    journalLink.removeAttribute('aria-current');
+    knotsLink.removeAttribute('aria-current');
+    calendarLink.removeAttribute('aria-current');
     captureBtn.removeAttribute('aria-current');
     settingsLink.removeAttribute('aria-current');
-    if (hash === '#/journal') {
-      journalLink.setAttribute('aria-current', 'page');
+    // '#/journal' is the back-compat alias for the Knots tab.
+    if (hash === '#/knots' || hash === '#/journal') {
+      knotsLink.setAttribute('aria-current', 'page');
+    } else if (hash === '#/calendar') {
+      calendarLink.setAttribute('aria-current', 'page');
     } else if (hash === '#/settings') {
       settingsLink.setAttribute('aria-current', 'page');
     } else {
@@ -109,7 +118,9 @@ function buildNavBar(): HTMLElement {
   window.addEventListener('hashchange', updateActive);
   updateActive();
 
-  nav.appendChild(journalLink);
+  // Order left→right: Knots, Calendar, + (capture), Settings
+  nav.appendChild(knotsLink);
+  nav.appendChild(calendarLink);
   nav.appendChild(captureBtn);
   nav.appendChild(settingsLink);
   return nav;

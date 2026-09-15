@@ -1,6 +1,6 @@
 // ============================================================
-// e-Handkerchief — JournalScreen
-// Displays all notes in reverse-chronological order.
+// e-Handkerchief — KnotsScreen
+// Displays all knots (notes) in reverse-chronological order.
 // ============================================================
 
 import { noteStore } from '../noteStore.js';
@@ -17,7 +17,7 @@ function formatCoords(lat: number, lng: number): string {
   return `${latStr}, ${lngStr}`;
 }
 
-export function renderJournal(container: HTMLElement): () => void {
+export function renderKnots(container: HTMLElement): () => void {
   const objUrls: string[] = [];
   let unsubscribeNotesSaved: (() => void) | null = null;
   let unsubscribeNotesDeleted: (() => void) | null = null;
@@ -28,11 +28,11 @@ export function renderJournal(container: HTMLElement): () => void {
   }
 
   const root = document.createElement('div');
-  root.className = 'journal-screen';
+  root.className = 'knots-screen';
 
   const titleEl = document.createElement('h1');
   titleEl.className = 'page-title';
-  titleEl.textContent = 'Journal';
+  titleEl.textContent = 'Knots';
   root.appendChild(titleEl);
 
   const listEl = document.createElement('div');
@@ -217,11 +217,11 @@ export function renderJournal(container: HTMLElement): () => void {
 
       const icon = document.createElement('div');
       icon.className = 'empty-state-icon';
-      icon.textContent = '📓';
+      icon.textContent = '🪢';
       emptyState.appendChild(icon);
 
       const msg = document.createElement('p');
-      msg.textContent = 'No notes yet — tap + to capture your first.';
+      msg.textContent = 'No knots yet — tap + to tie your first.';
       emptyState.appendChild(msg);
 
       listEl.appendChild(emptyState);

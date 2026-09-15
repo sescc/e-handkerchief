@@ -30,6 +30,10 @@ export interface AudioMediaItem extends MediaItemBase {
   type: 'audio';
   blob: Blob;
   durationSeconds: number;
+  /** Transcript text for THIS audio clip (live-captured, remote, or hand-edited). */
+  transcript?: string;
+  /** Transcription lifecycle for THIS audio clip. */
+  transcriptionStatus?: 'none' | 'live' | 'pending' | 'done' | 'failed';
 }
 
 export interface PhotoMediaItem extends MediaItemBase {
@@ -63,9 +67,9 @@ export interface Note {
   timestamp: NoteTimestamp;
   location: NoteLocation | null;
   mediaItems: MediaItem[];
-  /** Attached if transcription succeeded */
+  /** @deprecated Legacy note-level transcription; new code uses per-AudioMediaItem transcript. Retained for backward compatibility with old notes. */
   transcription?: string;
-  /** Transcription lifecycle for any audio in this note. */
+  /** @deprecated Legacy note-level transcription; new code uses per-AudioMediaItem transcript. Retained for backward compatibility with old notes. */
   transcriptionStatus?: 'none' | 'live' | 'pending' | 'done' | 'failed';
   /** Unix ms — used for Journal sort order */
   createdAt: number;
