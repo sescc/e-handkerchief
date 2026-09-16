@@ -356,10 +356,36 @@ export function renderNoteDetail(
     tsEl.textContent = formatNoteTimestamp(note.timestamp.localISO);
     contentEl.appendChild(tsEl);
 
-    // Location (read-only link)
-    const locLink = renderLocation(note, 'note-detail-location');
-    if (locLink) {
-      contentEl.appendChild(locLink);
+    // Location label — editable display text. Only shown when the note has
+    // coordinates. Editing the label never touches lat/lng, so the view-mode
+    // Google Maps link still points to the original GPS coordinates.
+    let locationInput: HTMLInputElement | undefined;
+    if (note.location) {
+      const lat = note.location.latitude;
+      const lng = note.location.longitude;
+
+      const locGroup = document.createElement('div');
+      locGroup.className = 'form-group';
+
+      const locLabel = document.createElement('label');
+      locLabel.className = 'form-label';
+      locLabel.textContent = 'Location label';
+      locGroup.appendChild(locLabel);
+
+      locationInput = document.createElement('input');
+      locationInput.type = 'text';
+      locationInput.className = 'form-input';
+      locationInput.maxLength = 120;
+      locationInput.value =
+        note.location.resolvedAddress ?? `${lat.toFixed(5)}, ${lng.toFixed(5)}`;
+      locGroup.appendChild(locationInput);
+
+      const locHelp = document.createElement('div');
+      locHelp.className = 'settings-row-desc';
+      locHelp.textContent = `Shown on the knot. The map link still points to the original GPS coordinates. Map pin: ${lat.toFixed(5)}, ${lng.toFixed(5)}`;
+      locGroup.appendChild(locHelp);
+
+      contentEl.appendChild(locGroup);
     }
 
     // Text content — single editable textarea.
@@ -511,6 +537,17 @@ export function renderNoteDetail(
           mediaItems: newMediaItems,
           updatedAt: Date.now(),
         };
+
+        // Apply the edited location label (display text only). Coordinates and
+        // accuracy are preserved, so the Maps link target never changes. An
+        // empty field falls back to showing coordinates (resolvedAddress unset).
+        if (note.location && locationInput) {
+          const label = locationInput.value.trim();
+          updatedNote.location = {
+            ...note.location,
+            resolvedAddress: label.length > 0 ? label : undefined,
+          };
+        }
 
         mediaCapture.destroy();
 
