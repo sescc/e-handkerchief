@@ -31,6 +31,26 @@ import type {
 import type { AudioRecordingHandle } from '../mediaService.js';
 import type { LiveTranscriptionHandle } from '../transcriptionService.js';
 
+/**
+ * Map a Web Speech recognition error code to a brief, user-facing message.
+ * Shared by the dictate and mic live-transcription paths so failures surface
+ * consistently instead of leaving the live box stuck on "Listening…".
+ */
+function speechErrorMessage(code: string): string {
+  if (code === 'not-allowed' || code === 'service-not-allowed') {
+    return 'Microphone permission denied for dictation.';
+  } else if (code === 'no-speech') {
+    return 'No speech detected — try speaking, then tap Stop.';
+  } else if (code === 'network') {
+    return 'Speech recognition needs internet (it runs in the cloud on this browser).';
+  } else if (code === 'audio-capture') {
+    return 'No microphone available for dictation.';
+  } else if (code) {
+    return `Dictation error: ${code}`;
+  }
+  return 'Dictation error.';
+}
+
 /** A draft item before the note is persisted. Includes a preview URL for cleanup. */
 interface DraftMediaItem {
   item: MediaItem;
@@ -86,6 +106,18 @@ export function renderMediaCapture(
   let pendingRecordingPromise: Promise<void> | null = null;
   let micDisabled = false;
 
+  // ---- Dictation state (live Web Speech → text-only item, no audio blob) ----
+  /** True while a dictation (live speech → text) session is active. */
+  let dictating = false;
+  /** Active dictation recognition handle (null when not dictating). */
+  let dictateHandle: LiveTranscriptionHandle | null = null;
+  /**
+   * Resolves after the dictated TextMediaItem has been pushed into draftItems
+   * (or after dictation stops with no recognized text). Lets the save path wait
+   * for an in-progress dictation to finish and attach its text before snapshot.
+   */
+  let pendingDictationPromise: Promise<void> | null = null;
+
   // ---- Live transcription tracking (for the single audio recording) ----
   let liveTranscription: LiveTranscriptionHandle | null = null;
   /** Text captured live via Web Speech during recording (if any). */
@@ -133,6 +165,12 @@ export function renderMediaCapture(
   micBtn.setAttribute('aria-label', 'Record voice note');
   micBtn.textContent = '🎤 Mic';
   controls.appendChild(micBtn);
+
+  const dictateBtn = document.createElement('button');
+  dictateBtn.className = 'btn btn-ghost';
+  dictateBtn.setAttribute('aria-label', 'Dictate text via speech');
+  dictateBtn.textContent = '🗣 Dictate';
+  controls.appendChild(dictateBtn);
 
   const photoBtn = document.createElement('button');
   photoBtn.className = 'btn btn-ghost';
@@ -282,6 +320,13 @@ export function renderMediaCapture(
       return;
     }
 
+    // Mic and dictation are mutually exclusive — refuse to start recording
+    // while a dictation session is active.
+    if (dictating) {
+      setMediaError('Stop dictation before recording.');
+      return;
+    }
+
     try {
       const handle = await mediaService.startAudioRecording();
       activeRecording = handle;
@@ -314,6 +359,13 @@ export function renderMediaCapture(
             clearLiveWatchdog();
           }
           liveTranscriptEl.textContent = txt || LIVE_PLACEHOLDER;
+        });
+        liveTranscription.onError((code) => {
+          // Surface the reason in the live box, but only if no real text has
+          // arrived yet (don't clobber a good live transcript).
+          if (!liveProducedText) {
+            liveTranscriptEl.textContent = speechErrorMessage(code);
+          }
         });
 
         // Watchdog: on devices where MediaRecorder holds the mic (e.g. Android
@@ -360,7 +412,7 @@ export function renderMediaCapture(
           liveTranscriptEl.textContent = '';
 
           if (transcript) {
-            recordedTranscript = transcript;
+            recordedTranscript = transcript.trim();
             liveProducedText = true;
             transcriptionDeferred = false;
           } else if (settingsStore.getCurrent().transcriptionEnabled) {
@@ -435,6 +487,109 @@ export function renderMediaCapture(
   const micClickHandler = (): void => void onMicClick();
   micBtn.addEventListener('click', micClickHandler);
   listenerCleanups.push(() => micBtn.removeEventListener('click', micClickHandler));
+
+  // ---- Dictation (live Web Speech → text-only item, no audio blob) ----
+  /**
+   * Stop the active dictation session, gather the recognized transcript, and
+   * (if non-empty) push a TextMediaItem into draftItems. Safe to call once per
+   * session — guarded by the `dictating` flag so the toggle-stop and finalize
+   * paths never double-run.
+   */
+  async function stopDictation(): Promise<void> {
+    if (!dictating || !dictateHandle) return;
+    const handle = dictateHandle;
+    // Flip the flag up front so a concurrent finalize/toggle can't re-enter.
+    dictating = false;
+
+    handle.stop();
+    const result = await handle.result;
+
+    // Hide/clear the live box.
+    liveTranscriptEl.style.display = 'none';
+    liveTranscriptEl.textContent = '';
+
+    const text = (result ?? '').trim();
+    if (text) {
+      const item: TextMediaItem = {
+        id: crypto.randomUUID(),
+        type: 'text',
+        createdAt: Date.now(),
+        content: text.slice(0, 2000),
+      };
+      draftItems.push({ item });
+      refreshPreviewList();
+    } else {
+      // Nothing recognized — surface a brief hint for known error codes.
+      const errCode = handle.getError?.();
+      if (errCode === 'not-allowed') {
+        setMediaError('Microphone permission is required for dictation.');
+      } else if (errCode === 'no-speech') {
+        setMediaError('No speech detected.');
+      }
+    }
+
+    dictateHandle = null;
+    dictateBtn.textContent = '🗣 Dictate';
+  }
+
+  const onDictateClick = (): void => {
+    clearMediaError();
+
+    // Not supported: message on click but keep the button usable.
+    if (!transcriptionService.isSupported) {
+      setMediaError("Speech recognition isn't supported in this browser.");
+      return;
+    }
+
+    // Toggle: if already dictating, stop and collect the text.
+    if (dictating) {
+      pendingDictationPromise = stopDictation();
+      void pendingDictationPromise.finally(() => {
+        pendingDictationPromise = null;
+      });
+      return;
+    }
+
+    // Mic and dictation are mutually exclusive — refuse to start dictation
+    // while an audio recording is in progress.
+    if (recording) {
+      setMediaError('Stop the voice recording before dictating.');
+      return;
+    }
+
+    // Start dictation: live speech → text only, no MediaRecorder.
+    const handle = transcriptionService.startLive();
+    dictateHandle = handle;
+    dictating = true;
+
+    liveTranscriptEl.textContent = LIVE_PLACEHOLDER;
+    liveTranscriptEl.style.display = 'block';
+    handle.onText((txt) => {
+      liveTranscriptEl.textContent = txt || LIVE_PLACEHOLDER;
+    });
+    handle.onError((code) => {
+      // Show the reason in the live box so the user isn't stuck on "Listening…".
+      liveTranscriptEl.textContent = speechErrorMessage(code);
+    });
+    handle.onEnd(() => {
+      // If recognition ended on its own (common on some desktop browsers with
+      // continuous mode) while still "dictating" and the box is still showing
+      // the placeholder, hint the user. Do NOT auto-stop the session state here;
+      // the stopDictation() path handles item creation. This only updates UI.
+      if (dictating && liveTranscriptEl.textContent === LIVE_PLACEHOLDER) {
+        liveTranscriptEl.textContent =
+          'Recognition ended without capturing speech. Tap Dictate again and speak, or check mic permissions.';
+      }
+    });
+
+    dictateBtn.textContent = '⏹ Stop';
+  };
+
+  const dictateClickHandler = (): void => onDictateClick();
+  dictateBtn.addEventListener('click', dictateClickHandler);
+  listenerCleanups.push(() =>
+    dictateBtn.removeEventListener('click', dictateClickHandler)
+  );
 
   // ---- Photo ----
   const onPhotoClick = async (): Promise<void> => {
@@ -549,6 +704,16 @@ export function renderMediaCapture(
       activeRecording.stop();
       if (pendingRecordingPromise) await pendingRecordingPromise;
     }
+
+    // Also flush any in-progress dictation so its text item is attached before
+    // the host snapshots the draft items.
+    if (dictating) {
+      // Toggle-stop hasn't run yet — stop now and wait for the text to attach.
+      await stopDictation();
+    } else if (pendingDictationPromise) {
+      // A toggle-stop is already in flight — just wait for it to finish.
+      await pendingDictationPromise;
+    }
   }
 
   function isRecording(): boolean {
@@ -566,6 +731,15 @@ export function renderMediaCapture(
       liveTranscription.stop();
       liveTranscription = null;
     }
+
+    // Stop any active dictation session.
+    if (dictateHandle) {
+      dictateHandle.stop();
+      dictateHandle = null;
+    }
+    dictating = false;
+    liveTranscriptEl.style.display = 'none';
+    liveTranscriptEl.textContent = '';
 
     // Revoke all object URLs
     for (const url of objUrls) {

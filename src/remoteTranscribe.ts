@@ -37,7 +37,7 @@ export async function remoteTranscribe(blob: Blob, language?: string): Promise<R
     }
     const data = await res.json() as { text?: string };
     if (typeof data.text !== 'string') return { ok: false, error: 'Unexpected server response.' };
-    return { ok: true, text: data.text };
+    return { ok: true, text: data.text.trim() };
   } catch (err) {
     const detail = err instanceof Error ? err.message : String(err);
     console.error('remoteTranscribe failed:', err);
