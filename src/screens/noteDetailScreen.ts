@@ -88,16 +88,25 @@ export function renderNoteDetail(
   }
 
   function renderLocation(note: Note, className: string): HTMLElement | null {
-    if (!note.location) return null;
-    const locLink = document.createElement('a');
-    locLink.className = `note-location-link ${className}`;
-    locLink.href = googleMapsUrl(note.location);
-    locLink.target = '_blank';
-    locLink.rel = 'noopener noreferrer';
-    locLink.textContent = note.location.resolvedAddress
-      ? note.location.resolvedAddress
-      : formatCoords(note.location.latitude, note.location.longitude);
-    return locLink;
+    if (note.location) {
+      const locLink = document.createElement('a');
+      locLink.className = `note-location-link ${className}`;
+      locLink.href = googleMapsUrl(note.location);
+      locLink.target = '_blank';
+      locLink.rel = 'noopener noreferrer';
+      locLink.textContent = note.location.resolvedAddress
+        ? note.location.resolvedAddress
+        : formatCoords(note.location.latitude, note.location.longitude);
+      return locLink;
+    }
+    // No GPS coordinates — render the manual label as plain text (no map link).
+    if (note.manualLabel && note.manualLabel.trim().length > 0) {
+      const locPlain = document.createElement('div');
+      locPlain.className = `note-location-link note-location-link--plain ${className}`;
+      locPlain.textContent = note.manualLabel;
+      return locPlain;
+    }
+    return null;
   }
 
   function renderActions(note: Note): void {
@@ -263,7 +272,7 @@ export function renderNoteDetail(
 
         const result = await remoteTranscribe(audioItem.blob);
         if (result.ok && result.text !== undefined) {
-          audioItem.transcript = result.text;
+          audioItem.transcript = (result.text ?? '').trim();
           audioItem.transcriptionStatus = 'done';
           note.updatedAt = Date.now();
           await noteStore.save(note);
@@ -298,7 +307,7 @@ export function renderNoteDetail(
       saveBtn.textContent = 'Save transcript';
       saveBtn.addEventListener('click', () => {
         void (async () => {
-          audioItem.transcript = textarea.value;
+          audioItem.transcript = textarea.value.trim();
           audioItem.transcriptionStatus = 'done';
           note.updatedAt = Date.now();
           await noteStore.save(note);
@@ -360,10 +369,7 @@ export function renderNoteDetail(
     // coordinates. Editing the label never touches lat/lng, so the view-mode
     // Google Maps link still points to the original GPS coordinates.
     let locationInput: HTMLInputElement | undefined;
-    if (note.location) {
-      const lat = note.location.latitude;
-      const lng = note.location.longitude;
-
+    {
       const locGroup = document.createElement('div');
       locGroup.className = 'form-group';
 
@@ -376,13 +382,24 @@ export function renderNoteDetail(
       locationInput.type = 'text';
       locationInput.className = 'form-input';
       locationInput.maxLength = 120;
-      locationInput.value =
-        note.location.resolvedAddress ?? `${lat.toFixed(5)}, ${lng.toFixed(5)}`;
-      locGroup.appendChild(locationInput);
 
       const locHelp = document.createElement('div');
       locHelp.className = 'settings-row-desc';
-      locHelp.textContent = `Shown on the knot. The map link still points to the original GPS coordinates. Map pin: ${lat.toFixed(5)}, ${lng.toFixed(5)}`;
+
+      if (note.location) {
+        const lat = note.location.latitude;
+        const lng = note.location.longitude;
+        locationInput.value =
+          note.location.resolvedAddress ?? `${lat.toFixed(5)}, ${lng.toFixed(5)}`;
+        locHelp.textContent = `Shown on the knot. The map link still points to the original GPS coordinates. Map pin: ${lat.toFixed(5)}, ${lng.toFixed(5)}`;
+      } else {
+        locationInput.value = note.manualLabel ?? '';
+        locationInput.placeholder = "e.g. Grandma's house";
+        locHelp.textContent =
+          'No GPS coordinates detected for this knot. Label location manually.';
+      }
+
+      locGroup.appendChild(locationInput);
       locGroup.appendChild(locHelp);
 
       contentEl.appendChild(locGroup);
@@ -541,12 +558,18 @@ export function renderNoteDetail(
         // Apply the edited location label (display text only). Coordinates and
         // accuracy are preserved, so the Maps link target never changes. An
         // empty field falls back to showing coordinates (resolvedAddress unset).
-        if (note.location && locationInput) {
+        if (locationInput) {
           const label = locationInput.value.trim();
-          updatedNote.location = {
-            ...note.location,
-            resolvedAddress: label.length > 0 ? label : undefined,
-          };
+          if (note.location) {
+            // GPS present: edit the address label; coords/link unchanged.
+            updatedNote.location = {
+              ...note.location,
+              resolvedAddress: label.length > 0 ? label : undefined,
+            };
+          } else {
+            // No GPS: store as a plain manual label (no map link).
+            updatedNote.manualLabel = label.length > 0 ? label : undefined;
+          }
         }
 
         mediaCapture.destroy();

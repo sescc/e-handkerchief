@@ -114,6 +114,13 @@ export function renderKnots(container: HTMLElement): () => void {
       // Tapping the location should open Maps, not navigate to the note.
       locLink.addEventListener('click', (ev) => ev.stopPropagation());
       entry.appendChild(locLink);
+    } else if (note.manualLabel && note.manualLabel.trim()) {
+      // No GPS — render the manual label as plain text (not a link). Clicking
+      // it bubbles to the entry and navigates to the knot, which is fine.
+      const locPlain = document.createElement('div');
+      locPlain.className = 'note-location-link note-location-link--plain';
+      locPlain.textContent = note.manualLabel;
+      entry.appendChild(locPlain);
     }
 
     // Media items

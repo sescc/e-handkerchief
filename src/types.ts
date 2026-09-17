@@ -66,6 +66,8 @@ export interface Note {
   id: string;
   timestamp: NoteTimestamp;
   location: NoteLocation | null;
+  /** Manually-entered location label used when there are no GPS coordinates (note.location is null). Plain text, no map link. */
+  manualLabel?: string;
   mediaItems: MediaItem[];
   /** @deprecated Legacy note-level transcription; new code uses per-AudioMediaItem transcript. Retained for backward compatibility with old notes. */
   transcription?: string;

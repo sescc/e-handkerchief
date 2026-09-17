@@ -465,6 +465,15 @@ main {
   text-decoration: underline;
 }
 
+.note-location-link--plain {
+  cursor: default;
+  color: var(--color-text-muted);
+}
+
+.note-location-link--plain:hover {
+  text-decoration: none;
+}
+
 .note-location {
   font-size: 12px;
   color: var(--color-text-muted);
@@ -953,6 +962,10 @@ main {
   font-size: 13px;
   color: var(--color-primary);
   margin-bottom: var(--space-md);
+}
+
+.note-detail-location.note-location-link--plain {
+  color: var(--color-text-muted);
 }
 
 .back-btn {

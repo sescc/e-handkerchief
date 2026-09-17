@@ -13,6 +13,10 @@ export interface LiveTranscriptionHandle {
   readonly result: Promise<string | null>;
   /** Register a callback to receive live text (final + interim) as the user speaks. */
   onText(cb: (liveText: string) => void): void;
+  /** Register a callback fired when recognition errors (receives the error code). */
+  onError(cb: (errorCode: string) => void): void;
+  /** Register a callback fired when recognition ends (after final result resolution). */
+  onEnd(cb: () => void): void;
   /** The last recognition error code, if any (e.g. 'not-allowed', 'no-speech'). Null if none. */
   getError(): string | null;
   /** Stop live recognition and resolve `result`. */
@@ -89,6 +93,13 @@ function nullHandle(errorCode: string): LiveTranscriptionHandle {
     onText(): void {
       /* no-op */
     },
+    onError(cb: (errorCode: string) => void): void {
+      // Fire on the next microtask so late-registered listeners still receive it.
+      queueMicrotask(() => cb(errorCode));
+    },
+    onEnd(cb: () => void): void {
+      queueMicrotask(cb);
+    },
     getError(): string | null {
       return errorCode;
     },
@@ -116,6 +127,8 @@ export const transcriptionService: TranscriptionServiceAPI = {
     let resolved = false;
     let resolveResult!: (value: string | null) => void;
     const textListeners: Array<(liveText: string) => void> = [];
+    const errorListeners: Array<(code: string) => void> = [];
+    const endListeners: Array<() => void> = [];
     const result = new Promise<string | null>((resolve) => {
       resolveResult = resolve;
     });
@@ -148,10 +161,12 @@ export const transcriptionService: TranscriptionServiceAPI = {
     // for terminating errors and resolve the promise there.
     recognition.onerror = (event: SpeechRecognitionErrorEventLike): void => {
       lastError = event.error;
+      for (const cb of errorListeners) cb(event.error);
     };
 
     recognition.onend = (): void => {
       finish();
+      for (const cb of endListeners) cb();
     };
 
     try {
@@ -164,6 +179,12 @@ export const transcriptionService: TranscriptionServiceAPI = {
       result,
       onText(cb: (liveText: string) => void): void {
         textListeners.push(cb);
+      },
+      onError(cb: (errorCode: string) => void): void {
+        errorListeners.push(cb);
+      },
+      onEnd(cb: () => void): void {
+        endListeners.push(cb);
       },
       getError(): string | null {
         return lastError;
