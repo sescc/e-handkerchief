@@ -130,11 +130,30 @@ export function renderMediaCapture(
   let liveProducedText = false;
   /** Watchdog: if live transcription produces nothing within a window, show an inline hint. */
   let liveWatchdog: ReturnType<typeof setTimeout> | null = null;
+  /**
+   * How many times the mic live-transcription session has been transparently
+   * restarted after a transient `network` error (reset per recording).
+   */
+  let liveRetries = 0;
 
   /** Placeholder shown in the live-transcript box while waiting for speech results. */
   const LIVE_PLACEHOLDER = 'Listening…';
   /** How long to wait for live text before showing the "not producing text" hint. */
   const LIVE_WATCHDOG_MS = 8000;
+  /**
+   * Max transparent retries of the mic live-transcription session on transient
+   * `network` errors (2 retries = up to 3 attempts total). The desktop Chrome
+   * cloud recognizer intermittently throws `network` even while online; retrying
+   * silently avoids alarming the user when the audio itself is recording fine.
+   */
+  const MAX_LIVE_RETRIES = 2;
+  /**
+   * Calm, reassuring message shown in the live box once live transcription is
+   * unavailable. Deliberately avoids implying the recording failed — the audio
+   * keeps recording and can be transcribed after saving.
+   */
+  const LIVE_UNAVAILABLE_MESSAGE =
+    'Live transcript unavailable right now — your audio is still recording and can be transcribed after saving.';
 
   function clearLiveWatchdog(): void {
     if (liveWatchdog !== null) {
@@ -338,6 +357,7 @@ export function renderMediaCapture(
       transcriptionDeferred = false;
       liveTranscriptionError = null;
       liveProducedText = false;
+      liveRetries = 0;
       clearLiveWatchdog();
 
       const transcriptionRequested = settingsStore.getCurrent().transcriptionEnabled;
@@ -347,26 +367,55 @@ export function renderMediaCapture(
         transcriptionService.isSupported &&
         navigator.onLine;
       if (canLiveTranscribe) {
-        liveTranscription = transcriptionService.startLive();
-        // Show the live transcript box and stream text in real time.
-        liveTranscriptEl.textContent = LIVE_PLACEHOLDER;
-        liveTranscriptEl.style.display = 'block';
-        liveTranscription.onText((txt) => {
-          const trimmed = (txt || '').trim();
-          if (trimmed && trimmed !== LIVE_PLACEHOLDER) {
-            // Real live text arrived — mark it and stand down the watchdog.
-            liveProducedText = true;
-            clearLiveWatchdog();
-          }
-          liveTranscriptEl.textContent = txt || LIVE_PLACEHOLDER;
-        });
-        liveTranscription.onError((code) => {
-          // Surface the reason in the live box, but only if no real text has
-          // arrived yet (don't clobber a good live transcript).
-          if (!liveProducedText) {
-            liveTranscriptEl.textContent = speechErrorMessage(code);
-          }
-        });
+        // Start a live transcription session and wire its handlers. Factored
+        // into a closure so a transient `network` error can transparently
+        // restart the session (see the retry policy in onError below) without
+        // touching the audio recording, which keeps working regardless.
+        const startLiveSession = (): void => {
+          liveTranscription = transcriptionService.startLive();
+          // Show the live transcript box and stream text in real time. On the
+          // first attempt we set the placeholder + reveal the box; on retries we
+          // keep it non-alarming by resetting to the same calm placeholder.
+          liveTranscriptEl.textContent = LIVE_PLACEHOLDER;
+          liveTranscriptEl.style.display = 'block';
+          liveTranscription.onText((txt) => {
+            const trimmed = (txt || '').trim();
+            if (trimmed && trimmed !== LIVE_PLACEHOLDER) {
+              // Real live text arrived — mark it and stand down the watchdog.
+              liveProducedText = true;
+              clearLiveWatchdog();
+            }
+            liveTranscriptEl.textContent = txt || LIVE_PLACEHOLDER;
+          });
+          liveTranscription.onError((code) => {
+            // Never clobber a good live transcript that already arrived.
+            if (liveProducedText) return;
+
+            if (code === 'network' && liveRetries < MAX_LIVE_RETRIES) {
+              // Transient cloud-recognizer hiccup (common on desktop Chrome even
+              // while online). Silently tear down and restart the session — do
+              // NOT show the alarming network message. Keep the calm placeholder.
+              liveRetries += 1;
+              const stale = liveTranscription;
+              liveTranscription = null;
+              if (stale) stale.stop();
+              startLiveSession();
+              return;
+            }
+
+            // Retries exhausted, or a non-network failure with no text yet.
+            // Show a calm line that does NOT imply the recording failed. For
+            // `network` specifically use the reassuring message; for clearly
+            // actionable codes (e.g. not-allowed) keep the specific guidance.
+            if (code === 'network') {
+              liveTranscriptEl.textContent = LIVE_UNAVAILABLE_MESSAGE;
+            } else {
+              liveTranscriptEl.textContent = speechErrorMessage(code);
+            }
+          });
+        };
+
+        startLiveSession();
 
         // Watchdog: on devices where MediaRecorder holds the mic (e.g. Android
         // Chrome), SpeechRecognition often yields no results and no error, so the
@@ -569,7 +618,11 @@ export function renderMediaCapture(
     });
     handle.onError((code) => {
       // Show the reason in the live box so the user isn't stuck on "Listening…".
-      liveTranscriptEl.textContent = speechErrorMessage(code);
+      // Soften the transient cloud hiccup so it reads as reconnecting, not failure.
+      liveTranscriptEl.textContent =
+        code === 'network'
+          ? 'Reconnecting… (speech recognition runs in the cloud)'
+          : speechErrorMessage(code);
     });
     handle.onEnd(() => {
       // If recognition ended on its own (common on some desktop browsers with

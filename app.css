@@ -1267,3 +1267,122 @@ main {
   font-size: 0.9rem;
   color: var(--color-text);
 }
+
+/* ============================================================
+   Timezone combobox
+   Searchable timezone selector — a .form-input search field
+   paired with an absolutely-positioned, filterable dropdown.
+   Reuses the existing form tokens (--color-*, --space-*,
+   --radius-*, --shadow-*, --transition) so it matches the
+   other Settings form controls. Mobile-first touch targets.
+   ============================================================ */
+
+/* Container — anchors the absolutely-positioned dropdown and
+   spans the full control width like other .form-input fields. */
+.combobox {
+  position: relative;
+  display: block;
+  width: 100%;
+}
+
+/* Search field — inherits the shared .form-input look; extra
+   right padding keeps typed text clear of the toggle affordance. */
+.combobox-input {
+  padding-right: 2.75rem;
+}
+
+/* Dropdown toggle — unobtrusive caret affordance pinned to the
+   input's right edge, with a mobile-friendly touch target. */
+.combobox-toggle {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 2.75rem;
+  height: 100%;
+  min-height: 2.75rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  color: var(--color-text-muted);
+  cursor: pointer;
+}
+
+/* CSS-drawn caret (▾) — no text content required on the button. */
+.combobox-toggle::before {
+  content: '';
+  width: 0;
+  height: 0;
+  border-left: 5px solid transparent;
+  border-right: 5px solid transparent;
+  border-top: 6px solid currentColor;
+}
+
+/* Dropdown list — drops directly under the input, scrollable,
+   and layered above adjacent form controls (nav bar is z 100). */
+.combobox-list {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 100%;
+  z-index: 50;
+  margin: var(--space-xs) 0 0;
+  padding: 0;
+  list-style: none;
+  max-height: 16rem;
+  overflow-y: auto;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-md);
+}
+
+/* Honor the native `hidden` attribute the component toggles. */
+.combobox-list[hidden] {
+  display: none;
+}
+
+/* Option row — comfortable padding and a >=2.75rem touch target;
+   truncates long timezone labels with an ellipsis. */
+.combobox-option {
+  display: flex;
+  align-items: center;
+  min-height: 2.75rem;
+  padding: var(--space-sm) var(--space-md);
+  color: var(--color-text);
+  font-size: 15px;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: background var(--transition);
+}
+
+.combobox-option:hover {
+  background: var(--color-bg);
+}
+
+/* Keyboard-navigation highlight (Req 5.5) — accent-tinted so it
+   reads as the active row during ArrowUp/ArrowDown. */
+.combobox-option.is-highlighted {
+  background: rgba(45, 122, 79, 0.12);
+  color: var(--color-primary);
+}
+
+/* Currently committed value — subtle weight, distinct from the
+   keyboard highlight above. */
+.combobox-option[aria-selected="true"] {
+  font-weight: 600;
+}
+
+/* "No matching timezones" row — muted, non-interactive. */
+.combobox-empty {
+  display: flex;
+  align-items: center;
+  min-height: 2.75rem;
+  padding: var(--space-sm) var(--space-md);
+  color: var(--color-text-muted);
+  font-size: 13px;
+  cursor: default;
+}

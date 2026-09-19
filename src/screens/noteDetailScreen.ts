@@ -405,18 +405,50 @@ export function renderNoteDetail(
       contentEl.appendChild(locGroup);
     }
 
-    // Text content — single editable textarea.
-    // Find the existing text item (if any).
-    const textItem = note.mediaItems.find(
+    // Text content — one editable textarea PER existing text item so that
+    // notes with multiple dictations/text blocks are all preserved on save.
+    // Collect ALL text items in their original order.
+    const textItems = note.mediaItems.filter(
       (m): m is TextMediaItem => m.type === 'text'
     );
 
-    const textarea = document.createElement('textarea');
-    textarea.className = 'form-textarea';
-    textarea.maxLength = 2000;
-    textarea.placeholder = 'Add text to this note…';
-    textarea.value = textItem ? textItem.content : '';
-    contentEl.appendChild(textarea);
+    // Parallel array pairing each textarea with its source item (undefined for
+    // the trailing "add new text" box). Rebuilt on save in this same order.
+    const textEditors: { textarea: HTMLTextAreaElement; source?: TextMediaItem }[] =
+      [];
+
+    if (textItems.length > 0) {
+      // Render each existing text item as its own labeled textarea.
+      textItems.forEach((item, i) => {
+        const group = document.createElement('div');
+        group.className = 'form-group';
+
+        if (textItems.length > 1) {
+          const caption = document.createElement('div');
+          caption.className = 'settings-row-desc';
+          caption.textContent = `Text ${i + 1}`;
+          group.appendChild(caption);
+        }
+
+        const textarea = document.createElement('textarea');
+        textarea.className = 'form-textarea';
+        textarea.maxLength = 2000;
+        textarea.value = item.content;
+        group.appendChild(textarea);
+
+        contentEl.appendChild(group);
+        textEditors.push({ textarea, source: item });
+      });
+    } else {
+      // No existing text — render ONE empty box so the user can add text,
+      // matching the previous single-textarea behavior for the no-text case.
+      const textarea = document.createElement('textarea');
+      textarea.className = 'form-textarea';
+      textarea.maxLength = 2000;
+      textarea.placeholder = 'Add text to this note…';
+      contentEl.appendChild(textarea);
+      textEditors.push({ textarea });
+    }
 
     // Existing (non-text) media items — each with a Remove button. This shows
     // the note's EXISTING media and is edit-specific.
@@ -501,8 +533,6 @@ export function renderNoteDetail(
     saveBtn.textContent = 'Save Changes';
     saveBtn.addEventListener('click', () => {
       void (async () => {
-        const text = textarea.value.trim();
-
         // Stop any in-progress recording so its audio is captured before we
         // snapshot the captured items.
         await mediaCapture.finalizePendingRecording();
@@ -514,27 +544,35 @@ export function renderNoteDetail(
           (m) => !removedIds.has(m.id)
         );
 
-        const newMediaItems: MediaItem[] = [...keptMedia, ...captured.items];
-
-        if (text.length > 0) {
-          if (textItem) {
-            // Update the existing text item, preserving its id and createdAt.
-            newMediaItems.unshift({
-              ...textItem,
-              content: text,
-            });
+        // Rebuild the TEXT items from every editable box, in order. Each box
+        // tied to an existing item updates that item in place (preserving id +
+        // createdAt); an emptied box drops that item. Boxes with no source that
+        // now have content become brand-new text items.
+        const textMediaItems: TextMediaItem[] = [];
+        for (const { textarea, source } of textEditors) {
+          const value = textarea.value.trim();
+          if (value.length === 0) continue; // empty box → dropped
+          if (source) {
+            // Update existing text item, preserving its id and createdAt.
+            textMediaItems.push({ ...source, content: value });
           } else {
-            // Add a fresh text item.
-            const newText: TextMediaItem = {
+            // Fresh text item from the "add text" box.
+            textMediaItems.push({
               id: crypto.randomUUID(),
               type: 'text',
               createdAt: Date.now(),
-              content: text,
-            };
-            newMediaItems.unshift(newText);
+              content: value,
+            });
           }
         }
-        // If text is empty, the text item is simply dropped (not re-added).
+
+        // Text first (preserving original relative order), then kept media and
+        // newly captured items — matching the previous text-first placement.
+        const newMediaItems: MediaItem[] = [
+          ...textMediaItems,
+          ...keptMedia,
+          ...captured.items,
+        ];
 
         // Validate: must still have at least one media item.
         if (newMediaItems.length === 0) {

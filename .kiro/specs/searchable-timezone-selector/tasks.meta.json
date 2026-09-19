@@ -1,0 +1,441 @@
+{
+  "pbtResults": {},
+  "executionHistory": {
+    "1.1 Implement the `formatTimezoneOffset(timeZone: string, at?: Date): string | null` pure helper": [
+      {
+        "executionId": "9c59b9bb-b896-439f-82e3-bc21317580e0",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1789606376715
+      },
+      {
+        "executionId": "9c59b9bb-b896-439f-82e3-bc21317580e0",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1789606394751
+      },
+      {
+        "executionId": "9c59b9bb-b896-439f-82e3-bc21317580e0",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1789607084911
+      }
+    ],
+    "1.2 Enrich `getTimezoneOptions()` labels with the offset": [
+      {
+        "executionId": "9c59b9bb-b896-439f-82e3-bc21317580e0",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1789606377367
+      },
+      {
+        "executionId": "9c59b9bb-b896-439f-82e3-bc21317580e0",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1789607091098
+      },
+      {
+        "executionId": "9c59b9bb-b896-439f-82e3-bc21317580e0",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1789607793558
+      }
+    ],
+    "2.1 Add `filterTimezoneOptions(options, query)` to `src/components/timezoneCombobox.ts`": [
+      {
+        "executionId": "9c59b9bb-b896-439f-82e3-bc21317580e0",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1789606378042
+      },
+      {
+        "executionId": "9c59b9bb-b896-439f-82e3-bc21317580e0",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1789607092357
+      },
+      {
+        "executionId": "9c59b9bb-b896-439f-82e3-bc21317580e0",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1789607794530
+      }
+    ],
+    "3. Checkpoint — pure layer": [
+      {
+        "executionId": "9c59b9bb-b896-439f-82e3-bc21317580e0",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1789606378228
+      }
+    ],
+    "4.1 Build DOM structure and `ComboboxState` with a single `render()`": [
+      {
+        "executionId": "9c59b9bb-b896-439f-82e3-bc21317580e0",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1789606378420
+      },
+      {
+        "executionId": "9c59b9bb-b896-439f-82e3-bc21317580e0",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1789608642541
+      },
+      {
+        "executionId": "9c59b9bb-b896-439f-82e3-bc21317580e0",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1789609347417
+      }
+    ],
+    "4.2 Implement `setValue`/`getValue` value-to-display mapping": [
+      {
+        "executionId": "9c59b9bb-b896-439f-82e3-bc21317580e0",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1789606378603
+      },
+      {
+        "executionId": "9c59b9bb-b896-439f-82e3-bc21317580e0",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1789609357519
+      },
+      {
+        "executionId": "9c59b9bb-b896-439f-82e3-bc21317580e0",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1789609505552
+      }
+    ],
+    "4.4 Implement filtering, rendering, and the \"no matches\" row": [
+      {
+        "executionId": "9c59b9bb-b896-439f-82e3-bc21317580e0",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1789606378770
+      },
+      {
+        "executionId": "9c59b9bb-b896-439f-82e3-bc21317580e0",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1789609513766
+      },
+      {
+        "executionId": "9c59b9bb-b896-439f-82e3-bc21317580e0",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1789609763849
+      }
+    ],
+    "4.6 Implement open/close behavior": [
+      {
+        "executionId": "9c59b9bb-b896-439f-82e3-bc21317580e0",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1789606378976
+      },
+      {
+        "executionId": "9c59b9bb-b896-439f-82e3-bc21317580e0",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1789609795952
+      },
+      {
+        "executionId": "9c59b9bb-b896-439f-82e3-bc21317580e0",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1789611350302
+      }
+    ],
+    "4.7 Implement pointer selection": [
+      {
+        "executionId": "9c59b9bb-b896-439f-82e3-bc21317580e0",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1789606379143
+      },
+      {
+        "executionId": "9c59b9bb-b896-439f-82e3-bc21317580e0",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1789611355818
+      },
+      {
+        "executionId": "9c59b9bb-b896-439f-82e3-bc21317580e0",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1789611479363
+      }
+    ],
+    "4.8 Implement keyboard navigation and commit with a pure highlight-step helper": [
+      {
+        "executionId": "9c59b9bb-b896-439f-82e3-bc21317580e0",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1789606379319
+      },
+      {
+        "executionId": "9c59b9bb-b896-439f-82e3-bc21317580e0",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1789611479832
+      },
+      {
+        "executionId": "9c59b9bb-b896-439f-82e3-bc21317580e0",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1789611632129
+      }
+    ],
+    "4.10 Implement invalid-value / blur handling and commit-membership guard": [
+      {
+        "executionId": "9c59b9bb-b896-439f-82e3-bc21317580e0",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1789606379481
+      },
+      {
+        "executionId": "9c59b9bb-b896-439f-82e3-bc21317580e0",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1789611632997
+      },
+      {
+        "executionId": "9c59b9bb-b896-439f-82e3-bc21317580e0",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1789611773119
+      }
+    ],
+    "4.12 Wire full ARIA and implement `destroy()`": [
+      {
+        "executionId": "9c59b9bb-b896-439f-82e3-bc21317580e0",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1789606379643
+      },
+      {
+        "executionId": "9c59b9bb-b896-439f-82e3-bc21317580e0",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1789611774218
+      },
+      {
+        "executionId": "9c59b9bb-b896-439f-82e3-bc21317580e0",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1789611944616
+      }
+    ],
+    "5. Checkpoint — component": [
+      {
+        "executionId": "9c59b9bb-b896-439f-82e3-bc21317580e0",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1789606379840
+      }
+    ],
+    "6.1 Create a dependency-free property-test harness `.ts` file": [
+      {
+        "executionId": "9c59b9bb-b896-439f-82e3-bc21317580e0",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1789606380030
+      },
+      {
+        "executionId": "9c59b9bb-b896-439f-82e3-bc21317580e0",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1789606395597
+      },
+      {
+        "executionId": "9c59b9bb-b896-439f-82e3-bc21317580e0",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1789607085285
+      }
+    ],
+    "7.1 Replace the timezone `buildSelect` block with `createTimezoneCombobox`": [
+      {
+        "executionId": "9c59b9bb-b896-439f-82e3-bc21317580e0",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1789606380210
+      },
+      {
+        "executionId": "9c59b9bb-b896-439f-82e3-bc21317580e0",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1789611958807
+      },
+      {
+        "executionId": "9c59b9bb-b896-439f-82e3-bc21317580e0",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1789612178659
+      }
+    ],
+    "7.2 Wire `onSelect` to the save / preview / revert+toast / no-op-skip flow": [
+      {
+        "executionId": "9c59b9bb-b896-439f-82e3-bc21317580e0",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1789606380449
+      },
+      {
+        "executionId": "9c59b9bb-b896-439f-82e3-bc21317580e0",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1789612188348
+      },
+      {
+        "executionId": "9c59b9bb-b896-439f-82e3-bc21317580e0",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1789706965075
+      }
+    ],
+    "7.3 Update external re-sync and cleanup wiring": [
+      {
+        "executionId": "9c59b9bb-b896-439f-82e3-bc21317580e0",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1789606380626
+      },
+      {
+        "executionId": "9c59b9bb-b896-439f-82e3-bc21317580e0",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1789706973060
+      },
+      {
+        "executionId": "9c59b9bb-b896-439f-82e3-bc21317580e0",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1789707845287
+      }
+    ],
+    "8.1 Add `.combobox*` classes aligned with existing form styling": [
+      {
+        "executionId": "9c59b9bb-b896-439f-82e3-bc21317580e0",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1789606380835
+      },
+      {
+        "executionId": "9c59b9bb-b896-439f-82e3-bc21317580e0",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1789612194630
+      },
+      {
+        "executionId": "9c59b9bb-b896-439f-82e3-bc21317580e0",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1789707846514
+      }
+    ],
+    "9.1 Run static + property verification": [
+      {
+        "executionId": "9c59b9bb-b896-439f-82e3-bc21317580e0",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1789606380998
+      },
+      {
+        "executionId": "9c59b9bb-b896-439f-82e3-bc21317580e0",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1789707852992
+      },
+      {
+        "executionId": "9c59b9bb-b896-439f-82e3-bc21317580e0",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1789756497175
+      }
+    ],
+    "6. Set up the property-test harness": [
+      {
+        "executionId": "9c59b9bb-b896-439f-82e3-bc21317580e0",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1789607085357
+      }
+    ],
+    "1. Add `formatTimezoneOffset` and enrich `getTimezoneOptions()` in `src/dateFormat.ts`": [
+      {
+        "executionId": "9c59b9bb-b896-439f-82e3-bc21317580e0",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1789607793671
+      }
+    ],
+    "2. Implement the pure `filterTimezoneOptions` helper": [
+      {
+        "executionId": "9c59b9bb-b896-439f-82e3-bc21317580e0",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1789607794607
+      }
+    ],
+    "1.3 Write property test for the offset formatter (Property 4)": [
+      {
+        "executionId": "9c59b9bb-b896-439f-82e3-bc21317580e0",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1789607814392
+      },
+      {
+        "executionId": "9c59b9bb-b896-439f-82e3-bc21317580e0",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1789608633685
+      }
+    ],
+    "2.2 Write property test for filter correctness (Property 1)": [
+      {
+        "executionId": "9c59b9bb-b896-439f-82e3-bc21317580e0",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1789608634421
+      },
+      {
+        "executionId": "9c59b9bb-b896-439f-82e3-bc21317580e0",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1789609346463
+      }
+    ],
+    "2.3 Write property test for empty-query behavior (Property 2)": [
+      {
+        "executionId": "9c59b9bb-b896-439f-82e3-bc21317580e0",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1789609356630
+      },
+      {
+        "executionId": "9c59b9bb-b896-439f-82e3-bc21317580e0",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1789609504368
+      }
+    ],
+    "4.3 Write property test for value-to-display mapping (Property 3)": [
+      {
+        "executionId": "9c59b9bb-b896-439f-82e3-bc21317580e0",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1789609514625
+      },
+      {
+        "executionId": "9c59b9bb-b896-439f-82e3-bc21317580e0",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1789609762842
+      }
+    ],
+    "4. Build the `createTimezoneCombobox` component": [
+      {
+        "executionId": "9c59b9bb-b896-439f-82e3-bc21317580e0",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1789611944745
+      }
+    ],
+    "4.9 Write property test for highlight navigation wrap (Property 5)": [
+      {
+        "executionId": "9c59b9bb-b896-439f-82e3-bc21317580e0",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1789611952419
+      },
+      {
+        "executionId": "9c59b9bb-b896-439f-82e3-bc21317580e0",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1789612177817
+      }
+    ],
+    "4.5 Write property test for rendered row count (Property 6)": [
+      {
+        "executionId": "9c59b9bb-b896-439f-82e3-bc21317580e0",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1789612187214
+      },
+      {
+        "executionId": "9c59b9bb-b896-439f-82e3-bc21317580e0",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1789706963962
+      }
+    ],
+    "4.11 Write property test for commit membership (Property 7)": [
+      {
+        "executionId": "9c59b9bb-b896-439f-82e3-bc21317580e0",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1789706972167
+      },
+      {
+        "executionId": "9c59b9bb-b896-439f-82e3-bc21317580e0",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1789707843933
+      }
+    ],
+    "7. Integrate the combobox into `src/screens/settingsScreen.ts`": [
+      {
+        "executionId": "9c59b9bb-b896-439f-82e3-bc21317580e0",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1789707845372
+      }
+    ],
+    "8. Add combobox CSS to `app.css`": [
+      {
+        "executionId": "9c59b9bb-b896-439f-82e3-bc21317580e0",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1789707846615
+      }
+    ],
+    "9. Final verification": [
+      {
+        "executionId": "9c59b9bb-b896-439f-82e3-bc21317580e0",
+        "chatSessionId": "sess_d1d2c72e-536e-466b-ac23-27e08bec6030",
+        "timestamp": 1789756497302
+      }
+    ]
+  }
+}

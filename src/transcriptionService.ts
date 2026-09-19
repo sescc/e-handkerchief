@@ -117,12 +117,17 @@ export const transcriptionService: TranscriptionServiceAPI = {
   startLive(): LiveTranscriptionHandle {
     if (!SpeechRecognitionCtor) return nullHandle('unsupported');
 
-    const recognition = new SpeechRecognitionCtor();
-    recognition.continuous = true;
-    recognition.interimResults = true;
-    recognition.lang = navigator.language || 'en-US';
-
-    let accumulated = '';
+    // Session state that survives auto-restarts.
+    // `committed` holds FINALIZED text accumulated across ALL recognition
+    // instances (each restart folds its final text in here). Each individual
+    // recognition instance tracks its own final/interim, rebuilt from the full
+    // results list on every event (never appended) so re-delivered/re-finalized
+    // results on mobile Chrome overwrite rather than duplicate.
+    let stopped = false;
+    let committed = '';
+    let instanceFinal = '';
+    let instanceInterim = '';
+    let currentRecognition: SpeechRecognitionLike | null = null;
     let lastError: string | null = null;
     let resolved = false;
     let resolveResult!: (value: string | null) => void;
@@ -133,45 +138,99 @@ export const transcriptionService: TranscriptionServiceAPI = {
       resolveResult = resolve;
     });
 
+    // Resolve `result` exactly once with committed + any not-yet-folded
+    // finalized text from the current instance. Fires end listeners.
     const finish = (): void => {
       if (resolved) return;
       resolved = true;
-      const text = accumulated.trim();
+      const text = [committed, instanceFinal].filter(Boolean).join(' ').trim();
       resolveResult(text.length > 0 ? text : null);
-    };
-
-    recognition.onresult = (event: SpeechRecognitionEventLike): void => {
-      let interimText = '';
-      for (let i = event.resultIndex; i < event.results.length; i++) {
-        const entry = event.results[i];
-        if (!entry) continue;
-        const piece = entry[0]?.transcript ?? '';
-        if (entry.isFinal) {
-          if (piece) accumulated += (accumulated ? ' ' : '') + piece.trim();
-        } else {
-          interimText += piece;
-        }
-      }
-      const liveText = `${accumulated} ${interimText}`.trim();
-      for (const cb of textListeners) cb(liveText);
-    };
-
-    // Store the error reason but do NOT finish immediately — some errors
-    // (e.g. 'no-speech') can be followed by more speech. onend will fire
-    // for terminating errors and resolve the promise there.
-    recognition.onerror = (event: SpeechRecognitionErrorEventLike): void => {
-      lastError = event.error;
-      for (const cb of errorListeners) cb(event.error);
-    };
-
-    recognition.onend = (): void => {
-      finish();
       for (const cb of endListeners) cb();
     };
 
-    try {
-      recognition.start();
-    } catch {
+    // Fold the current instance's finalized text into the committed buffer,
+    // then reset per-instance state for the next recognition instance.
+    const foldInstanceIntoCommitted = (): void => {
+      if (instanceFinal) {
+        committed = [committed, instanceFinal].filter(Boolean).join(' ');
+      }
+      instanceFinal = '';
+      instanceInterim = '';
+    };
+
+    // Create a fresh SpeechRecognition, wire handlers, and start it.
+    // Returns false (and finishes the session) if start() throws.
+    const startInstance = (): boolean => {
+      const recognition = new SpeechRecognitionCtor();
+      recognition.continuous = true;
+      recognition.interimResults = true;
+      recognition.lang = navigator.language || 'en-US';
+
+      recognition.onresult = (event: SpeechRecognitionEventLike): void => {
+        // FIX Bug 2 — rebuild (do NOT append). Scan the ENTIRE results list
+        // from index 0 each event; a re-delivered final segment overwrites.
+        let finalText = '';
+        let interimText = '';
+        for (let i = 0; i < event.results.length; i++) {
+          const entry = event.results[i];
+          if (!entry) continue;
+          const piece = entry[0]?.transcript ?? '';
+          if (!piece) continue;
+          if (entry.isFinal) {
+            finalText += (finalText ? ' ' : '') + piece.trim();
+          } else {
+            interimText += piece;
+          }
+        }
+        instanceFinal = finalText;
+        instanceInterim = interimText;
+        const liveText = [committed, instanceFinal, instanceInterim]
+          .filter(Boolean)
+          .join(' ')
+          .trim();
+        for (const cb of textListeners) cb(liveText);
+      };
+
+      // Store the error reason and notify listeners; do NOT finish here.
+      // Permission errors are unrecoverable → set stopped so the ensuing
+      // onend finishes rather than auto-restarts. Other errors leave
+      // stopped as-is so onend's auto-restart continues the session.
+      recognition.onerror = (event: SpeechRecognitionErrorEventLike): void => {
+        lastError = event.error;
+        if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
+          stopped = true;
+        }
+        for (const cb of errorListeners) cb(event.error);
+      };
+
+      recognition.onend = (): void => {
+        if (stopped) {
+          // Terminal end: user stopped or unrecoverable error.
+          finish();
+          return;
+        }
+        // FIX Bug 3 — auto-restart: mobile Chrome ends after ~1s silence.
+        // Fold this instance's final text into committed, then start anew.
+        foldInstanceIntoCommitted();
+        startInstance();
+      };
+
+      currentRecognition = recognition;
+      try {
+        recognition.start();
+      } catch {
+        // Guard against tight restart loops: if starting throws, surface it
+        // via the error path and finish rather than spinning.
+        lastError = lastError ?? 'start-failed';
+        stopped = true;
+        finish();
+        return false;
+      }
+      return true;
+    };
+
+    if (!startInstance()) {
+      // First-instance start failed synchronously → null handle (as today).
       return nullHandle('start-failed');
     }
 
@@ -190,8 +249,9 @@ export const transcriptionService: TranscriptionServiceAPI = {
         return lastError;
       },
       stop(): void {
+        stopped = true;
         try {
-          recognition.stop();
+          currentRecognition?.stop();
         } catch {
           finish();
         }
