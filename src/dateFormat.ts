@@ -94,6 +94,50 @@ function formatTimePart(p: DateParts, format: AppSettings['timeFormat']): string
   return `${h12}:${pad2(p.minute)} ${period}`;
 }
 
+/**
+ * Compute the current UTC offset text for an IANA timezone, formatted as `UTC±HH:MM`.
+ * Returns null when the timezone is invalid or the runtime cannot resolve an offset.
+ * Pure with respect to inputs except for the implicit "now" used to resolve DST.
+ *
+ * Examples: `GMT+8` -> `UTC+08:00`, `GMT+5:30` -> `UTC+05:30`,
+ * `GMT` / `UTC` -> `UTC+00:00`, `GMT-5` -> `UTC-05:00`.
+ */
+export function formatTimezoneOffset(timeZone: string, at?: Date): string | null {
+  try {
+    const fmt = new Intl.DateTimeFormat('en-US', { timeZone, timeZoneName: 'shortOffset' });
+    const parts = fmt.formatToParts(at ?? new Date());
+    const token = parts.find((p) => p.type === 'timeZoneName')?.value;
+    if (!token) return null;
+
+    // Strip the GMT/UTC prefix; whatever remains is the signed offset (may be empty).
+    const rest = token.replace(/^(?:GMT|UTC)/i, '').trim();
+
+    // A bare prefix (no digits) means offset zero -> UTC+00:00.
+    if (rest === '') return 'UTC+00:00';
+
+    const m = rest.match(/^([+-])(\d{1,2})(?::(\d{2}))?$/);
+    if (!m) return null;
+
+    const sign = m[1];
+    const hours = m[2].padStart(2, '0');
+    const minutes = (m[3] ?? '00').padStart(2, '0');
+    return `UTC${sign}${hours}:${minutes}`;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Build a timezone option's display label: the humanized name, suffixed with the
+ * current UTC offset (e.g. `Asia/Singapore (UTC+08:00)`) when it can be resolved,
+ * otherwise the name-only label (graceful degradation).
+ */
+function buildTimezoneLabel(tz: string): string {
+  const name = tz.replace(/_/g, ' ');
+  const offset = formatTimezoneOffset(tz);
+  return offset ? `${name} (${offset})` : name;
+}
+
 /** A curated list of common IANA timezones for the settings dropdown, plus "auto". */
 export function getTimezoneOptions(): Array<{ value: string; label: string }> {
   const opts: Array<{ value: string; label: string }> = [
@@ -104,7 +148,7 @@ export function getTimezoneOptions(): Array<{ value: string; label: string }> {
   if (typeof anyIntl.supportedValuesOf === 'function') {
     try {
       for (const tz of anyIntl.supportedValuesOf('timeZone')) {
-        opts.push({ value: tz, label: tz.replace(/_/g, ' ') });
+        opts.push({ value: tz, label: buildTimezoneLabel(tz) });
       }
       return opts;
     } catch {
@@ -116,6 +160,6 @@ export function getTimezoneOptions(): Array<{ value: string; label: string }> {
     'Asia/Dubai','Europe/London','Europe/Paris','Europe/Berlin','America/New_York',
     'America/Chicago','America/Denver','America/Los_Angeles','Australia/Sydney','Pacific/Auckland',
   ];
-  for (const tz of curated) opts.push({ value: tz, label: tz.replace(/_/g, ' ') });
+  for (const tz of curated) opts.push({ value: tz, label: buildTimezoneLabel(tz) });
   return opts;
 }

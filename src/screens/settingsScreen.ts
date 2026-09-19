@@ -7,6 +7,7 @@ import { settingsStore } from '../settingsStore.js';
 import { cloudSyncService } from '../cloudSyncService.js';
 import { toastService } from '../toastService.js';
 import { formatNoteTimestamp, getTimezoneOptions } from '../dateFormat.js';
+import { createTimezoneCombobox } from '../components/timezoneCombobox.js';
 import type { AppSettings } from '../types.js';
 
 // RFC 5321-compatible email regex (local-part@domain)
@@ -227,8 +228,27 @@ export function renderSettings(container: HTMLElement): () => void {
   tzLabel.className = 'form-label';
   tzLabel.textContent = 'Timezone';
   tzGroup.appendChild(tzLabel);
-  const tzControl = buildSelect(getTimezoneOptions(), current.timezone);
-  tzGroup.appendChild(tzControl.wrapper);
+  // onSelect: save/preview/revert/no-op flow (refined & reviewed by task 7.2).
+  const onTimezoneSelect = async (next: string): Promise<void> => {
+    const prev = settingsStore.getCurrent().timezone;
+    if (next === prev) return; // no-op skip (Req 6.4)
+    try {
+      await settingsStore.save({ timezone: next });
+      updateDateTimePreview();
+    } catch {
+      tzControl.setValue(prev);
+      toastService.show('Could not save setting');
+    }
+  };
+  const tzControl = createTimezoneCombobox({
+    options: getTimezoneOptions(),
+    value: current.timezone,
+    onSelect: (next) => void onTimezoneSelect(next),
+    idPrefix: 'tz',
+  });
+  // Associate the "Timezone" label with the combobox input (Req 9.4).
+  tzLabel.htmlFor = tzControl.input.id; // 'tz-input'
+  tzGroup.appendChild(tzControl.root);
   dateTimeSection.appendChild(tzGroup);
 
   // --- Date Format ---
@@ -275,21 +295,10 @@ export function renderSettings(container: HTMLElement): () => void {
 
   root.appendChild(dateTimeSection);
 
-  const onTimezoneChange = async (): Promise<void> => {
-    const prev = settingsStore.getCurrent().timezone;
-    const next = tzControl.select.value;
-    try {
-      await settingsStore.save({ timezone: next });
-      updateDateTimePreview();
-    } catch {
-      tzControl.select.value = prev;
-      toastService.show('Could not save setting');
-    }
-  };
-  tzControl.select.addEventListener('change', () => void onTimezoneChange());
-  listenerCleanups.push(() =>
-    tzControl.select.removeEventListener('change', () => void onTimezoneChange())
-  );
+  // Combobox reports selections via onSelect (wired at construction). Register its
+  // own cleanup so listeners are removed and the root detached on unmount (task 7.3
+  // finalizes; added here to keep cleanup correct).
+  listenerCleanups.push(() => tzControl.destroy());
 
   const onDateFormatChange = async (): Promise<void> => {
     const prev = settingsStore.getCurrent().dateFormat;
@@ -418,8 +427,8 @@ export function renderSettings(container: HTMLElement): () => void {
     if (document.activeElement !== recipientInput) {
       recipientInput.value = settings.emailSummaryRecipient ?? '';
     }
-    if (document.activeElement !== tzControl.select) {
-      tzControl.select.value = settings.timezone;
+    if (document.activeElement !== tzControl.input) {
+      tzControl.setValue(settings.timezone);
     }
     if (document.activeElement !== dateFormatControl.select) {
       dateFormatControl.select.value = settings.dateFormat;
