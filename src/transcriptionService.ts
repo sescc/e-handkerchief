@@ -84,6 +84,63 @@ const SpeechRecognitionCtor: (new () => SpeechRecognitionLike) | undefined =
   ).webkitSpeechRecognition;
 
 /**
+ * Normalize a string for prefix comparison: lowercase and collapse runs of
+ * whitespace to a single space, trimmed. Used only for detecting the
+ * cumulative-growth pattern, never for the emitted text.
+ */
+function normalizeForPrefix(s: string): string {
+  return s.toLowerCase().replace(/\s+/g, ' ').trim();
+}
+
+/**
+ * Assemble the finalized transcript from the FINAL pieces of one recognition
+ * instance (in index order, each already trimmed & non-empty).
+ *
+ * Two cases:
+ *  - Cumulative/growing finals (this device): the engine delivers finals like
+ *    ["1", "1 2", "1 2 3"] where each successive piece startsWith the previous
+ *    one. Joining them would duplicate ("1 1 2 1 2 3"), so we collapse to the
+ *    single LONGEST (last) piece.
+ *  - Positional/non-overlapping finals (well-behaved engines): e.g.
+ *    ["Hello", "world"] — these are distinct segments, so we space-join them.
+ */
+function assembleFinal(finalPieces: string[]): string {
+  if (finalPieces.length === 0) return '';
+  if (finalPieces.length === 1) return finalPieces[0] ?? '';
+
+  // Detect cumulative growth: each piece must start with the previous piece
+  // (comparing normalized forms, so extra spaces / case don't defeat it).
+  let cumulative = true;
+  for (let i = 1; i < finalPieces.length; i++) {
+    const prev = normalizeForPrefix(finalPieces[i - 1] ?? '');
+    const curr = normalizeForPrefix(finalPieces[i] ?? '');
+    if (!curr.startsWith(prev)) {
+      cumulative = false;
+      break;
+    }
+  }
+
+  if (cumulative) {
+    // Every piece is a growing prefix of the next → use only the last (longest).
+    return finalPieces[finalPieces.length - 1] ?? '';
+  }
+  // Distinct segments → join with single spaces.
+  return finalPieces.join(' ');
+}
+
+/**
+ * Conservative check: does `committed` already end with `segment`
+ * (comparing normalized forms so trailing/extra spaces & case don't defeat
+ * it)? Used to avoid double-appending finalized text on restart/finish.
+ */
+function endsWithSegment(committed: string, segment: string): boolean {
+  const c = normalizeForPrefix(committed);
+  const s = normalizeForPrefix(segment);
+  if (!s) return false;
+  return c === s || c.endsWith(' ' + s) || c.endsWith(s);
+}
+
+/**
  * A no-op handle used when recognition is unsupported or fails to start.
  * @param errorCode surfaced via getError() so callers can craft messaging.
  */
@@ -143,15 +200,26 @@ export const transcriptionService: TranscriptionServiceAPI = {
     const finish = (): void => {
       if (resolved) return;
       resolved = true;
-      const text = [committed, instanceFinal].filter(Boolean).join(' ').trim();
+      // Apply the same "don't double-append" guard as folding so the SAVED
+      // text has no trailing duplication when committed already ends with the
+      // current instance's finalized text.
+      const parts =
+        instanceFinal && !endsWithSegment(committed, instanceFinal)
+          ? [committed, instanceFinal]
+          : [committed];
+      const text = parts.filter(Boolean).join(' ').trim();
       resolveResult(text.length > 0 ? text : null);
       for (const cb of endListeners) cb();
     };
 
     // Fold the current instance's finalized text into the committed buffer,
     // then reset per-instance state for the next recognition instance.
+    // Only instanceFinal is ever folded (interim must never leak into
+    // committed). Conservative dedup guard: if committed already ends with
+    // instanceFinal (e.g. a restart re-delivered the same finalized text),
+    // skip appending so committed doesn't get a duplicate tail.
     const foldInstanceIntoCommitted = (): void => {
-      if (instanceFinal) {
+      if (instanceFinal && !endsWithSegment(committed, instanceFinal)) {
         committed = [committed, instanceFinal].filter(Boolean).join(' ');
       }
       instanceFinal = '';
@@ -167,23 +235,40 @@ export const transcriptionService: TranscriptionServiceAPI = {
       recognition.lang = navigator.language || 'en-US';
 
       recognition.onresult = (event: SpeechRecognitionEventLike): void => {
-        // FIX Bug 2 — rebuild (do NOT append). Scan the ENTIRE results list
-        // from index 0 each event; a re-delivered final segment overwrites.
-        let finalText = '';
-        let interimText = '';
+        // FIX Bug 2 — rebuild the instance transcript FULLY each event (never
+        // append across events) so re-delivered results overwrite rather than
+        // duplicate. This must be robust to two engine behaviours:
+        //  (a) well-behaved/positional engines: each results entry is a
+        //      distinct, non-overlapping segment.
+        //  (b) this device's cumulative/growing entries: interim (and
+        //      sometimes final) entries each hold the full running partial,
+        //      e.g. entry0="1", entry1="1 2", entry2="1 2 3". Concatenating
+        //      those yields the "1 1 2 1 2 3 ..." duplication we are fixing.
+
+        // Collect every FINAL piece once, in index order (trimmed, non-empty).
+        const finalPieces: string[] = [];
+        // Track the SINGLE last (highest-index) non-final entry — on cumulative
+        // engines that entry already holds the full running partial; on
+        // positional engines the last interim is still the correct current
+        // partial. We deliberately do NOT accumulate all interim entries.
+        let lastInterim = '';
         for (let i = 0; i < event.results.length; i++) {
           const entry = event.results[i];
           if (!entry) continue;
-          const piece = entry[0]?.transcript ?? '';
+          const piece = (entry[0]?.transcript ?? '').trim();
           if (!piece) continue;
           if (entry.isFinal) {
-            finalText += (finalText ? ' ' : '') + piece.trim();
+            finalPieces.push(piece);
           } else {
-            interimText += piece;
+            lastInterim = piece;
           }
         }
-        instanceFinal = finalText;
-        instanceInterim = interimText;
+
+        // Assemble finalized text, collapsing the cumulative-final case.
+        instanceFinal = assembleFinal(finalPieces);
+        // Interim is ONLY the latest partial (replaces, never accumulates).
+        instanceInterim = lastInterim;
+
         const liveText = [committed, instanceFinal, instanceInterim]
           .filter(Boolean)
           .join(' ')
