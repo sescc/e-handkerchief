@@ -58,18 +58,25 @@ jobs:
           find _site/src -name '*.ts' -delete
           rm -f _site/src/*.map _site/src/**/*.map 2>/dev/null || true
 
-      - name: Inject Google client ID into config.js
+      - name: Inject Google Drive OAuth config into config.js
         env:
           GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID }}
+          OAUTH_BROKER_URL: ${{ secrets.OAUTH_BROKER_URL }}
         run: |
-          if [ -z "${GOOGLE_CLIENT_ID}" ]; then
-            echo "WARNING: GOOGLE_CLIENT_ID secret is empty — cloud backup will be disabled on the deployed site."
-          else
-            echo "Injecting Google client ID (length: ${#GOOGLE_CLIENT_ID})"
-          fi
-          # The placeholder is deliberately distinct from the global name
-          # window.__GOOGLE_CLIENT_ID__ so the substitution can't rewrite it.
+          # Google Drive backup is a required feature: refuse to deploy without it.
+          missing=0
+          for name in GOOGLE_CLIENT_ID OAUTH_BROKER_URL; do
+            if [ -z "${!name}" ]; then
+              echo "ERROR: GitHub Actions secret ${name} is not set — see README 'Cloud Backup (Google Drive)'." >&2
+              missing=1
+            fi
+          done
+          [ "$missing" -eq 0 ] || exit 1
+          echo "Injecting Google client ID (length: ${#GOOGLE_CLIENT_ID}) and OAuth broker URL"
+          # Placeholders are deliberately distinct from the global names
+          # (window.__GOOGLE_CLIENT_ID__ etc.) so the substitution can't rewrite them.
           sed -i "s|@@GOOGLE_CLIENT_ID@@|${GOOGLE_CLIENT_ID}|g" _site/config.js
+          sed -i "s|@@OAUTH_BROKER_URL@@|${OAUTH_BROKER_URL}|g" _site/config.js
           # Fail the build rather than deploy a config.js that doesn't parse
           node --check _site/config.js
 

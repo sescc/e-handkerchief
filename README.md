@@ -94,31 +94,63 @@ The `transcribe-worker/` folder lives in this SAME repository (a monorepo) and i
 
 ## Cloud Backup (Google Drive)
 
-Cloud backup is **optional**. Without it, your notes stay local in IndexedDB on the device.
-When enabled, the app backs up to your own Google Drive using OAuth2 with PKCE and the
-Drive **app-data folder** scope — the app can only read and write its own backup files,
-never the rest of your Drive.
+Google Drive backup is **always available** on a deployed site. Each user decides whether to
+tap **Connect** with their own Google account; until they do, notes stay local in IndexedDB.
+The app uses OAuth2 with PKCE and the Drive **app-data folder** scope, so it can only read
+and write its own backup files, never the rest of your Drive.
 
-There is **no client secret** in this PKCE flow. The OAuth **client ID** is injected at
-deploy time from a GitHub Actions secret and is never committed. (A Google OAuth client ID
-is not itself a secret, but keeping it out of a public repo is good practice.)
+How the pieces fit:
 
-### Setting up cloud backup for your own deployment
+- The OAuth **client ID** and the **OAuth broker URL** are injected into `config.js` at
+  deploy time from GitHub Actions secrets. The deploy **fails** if either is missing.
+- The OAuth **client secret** is held only by `oauth-worker/`, a small Cloudflare Worker
+  operated by the site owner. Google "Web application" clients require the secret even
+  with PKCE, so the Worker adds it when exchanging and refreshing tokens. See
+  `oauth-worker/README.md`.
 
-1. In **Google Cloud Console**, create an **OAuth 2.0 Web application** client ID. Add an
+> **Why not put the client secret in GitHub Actions secrets too?** GitHub secrets are only
+> hidden inside CI. Anything injected into the static site ends up in `config.js`, which
+> anyone can read at `https://<site>/config.js`. The client ID is designed to be public; the
+> secret is not, and must stay on a server, which here is the Worker.
+
+### Setting up cloud backup (site owner)
+
+1. In **Google Cloud Console**, create an **OAuth 2.0 Web application** client. Add an
    **Authorized redirect URI** (and a matching JavaScript origin) that **exactly** matches
    your deployed URL: `https://<username>.github.io/<repo-name>/` — note the trailing
-   slash. This value equals `location.origin + location.pathname` at runtime.
-2. In the GitHub repo, go to **Settings → Secrets and variables → Actions → New repository
-   secret**. Name it exactly `GOOGLE_CLIENT_ID` and set its value to the client ID.
-3. Push to `main` (or re-run the deploy workflow). CI injects the ID into `config.js` at
-   build time.
-4. In the app, go to **Settings → Cloud Backup → Connect** to authorize.
+   slash. This value equals `location.origin + location.pathname` at runtime. Note the
+   client ID and client secret.
+2. Deploy the OAuth broker:
 
-> The committed `config.js` holds only a placeholder locally. It works without the secret
-> only in the "disabled" state — if the `GOOGLE_CLIENT_ID` secret is empty or unset, the
-> build still succeeds and cloud backup is simply disabled (the app shows "Google Drive
-> client ID not configured"). The client ID is never committed.
+   ```sh
+   cd oauth-worker
+   npm install
+   npx wrangler login
+   npx wrangler secret put GOOGLE_CLIENT_ID
+   npx wrangler secret put GOOGLE_CLIENT_SECRET
+   npx wrangler deploy
+   ```
+
+   Check that `ALLOWED_ORIGIN` in `oauth-worker/wrangler.toml` is your site's origin
+   (e.g. `https://sescc.github.io`). Copy the printed Worker URL.
+3. In the GitHub repo, go to **Settings → Secrets and variables → Actions → New repository
+   secret** and add:
+   - `GOOGLE_CLIENT_ID`: the client ID
+   - `OAUTH_BROKER_URL`: the Worker URL, e.g. `https://ehk-oauth.<subdomain>.workers.dev`
+4. Push to `main` (or re-run the deploy workflow).
+5. In the app, go to **Settings → Cloud Backup → Connect** to authorize.
+
+> Locally, the committed `config.js` holds only placeholders, so the app shows "Google
+> Drive client ID not configured" when you tap Connect. Neither value is ever committed.
+
+### Self-deploying / forks
+
+The OAuth client and broker are tied to the site owner. A fork **does not** inherit the
+repo's GitHub secrets. It also can't reuse the owner's client or broker: Google rejects the
+fork's redirect URI, and the broker rejects the fork's origin. To self-deploy, follow all
+the steps above with your **own** Google OAuth client, your own `oauth-worker` deployment,
+and your own two GitHub secrets. Until those exist, the fork's deploy workflow fails at
+"Inject Google Drive OAuth config".
 
 ## Changing the domain / custom domain
 
@@ -134,6 +166,10 @@ service-worker, and OAuth paths are relative or derived at runtime.
   to include the new origin, then redeploy the Worker (`npx wrangler deploy`). For a
   zero-downtime migration, use the comma-separated list: add the new origin alongside the
   old one and deploy, migrate traffic, then remove the old origin and deploy again.
+- **OAuth broker CORS:** update `ALLOWED_ORIGIN` in `oauth-worker/wrangler.toml` the same
+  way, then redeploy it. The GitHub secrets (`GOOGLE_CLIENT_ID`, `OAUTH_BROKER_URL`) are not
+  tied to the site URL and don't need changing. Only update `OAUTH_BROKER_URL` if the
+  Worker's own URL changes.
 - **Transcription server URL in the app:** if the Worker URL itself changes, update it in
   the app's **Settings → Transcription server URL** (a per-user setting, not code).
 - **No hardcoded domain in the app code:** the PWA needs no code edits for a domain change —
@@ -149,7 +185,8 @@ and OAuth paths are relative, so no configuration is needed for the subpath.
 2. In the repo, go to **Settings → Pages → Source** and select **"GitHub Actions"**.
 3. The included workflow (`.github/workflows/deploy.yml`) compiles the TypeScript
    (`tsc` + `tsc -p tsconfig.sw.json`), injects a build version into `sw.js` and the
-   Google client ID into `config.js`, publishes the PWA's files
+   Google client ID and OAuth broker URL into `config.js` (failing if either secret is
+   missing), publishes the PWA's files
    (`index.html app.css manifest.webmanifest sw.js config.js` plus `src/` and `icons/`),
    and deploys automatically on every push to `main`. You can also trigger it manually
    from the **Actions** tab (*workflow_dispatch*).
@@ -170,7 +207,7 @@ e-Handkerchief/
 ├── index.html              # App shell
 ├── app.css                 # All styles (mobile-first)
 ├── manifest.webmanifest    # PWA manifest
-├── config.js               # Runtime config: Google client ID injected at build time
+├── config.js               # Runtime config: Google client ID + OAuth broker URL injected at build time
 ├── sw.ts / sw.js           # Service Worker
 ├── src/
 │   ├── app.ts              # Entry point
@@ -188,7 +225,7 @@ e-Handkerchief/
 │   ├── transcriptionService.ts
 │   ├── emailQueue.ts
 │   ├── notificationService.ts
-│   ├── cloudSyncService.ts # Google Drive backup (OAuth2 PKCE)
+│   ├── cloudSyncService.ts # Google Drive backup (OAuth2 PKCE via oauth-worker)
 │   ├── toastService.ts
 │   ├── components/
 │   │   ├── mediaCapture.ts
@@ -200,5 +237,6 @@ e-Handkerchief/
 │       ├── settingsScreen.ts
 │       └── calendarScreen.ts
 ├── icons/                  # PWA icon assets
+├── oauth-worker/           # Cloudflare Worker: Google OAuth token broker, owner-operated (deploys separately via wrangler)
 └── transcribe-worker/      # Cloudflare Worker: Groq Whisper transcription proxy (deploys separately via wrangler)
 ```

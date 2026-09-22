@@ -1,0 +1,13 @@
+{
+  "name": "ehk-oauth-worker",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Cloudflare Worker brokering Google OAuth2 token exchange/refresh for e-Handkerchief",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy"
+  },
+  "devDependencies": {
+    "wrangler": "^4.131.1"
+  }
+}

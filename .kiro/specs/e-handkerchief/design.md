@@ -2,7 +2,7 @@
 
 ## Overview
 
-e-Handkerchief is a mobile-first Progressive Web App that lets users capture location-aware notes — via voice recording, photo/video, or text — with minimal friction. Every note is timestamped and geo-tagged automatically. The app stores all data locally in IndexedDB and works fully offline after first load. Optional features (voice transcription, email summary, cloud backup) are additive and never block the core capture flow.
+e-Handkerchief is a mobile-first Progressive Web App that lets users capture location-aware notes — via voice recording, photo/video, or text — with minimal friction. Every note is timestamped and geo-tagged automatically. The app stores all data locally in IndexedDB and works fully offline after first load. Optional features (voice transcription, email summary) and cloud backup are additive and never block the core capture flow. Cloud backup (Google Drive) is always available on a deployed site; each user chooses whether to connect.
 
 The implementation uses vanilla HTML, CSS, and TypeScript compiled to plain ES module JavaScript. There is no framework runtime, no bundler, and no npm install step required by the end user. `tsc` (the TypeScript compiler, available via Kiro's Node.js) is the only build tool.
 
@@ -31,6 +31,8 @@ graph TD
 
     subgraph External
         GDrive[Google Drive API]
+        OAuthWorker[oauth-worker<br/>Owner-operated Cloudflare Worker]
+        GoogleToken[Google OAuth2<br/>token endpoint]
         EmailRelay[Email Relay<br/>mailto / SMTP proxy]
         ReverseGeo[Nominatim / OSM<br/>Reverse Geocoding]
     end
@@ -48,11 +50,13 @@ graph TD
     SW --> NoteStore
     SW --> EmailQueue
     CloudSync --> GDrive
+    CloudSync -->|code / refresh token| OAuthWorker
+    OAuthWorker -->|+ client secret| GoogleToken
     EmailQueue --> EmailRelay
     GeoService --> ReverseGeo
 ```
 
-The architecture is intentionally flat: a thin vanilla-JS UI layer built from TypeScript screen modules calls service modules directly. There is no backend; all persistence is local. The Service Worker is hand-written (~100–150 lines) and handles asset caching, offline fallback, and background sync without Workbox. External network calls (Google Drive, reverse geocoding, email relay) are all optional and degrade gracefully.
+The architecture is intentionally flat: a thin vanilla-JS UI layer built from TypeScript screen modules calls service modules directly. There is no application backend; all persistence is local. The one server-side piece the app itself depends on is `oauth-worker/`, a tiny Cloudflare Worker operated by the site owner. It completes Google's OAuth token exchange and refresh, because Google requires a client secret that must not ship in the static bundle. The optional transcription Worker is configured per user and is separate. The Service Worker is hand-written (~100–150 lines) and handles asset caching, offline fallback, and background sync without Workbox. External network calls (Google Drive and its OAuth broker, reverse geocoding, email relay) never block capture and degrade gracefully when unavailable. Reverse geocoding and the email relay are optional features. Google Drive backup is always offered, although each user decides whether to connect.
 
 ### Component Breakdown
 
@@ -66,7 +70,8 @@ The architecture is intentionally flat: a thin vanilla-JS UI layer built from Ty
 | **GeoService** | Wraps `navigator.geolocation`, enforces 10-second timeout, resolves reverse-geocoding via Nominatim. |
 | **TranscriptionService** | Wraps Web Speech API with a 30-second timeout guard; fires-and-forgets, returns `Promise<string \| null>`. |
 | **EmailQueue** | Persists outbound email jobs in IndexedDB; retries up to 3× via Background Sync or polling on reconnect. |
-| **CloudSyncService** | Authenticates with Google Drive OAuth2 PKCE flow; uploads/downloads Note blobs. |
+| **CloudSyncService** | Authenticates with Google Drive OAuth2 PKCE flow (token exchange and refresh via `oauth-worker`); uploads/downloads Note blobs. |
+| **oauth-worker** | Owner-operated Cloudflare Worker (`oauth-worker/src/index.js`). `POST /token` and `POST /refresh` add the Google client secret (a Wrangler secret) and relay Google's token endpoint. CORS is locked to `ALLOWED_ORIGIN`. |
 | **NotificationService** | Requests permission, creates persistent notification, manages lifecycle. |
 | **EventBus** | Lightweight publish/subscribe module; decouples service events (e.g. `note:saved`) from screen renders. |
 | **Service Worker** | Hand-written `sw.ts` compiled to `sw.js`; precaches all static assets; handles Background Sync queues. |
@@ -354,7 +359,7 @@ interface CloudSyncServiceAPI {
 | `Notification` | Persistent Android shortcut notification |
 | `navigator.onLine` + `online` event | Connectivity detection |
 | Web App Manifest `shortcuts` | Home-screen quick-launch |
-| Google Identity Services (PKCE) | Drive OAuth2 |
+| Google OAuth2 (PKCE) + `oauth-worker` broker | Drive OAuth2 |
 
 ---
 
@@ -377,7 +382,7 @@ e-Handkerchief/
 │   ├── transcriptionService.ts # Web Speech API wrapper
 │   ├── emailQueue.ts           # Email job queue
 │   ├── notificationService.ts  # Notification permission + registration
-│   ├── cloudSyncService.ts     # Google Drive OAuth2 PKCE
+│   ├── cloudSyncService.ts     # Google Drive OAuth2 PKCE (token exchange via oauth-worker)
 │   ├── toastService.ts         # Global toast UI (DOM-based)
 │   ├── app.ts                  # Entry point: init, SW registration, routing
 │   └── screens/
@@ -386,7 +391,9 @@ e-Handkerchief/
 │       ├── noteDetailScreen.ts # Note detail screen render + logic
 │       └── settingsScreen.ts   # Settings screen render + logic
 ├── sw.ts                       # Service Worker source (~100–150 lines)
-├── config.js                   # Runtime config; Google client ID injected at deploy
+├── config.js                   # Runtime config; Google client ID + OAuth broker URL injected at deploy
+├── oauth-worker/               # Owner-operated Cloudflare Worker: Google token exchange/refresh
+│   └── src/index.js
 └── tsconfig.json               # TypeScript config (ES2020, strict)
 ```
 
@@ -406,10 +413,12 @@ tsc
 
 ### Deploy-time injection
 
-`config.js` is a plain (non-module, not compiled) script loaded by `index.html` before `src/app.js`. It sets `window.__GOOGLE_CLIENT_ID__`, which `CloudSyncService` reads at module load. The committed file holds the placeholder `@@GOOGLE_CLIENT_ID@@`; the GitHub Pages deploy workflow replaces it with the `GOOGLE_CLIENT_ID` Actions secret via `sed`. If the placeholder is not replaced, the file sets the global to `''`.
+`config.js` is a plain (non-module, not compiled) script loaded by `index.html` before `src/app.js`. It sets `window.__GOOGLE_CLIENT_ID__` and `window.__OAUTH_BROKER_URL__`, which `CloudSyncService` reads at module load. The committed file holds the placeholders `@@GOOGLE_CLIENT_ID@@` and `@@OAUTH_BROKER_URL@@`. The GitHub Pages deploy workflow replaces them with the `GOOGLE_CLIENT_ID` and `OAUTH_BROKER_URL` Actions secrets via `sed`. An unreplaced placeholder sets its global to `''`, and a trailing `/` on the broker URL is stripped.
 
-- The placeholder token must be distinct from the global name. When they were identical, `sed` also rewrote the assignment target and produced a syntax error.
+- Google Drive backup is a required feature: **CI fails** if either secret is empty.
+- Placeholder tokens must be distinct from the global names. When they were identical, `sed` also rewrote the assignment target and produced a syntax error.
 - After injection, CI runs `node --check _site/config.js` so a malformed config fails the build instead of deploying silently.
+- The Google **client secret** is never injected here. Everything in `config.js` is publicly readable, so the secret lives only in `oauth-worker` as a Wrangler secret.
 
 ### tsconfig.json
 
@@ -793,7 +802,13 @@ interface CloudSyncServiceAPI {
 
 **Contracts:**
 - `connect` uses PKCE; no client secret is embedded in the bundle.
-- The OAuth client ID is read from `window.__GOOGLE_CLIENT_ID__` (set by `config.js`, see *Deploy-time injection*). If it is empty, `connect` shows the toast "Google Drive client ID not configured" and does nothing.
+- The OAuth client ID and broker URL are read from `window.__GOOGLE_CLIENT_ID__` / `window.__OAUTH_BROKER_URL__` (set by `config.js`, see *Deploy-time injection*). If either is empty, which only happens in local dev, `connect` shows the toast "Google Drive client ID not configured" and does nothing.
+- `connect` requests `access_type=offline&prompt=consent` so Google always issues a refresh token.
+- `handleOAuthCallback` sends `{ code, code_verifier, redirect_uri }` to `oauth-worker` `POST /token`, never directly to Google. It strips `?code=` from the URL before exchanging, so a reload cannot replay a spent code.
+- All Drive API calls go through `driveFetch`. It refreshes the access token via `oauth-worker` `POST /refresh` when less than 60 s remains, and on a `401` it forces one refresh and retries once.
+- If Google refuses the refresh token (`invalid_grant`), the stored token is cleared, status becomes `disconnected`, and the toast "Google Drive session expired — please reconnect" is shown.
+- `uploadNote` queues a `cloudUploadJob` on **any** failure: an HTTP error, offline, or the broker being unreachable during a refresh. `uploadPending` retries the upload directly, so a failed retry updates the existing job instead of enqueuing a duplicate.
+- `disconnect` revokes the refresh token (POST body, not query string), which also invalidates its access tokens.
 - `importAll` is idempotent: a note with a matching `id` and `createdAt` is silently skipped.
 - Failed uploads are queued in `cloudUploadJobs` and retried up to 3 times.
 - Tokens are never logged or included in error reports.
@@ -965,7 +980,8 @@ Importing the same set of notes twice must produce the same local store state as
 | Transcription timeout / failure | Non-blocking 5-second auto-dismissing toast "Transcription unavailable." Audio saved normally. |
 | Email delivery failure (3× attempts) | Non-blocking persistent toast "Email could not be sent — tap to retry." Job retained in queue. |
 | Cloud upload failure (3× retries) | Toast "Upload failed — will retry when online." Job retained in upload queue. |
-| Google Drive auth failure | Toast "Could not connect to Google Drive." Status remains disconnected. |
+| Google Drive auth failure (incl. OAuth broker unreachable or misconfigured) | Toast "Could not connect to Google Drive." Status remains disconnected. Google's `error`/`error_description` is logged via `console.warn` (never tokens). |
+| Google Drive refresh token refused (`invalid_grant`) | Toast "Google Drive session expired — please reconnect." Token cleared; status becomes disconnected. |
 | Service Worker asset not cached | SW returns a synthetic `503` response; app shows its own offline banner, not the browser error page. |
 | SW update available | Non-blocking banner "New version available — tap to reload" appears; user taps to `location.reload()`. |
 
@@ -981,6 +997,8 @@ All errors are surfaced through `ToastService` (`src/toastService.ts`), a DOM-ma
 
 ### OAuth2 PKCE Flow
 - The Google Drive integration uses the PKCE extension to the OAuth2 authorization code flow. No client secret is embedded in the app bundle. The `code_verifier` is generated using `crypto.getRandomValues` and discarded after use.
+- Google "Web application" clients require `client_secret` on the token endpoint even with PKCE. The token exchange and refresh therefore go through `oauth-worker`, which holds the client ID and secret as Wrangler secrets and never accepts them from the request. It proxies only the `authorization_code` and `refresh_token` grants and never logs tokens. CORS is restricted to `ALLOWED_ORIGIN`, and an unset value denies all origins.
+- The OAuth client and broker belong to the site owner. A self-deployed fork must register its own Google OAuth client and deploy its own broker. The owner's client rejects the fork's `redirect_uri`, and the owner's broker rejects the fork's origin.
 - The `redirect_uri` is the app's own origin, preventing token interception by other installed apps.
 
 ### Content Security Policy
@@ -991,9 +1009,10 @@ script-src 'self';
 style-src 'self' 'unsafe-inline';
 img-src 'self' blob: data:;
 media-src 'self' blob:;
-connect-src 'self' https://nominatim.openstreetmap.org https://www.googleapis.com https://accounts.google.com;
+connect-src 'self' https:;
 worker-src 'self';
 ```
+`connect-src` is intentionally `https:` rather than a host list. The app connects to hosts that are configured per deployment or per user: the owner's `oauth-worker` broker (injected at deploy) and each user's transcription Worker (a Settings value). Google (`oauth2.googleapis.com`, `www.googleapis.com`) and Nominatim are also reached. Tightening this to a fixed list would break Connect and deferred transcription.
 `'unsafe-eval'` is explicitly excluded. TypeScript compiled to plain ES modules does not require it.
 
 ### Email Relay

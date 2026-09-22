@@ -26,6 +26,7 @@ const ASSETS: string[] = [
   'index.html',
   'app.css',
   'manifest.webmanifest',
+  'config.js',
   'src/app.js',
   'src/router.js',
   'src/db.js',
