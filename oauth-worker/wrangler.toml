@@ -1,0 +1,14 @@
+name = "ehk-oauth"
+main = "src/index.js"
+compatibility_date = "2024-11-01"
+
+# Public (non-secret) variables:
+[vars]
+# Origins allowed to call this Worker (comma-separated). Unlike the
+# transcription Worker, leaving this unset DENIES all origins, because this
+# Worker uses the site owner's Google client secret.
+ALLOWED_ORIGIN = "https://sescc.github.io"
+
+# GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET are NOT set here — they are secrets:
+#   npx wrangler secret put GOOGLE_CLIENT_ID
+#   npx wrangler secret put GOOGLE_CLIENT_SECRET

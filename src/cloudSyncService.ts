@@ -9,13 +9,153 @@ import { openDB, dbPut, dbDelete, dbGetAllByIndex } from './db.js';
 import { toastService } from './toastService.js';
 import type { Note, CloudUploadJob, OAuthToken } from './types.js';
 
-const GOOGLE_CLIENT_ID =
-  (
-    window as Window &
-      typeof globalThis & { __GOOGLE_CLIENT_ID__?: string }
-  ).__GOOGLE_CLIENT_ID__ ?? '';
+// Both values are injected into config.js at deploy time (see deploy.yml).
+const runtimeConfig = window as Window &
+  typeof globalThis & { __GOOGLE_CLIENT_ID__?: string; __OAUTH_BROKER_URL__?: string };
+
+const GOOGLE_CLIENT_ID = runtimeConfig.__GOOGLE_CLIENT_ID__ ?? '';
+
+/**
+ * Owner-operated Worker (oauth-worker/) that adds the client secret to Google
+ * token requests. Google "Web application" clients require the secret even
+ * with PKCE, and it must never ship in this static bundle.
+ */
+const OAUTH_BROKER_URL = runtimeConfig.__OAUTH_BROKER_URL__ ?? '';
 
 const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.appdata';
+
+/** Refresh the access token when it has less than this long left. */
+const TOKEN_EXPIRY_MARGIN_MS = 60_000;
+
+class TokenRefusedError extends Error {}
+
+/** POST JSON to the OAuth broker; returns the parsed body or throws. */
+async function callBroker(
+  path: '/token' | '/refresh',
+  body: Record<string, string>
+): Promise<{ access_token: string; expires_in: number; refresh_token?: string }> {
+  const res = await fetch(`${OAUTH_BROKER_URL}${path}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  const data = (await res.json().catch(() => null)) as {
+    access_token?: string;
+    expires_in?: number;
+    refresh_token?: string;
+    error?: string;
+    error_description?: string;
+  } | null;
+  if (!res.ok || !data || typeof data.access_token !== 'string') {
+    // Log Google's error code/description only — never token values.
+    console.warn(`OAuth broker ${path} failed (${res.status}):`, data?.error, data?.error_description);
+    if (data?.error === 'invalid_grant') throw new TokenRefusedError(data.error);
+    throw new Error(`OAuth broker ${path} failed: ${res.status}`);
+  }
+  return {
+    access_token: data.access_token,
+    expires_in: data.expires_in ?? 3600,
+    refresh_token: data.refresh_token,
+  };
+}
+
+/** Remove ?code=... (and other OAuth params) from the URL without reloading. */
+function stripOAuthParams(): void {
+  history.replaceState(null, '', `${location.pathname}${location.hash}`);
+}
+
+/**
+ * Return a usable access token, refreshing it via the broker when it is about
+ * to expire (or when `force` is set after a 401). If Google refuses the refresh
+ * token, the connection is cleared and the user is asked to reconnect.
+ */
+async function getAccessToken(force = false): Promise<string | null> {
+  const token = settingsStore.getCurrent().cloudBackupToken;
+  if (!token) return null;
+  if (!force && token.expiresAt - TOKEN_EXPIRY_MARGIN_MS > Date.now()) {
+    return token.accessToken;
+  }
+  if (!token.refreshToken) {
+    await expireConnection();
+    return null;
+  }
+  try {
+    const data = await callBroker('/refresh', { refresh_token: token.refreshToken });
+    const refreshed: OAuthToken = {
+      accessToken: data.access_token,
+      refreshToken: data.refresh_token ?? token.refreshToken,
+      expiresAt: Date.now() + data.expires_in * 1000,
+    };
+    await settingsStore.save({ cloudBackupToken: refreshed });
+    return refreshed.accessToken;
+  } catch (err) {
+    if (err instanceof TokenRefusedError) {
+      await expireConnection();
+      return null;
+    }
+    throw err;
+  }
+}
+
+async function expireConnection(): Promise<void> {
+  await settingsStore.save({ cloudBackupToken: null, cloudBackupProvider: null });
+  notifyStatus('disconnected');
+  toastService.show('Google Drive session expired — please reconnect');
+}
+
+/** Upload one note to the Drive app-data folder; throws on any failure. */
+async function sendNoteToDrive(note: Note): Promise<void> {
+  const serialized = await noteToJSON(note);
+
+  // Use multipart upload so we can set both metadata and content in one request
+  const metadata = JSON.stringify({
+    name: `note-${note.id}.json`,
+    parents: ['appDataFolder'],
+  });
+
+  const boundary = `boundary-${Date.now()}`;
+  const body = [
+    `--${boundary}`,
+    'Content-Type: application/json; charset=UTF-8',
+    '',
+    metadata,
+    `--${boundary}`,
+    'Content-Type: application/json',
+    '',
+    serialized,
+    `--${boundary}--`,
+  ].join('\r\n');
+
+  const res = await driveFetch(
+    'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&spaces=appDataFolder',
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': `multipart/related; boundary=${boundary}`,
+      },
+      body,
+    }
+  );
+  if (!res.ok) throw new Error(`Drive upload failed: ${res.status}`);
+}
+
+/** fetch() against the Drive API with auth; refreshes once and retries on 401. */
+async function driveFetch(url: string, init: RequestInit = {}): Promise<Response> {
+  const send = (accessToken: string): Promise<Response> =>
+    fetch(url, {
+      ...init,
+      headers: { ...(init.headers as Record<string, string>), Authorization: `Bearer ${accessToken}` },
+    });
+
+  const accessToken = await getAccessToken();
+  if (!accessToken) throw new Error('Google Drive not connected');
+  const res = await send(accessToken);
+  if (res.status !== 401) return res;
+
+  const retryToken = await getAccessToken(true);
+  if (!retryToken) return res;
+  return send(retryToken);
+}
 
 export type ConnectionStatus = 'connected' | 'disconnected';
 
@@ -51,7 +191,7 @@ export const cloudSyncService: CloudSyncServiceAPI = {
   },
 
   async connect(): Promise<void> {
-    if (!GOOGLE_CLIENT_ID) {
+    if (!GOOGLE_CLIENT_ID || !OAUTH_BROKER_URL) {
       toastService.show('Google Drive client ID not configured');
       return;
     }
@@ -69,6 +209,8 @@ export const cloudSyncService: CloudSyncServiceAPI = {
       authUrl.searchParams.set('code_challenge', challenge);
       authUrl.searchParams.set('code_challenge_method', 'S256');
       authUrl.searchParams.set('access_type', 'offline');
+      // Without prompt=consent Google omits the refresh token on re-consent.
+      authUrl.searchParams.set('prompt', 'consent');
 
       window.location.href = authUrl.toString();
     } catch {
@@ -79,36 +221,21 @@ export const cloudSyncService: CloudSyncServiceAPI = {
   async handleOAuthCallback(code: string): Promise<void> {
     const verifier = sessionStorage.getItem('pkce_verifier');
     sessionStorage.removeItem('pkce_verifier');
+    // Codes are single-use: strip them up front so a reload can't replay one.
+    const redirectUri = `${location.origin}${location.pathname}`;
+    stripOAuthParams();
     if (!verifier) return;
 
-    const redirectUri = `${location.origin}${location.pathname}`;
     try {
-      const res = await fetch('https://oauth2.googleapis.com/token', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: new URLSearchParams({
-          code,
-          client_id: GOOGLE_CLIENT_ID,
-          redirect_uri: redirectUri,
-          grant_type: 'authorization_code',
-          code_verifier: verifier,
-        }).toString(),
+      const data = await callBroker('/token', {
+        code,
+        code_verifier: verifier,
+        redirect_uri: redirectUri,
       });
-
-      if (!res.ok) {
-        toastService.show('Could not connect to Google Drive');
-        return;
-      }
-
-      const data = await res.json() as {
-        access_token: string;
-        refresh_token: string;
-        expires_in: number;
-      };
 
       const token: OAuthToken = {
         accessToken: data.access_token,
-        refreshToken: data.refresh_token,
+        refreshToken: data.refresh_token ?? '',
         expiresAt: Date.now() + data.expires_in * 1000,
       };
 
@@ -117,10 +244,6 @@ export const cloudSyncService: CloudSyncServiceAPI = {
         cloudBackupProvider: 'google-drive',
       });
       notifyStatus('connected');
-
-      // Remove ?code=... from URL without a full page reload
-      const clean = `${location.pathname}${location.hash}`;
-      history.replaceState(null, '', clean);
     } catch {
       toastService.show('Could not connect to Google Drive');
     }
@@ -130,10 +253,14 @@ export const cloudSyncService: CloudSyncServiceAPI = {
     const token = settingsStore.getCurrent().cloudBackupToken;
     if (token) {
       try {
-        await fetch(
-          `https://oauth2.googleapis.com/revoke?token=${token.accessToken}`,
-          { method: 'POST' }
-        );
+        // Revoking the refresh token also invalidates its access tokens.
+        await fetch('https://oauth2.googleapis.com/revoke', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: new URLSearchParams({
+            token: token.refreshToken || token.accessToken,
+          }).toString(),
+        });
       } catch {
         // Ignore revocation errors — always clear locally
       }
@@ -146,41 +273,11 @@ export const cloudSyncService: CloudSyncServiceAPI = {
     const token = settingsStore.getCurrent().cloudBackupToken;
     if (!token) return;
 
-    const serialized = await noteToJSON(note);
-
-    // Use multipart upload so we can set both metadata and content in one request
-    const metadata = JSON.stringify({
-      name: `note-${note.id}.json`,
-      parents: ['appDataFolder'],
-    });
-
-    const boundary = `boundary-${Date.now()}`;
-    const body = [
-      `--${boundary}`,
-      'Content-Type: application/json; charset=UTF-8',
-      '',
-      metadata,
-      `--${boundary}`,
-      'Content-Type: application/json',
-      '',
-      serialized,
-      `--${boundary}--`,
-    ].join('\r\n');
-
-    const res = await fetch(
-      'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&spaces=appDataFolder',
-      {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${token.accessToken}`,
-          'Content-Type': `multipart/related; boundary=${boundary}`,
-        },
-        body,
-      }
-    );
-
-    if (!res.ok) {
-      // Queue for retry
+    try {
+      await sendNoteToDrive(note);
+    } catch (err) {
+      // Queue for retry on any failure — HTTP error, offline, or the OAuth
+      // broker being unreachable during a token refresh.
       const db = await openDB();
       const job: CloudUploadJob = {
         id: crypto.randomUUID(),
@@ -192,7 +289,7 @@ export const cloudSyncService: CloudSyncServiceAPI = {
         status: 'pending',
       };
       await dbPut(db, 'cloudUploadJobs', job);
-      throw new Error(`Drive upload failed: ${res.status}`);
+      throw err;
     }
   },
 
@@ -222,8 +319,10 @@ export const cloudSyncService: CloudSyncServiceAPI = {
       }
 
       try {
-        await cloudSyncService.uploadNote(note);
-        // uploadNote succeeded — remove the pending job
+        // Upload directly (not via uploadNote) so a failed retry doesn't
+        // enqueue a duplicate job alongside this one.
+        await sendNoteToDrive(note);
+        // Upload succeeded — remove the pending job
         await dbDelete(db, 'cloudUploadJobs', job.id);
       } catch {
         if (inFlight.attempts >= 3) {
@@ -247,9 +346,8 @@ export const cloudSyncService: CloudSyncServiceAPI = {
     let imported = 0;
     let skipped = 0;
 
-    const listRes = await fetch(
-      'https://www.googleapis.com/drive/v3/files?spaces=appDataFolder&fields=files(id,name)',
-      { headers: { Authorization: `Bearer ${token.accessToken}` } }
+    const listRes = await driveFetch(
+      'https://www.googleapis.com/drive/v3/files?spaces=appDataFolder&fields=files(id,name)'
     );
     if (!listRes.ok) return { imported: 0, skipped: 0 };
 
@@ -258,9 +356,8 @@ export const cloudSyncService: CloudSyncServiceAPI = {
     for (const file of listData.files) {
       if (!file.name.startsWith('note-') || !file.name.endsWith('.json')) continue;
 
-      const dlRes = await fetch(
-        `https://www.googleapis.com/drive/v3/files/${file.id}?alt=media`,
-        { headers: { Authorization: `Bearer ${token.accessToken}` } }
+      const dlRes = await driveFetch(
+        `https://www.googleapis.com/drive/v3/files/${file.id}?alt=media`
       );
       if (!dlRes.ok) continue;
 

@@ -2,7 +2,7 @@
 
 ## Introduction
 
-e-Handkerchief is a mobile-first Progressive Web App (PWA) that lets users quickly capture location-aware notes — via voice recording, photo/video, or text — without needing to type on the go. Like a knot on the little finger, it serves as a fast, frictionless reminder tied to a specific place and time. Notes are saved immediately to local device storage and can optionally be synced to cloud storage or emailed to a pre-configured address. The app is designed to function fully offline once installed.
+e-Handkerchief is a mobile-first Progressive Web App (PWA) that lets users quickly capture location-aware notes — via voice recording, photo/video, or text — without needing to type on the go. Like a knot on the little finger, it serves as a fast, frictionless reminder tied to a specific place and time. Notes are saved immediately to local device storage and can be synced to cloud storage (Google Drive, once the user connects their account) or emailed to a pre-configured address. The app is designed to function fully offline once installed.
 
 ---
 
@@ -17,7 +17,7 @@ e-Handkerchief is a mobile-first Progressive Web App (PWA) that lets users quick
 - **Timestamp**: The local date and time recorded at the moment of note creation.
 - **Local Storage**: The device-resident storage mechanism (IndexedDB or equivalent) used to persist Notes without internet connectivity.
 - **Transcription**: An automatically generated text representation of the audio content of a voice recording, produced by the Web Speech API or equivalent.
-- **Cloud Backup**: Optional synchronisation of Note data to an external service such as Google Drive or a Syncthing endpoint.
+- **Cloud Backup**: Synchronisation of Note data to an external service such as Google Drive or a Syncthing endpoint. Google Drive backup is always available on a deployed App; each user chooses whether to connect their own account.
 - **Email Summary**: An optional outbound email containing the text and metadata of a Note, sent to a pre-configured recipient address.
 - **Service Worker**: The background script that enables offline functionality, caching, and background sync for the PWA.
 - **Settings**: A user-accessible configuration screen where preferences such as email address and optional feature toggles are managed.
@@ -180,13 +180,14 @@ e-Handkerchief is a mobile-first Progressive Web App (PWA) that lets users quick
 
 #### Acceptance Criteria
 
-1. THE Settings screen SHALL provide an option to connect the App to a supported cloud backup provider (minimum: Google Drive).
+1. THE Settings screen SHALL provide an option to connect the App to a supported cloud backup provider (minimum: Google Drive). Google Drive SHALL always be offered on a deployed App; it SHALL NOT depend on configuration supplied by the user. Each user connects their own Google account.
 2. WHERE a cloud backup provider is connected, WHEN a Note is saved and a network connection is available, THE App SHALL upload the Note to the configured cloud backup provider within 30 seconds.
 3. WHERE a cloud backup provider is connected, IF a network connection is unavailable when a Note is saved, THEN THE App SHALL queue the upload and SHALL attempt it when connectivity is restored, retrying up to 3 times before marking the upload as failed.
 4. WHERE a cloud backup provider is connected, IF a queued upload fails after 3 retry attempts, THEN THE App SHALL display an error message indicating that the Note could not be uploaded, and SHALL retain the Note in the upload queue for the next manual or automatic retry.
 5. THE Settings screen SHALL provide an Import function that downloads and restores Notes from the connected cloud backup provider into Local Storage.
 6. WHERE a cloud backup provider is connected, IF the Import function encounters a Note whose title and creation timestamp match an existing Local Storage Note, THEN THE App SHALL retain the existing Local Storage copy and SHALL NOT overwrite it with the downloaded copy.
 7. WHERE a cloud backup provider is connected, THE App SHALL NOT delete Local Storage copies of Notes when cloud upload succeeds.
+8. WHERE a cloud backup provider is connected, WHEN the provider's access authorisation expires, THE App SHALL renew it automatically without user interaction. IF the provider refuses renewal, THEN THE App SHALL mark the provider as disconnected and SHALL display a message prompting the user to reconnect.
 
 ---
 
