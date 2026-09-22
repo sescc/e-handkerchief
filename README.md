@@ -57,13 +57,87 @@ Deferred/offline transcription requires a small backend proxy that holds the Gro
 - In the PWA: **Settings → Transcription** → paste the Worker URL into "Transcription server URL".
 - Live transcription does NOT need this server — it only needs internet and a supporting browser.
 
+### Cloudflare Worker: when to re-deploy
+
+The Worker deploys **independently** of the PWA. A normal `git push` deploys the PWA to
+GitHub Pages but does **not** touch the Worker — you must run `wrangler` yourself.
+
+Re-deploy the Worker when you:
+
+- change the Worker source in `transcribe-worker/src/`,
+- change `transcribe-worker/wrangler.toml` (e.g. `ALLOWED_ORIGIN` for a domain change), or
+- rotate the Groq API key.
+
+Run these from the `transcribe-worker/` folder:
+
+```sh
+cd transcribe-worker
+npm install                          # first time only
+npx wrangler login                   # first time only
+npx wrangler secret put GROQ_API_KEY # to set/rotate the Groq key
+npx wrangler deploy                  # deploy code + wrangler.toml vars
+```
+
+> Changing the `GROQ_API_KEY` secret via `wrangler secret put` takes effect immediately
+> (no code deploy needed). But changing `ALLOWED_ORIGIN` in `wrangler.toml` **does**
+> require `npx wrangler deploy`.
+
+See `transcribe-worker/README.md` for full details.
+
 ### Repo structure note
 
 The `transcribe-worker/` folder lives in this SAME repository (a monorepo) and is committed alongside the PWA.
 
 - The two parts deploy independently: the PWA deploys to GitHub Pages via the Actions workflow; the Worker deploys to Cloudflare via `wrangler deploy`. They share a repo but not a deploy pipeline.
-- The GitHub Pages workflow only publishes the PWA's own files (`index.html`, `app.css`, `manifest.webmanifest`, `sw.js`, `src/`, `icons/`); the `transcribe-worker/` folder is not part of the deployed site.
+- The GitHub Pages workflow only publishes the PWA's own files (`index.html`, `app.css`, `manifest.webmanifest`, `sw.js`, `config.js`, `src/`, `icons/`); the `transcribe-worker/` folder is not part of the deployed site.
 - The repo contains NO secrets (the Groq key is a Cloudflare secret set via `wrangler secret put`), so the whole repo — worker subfolder included — is safe to push publicly.
+
+## Cloud Backup (Google Drive)
+
+Cloud backup is **optional**. Without it, your notes stay local in IndexedDB on the device.
+When enabled, the app backs up to your own Google Drive using OAuth2 with PKCE and the
+Drive **app-data folder** scope — the app can only read and write its own backup files,
+never the rest of your Drive.
+
+There is **no client secret** in this PKCE flow. The OAuth **client ID** is injected at
+deploy time from a GitHub Actions secret and is never committed. (A Google OAuth client ID
+is not itself a secret, but keeping it out of a public repo is good practice.)
+
+### Setting up cloud backup for your own deployment
+
+1. In **Google Cloud Console**, create an **OAuth 2.0 Web application** client ID. Add an
+   **Authorized redirect URI** (and a matching JavaScript origin) that **exactly** matches
+   your deployed URL: `https://<username>.github.io/<repo-name>/` — note the trailing
+   slash. This value equals `location.origin + location.pathname` at runtime.
+2. In the GitHub repo, go to **Settings → Secrets and variables → Actions → New repository
+   secret**. Name it exactly `GOOGLE_CLIENT_ID` and set its value to the client ID.
+3. Push to `main` (or re-run the deploy workflow). CI injects the ID into `config.js` at
+   build time.
+4. In the app, go to **Settings → Cloud Backup → Connect** to authorize.
+
+> The committed `config.js` holds only a placeholder locally. It works without the secret
+> only in the "disabled" state — if the `GOOGLE_CLIENT_ID` secret is empty or unset, the
+> build still succeeds and cloud backup is simply disabled (the app shows "Google Drive
+> client ID not configured"). The client ID is never committed.
+
+## Changing the domain / custom domain
+
+If the app moves to a different GitHub Pages repo name **or** a custom domain, update the
+following **external** configs. The app code itself needs no edits — all asset, manifest,
+service-worker, and OAuth paths are relative or derived at runtime.
+
+- **Google OAuth:** add or update the **Authorized redirect URI** and JavaScript origin in
+  Google Cloud Console to the new URL. It must match `location.origin + location.pathname`
+  exactly, including the trailing slash. No code change needed — the redirect URI is derived
+  at runtime.
+- **Cloudflare Worker CORS:** update `ALLOWED_ORIGIN` in `transcribe-worker/wrangler.toml`
+  to include the new origin, then redeploy the Worker (`npx wrangler deploy`). For a
+  zero-downtime migration, use the comma-separated list: add the new origin alongside the
+  old one and deploy, migrate traffic, then remove the old origin and deploy again.
+- **Transcription server URL in the app:** if the Worker URL itself changes, update it in
+  the app's **Settings → Transcription server URL** (a per-user setting, not code).
+- **No hardcoded domain in the app code:** the PWA needs no code edits for a domain change —
+  only the external configs above.
 
 ## Deploy to GitHub Pages
 
@@ -74,14 +148,16 @@ and OAuth paths are relative, so no configuration is needed for the subpath.
 1. Push the repo to GitHub (default branch `main`).
 2. In the repo, go to **Settings → Pages → Source** and select **"GitHub Actions"**.
 3. The included workflow (`.github/workflows/deploy.yml`) compiles the TypeScript
-   (`tsc` + `tsc -p tsconfig.sw.json`) and deploys automatically on every push to
-   `main`. You can also trigger it manually from the **Actions** tab
-   (*workflow_dispatch*).
+   (`tsc` + `tsc -p tsconfig.sw.json`), injects a build version into `sw.js` and the
+   Google client ID into `config.js`, publishes the PWA's files
+   (`index.html app.css manifest.webmanifest sw.js config.js` plus `src/` and `icons/`),
+   and deploys automatically on every push to `main`. You can also trigger it manually
+   from the **Actions** tab (*workflow_dispatch*).
 4. Once the workflow finishes, the app is live at
    `https://<username>.github.io/<repo-name>/`.
 5. **On your phone:** open that URL in Chrome (Android) or Safari (iOS), then tap
    **"Add to Home Screen"**. After the first load it works fully offline — capture,
-   journal, and settings all run from the local IndexedDB store and cached assets.
+   Knots, and settings all run from the local IndexedDB store and cached assets.
 
 > The compiled `.js` output is rebuilt fresh in CI, so the committed source of truth
 > is the TypeScript in `src/` and `sw.ts`. A `.nojekyll` file at the project root
@@ -94,6 +170,7 @@ e-Handkerchief/
 ├── index.html              # App shell
 ├── app.css                 # All styles (mobile-first)
 ├── manifest.webmanifest    # PWA manifest
+├── config.js               # Runtime config: Google client ID injected at build time
 ├── sw.ts / sw.js           # Service Worker
 ├── src/
 │   ├── app.ts              # Entry point
@@ -105,16 +182,23 @@ e-Handkerchief/
 │   ├── eventBus.ts         # Pub/sub event system
 │   ├── geoService.ts       # Geolocation + reverse geocoding
 │   ├── mediaService.ts     # Audio/photo/video capture
+│   ├── mapsLink.ts         # Maps link builder
+│   ├── dateFormat.ts       # Date/time formatting helpers
+│   ├── remoteTranscribe.ts # Deferred transcription via Worker
 │   ├── transcriptionService.ts
 │   ├── emailQueue.ts
 │   ├── notificationService.ts
-│   ├── cloudSyncService.ts
+│   ├── cloudSyncService.ts # Google Drive backup (OAuth2 PKCE)
 │   ├── toastService.ts
+│   ├── components/
+│   │   ├── mediaCapture.ts
+│   │   └── timezoneCombobox.ts
 │   └── screens/
 │       ├── captureScreen.ts
-│       ├── journalScreen.ts
+│       ├── knotsScreen.ts
 │       ├── noteDetailScreen.ts
-│       └── settingsScreen.ts
-├── static/icons/           # PWA icon assets
+│       ├── settingsScreen.ts
+│       └── calendarScreen.ts
+├── icons/                  # PWA icon assets
 └── transcribe-worker/      # Cloudflare Worker: Groq Whisper transcription proxy (deploys separately via wrangler)
 ```

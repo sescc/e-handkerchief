@@ -67,7 +67,11 @@ jobs:
           else
             echo "Injecting Google client ID (length: ${#GOOGLE_CLIENT_ID})"
           fi
-          sed -i "s|__GOOGLE_CLIENT_ID__|${GOOGLE_CLIENT_ID}|g" _site/config.js
+          # The placeholder is deliberately distinct from the global name
+          # window.__GOOGLE_CLIENT_ID__ so the substitution can't rewrite it.
+          sed -i "s|@@GOOGLE_CLIENT_ID@@|${GOOGLE_CLIENT_ID}|g" _site/config.js
+          # Fail the build rather than deploy a config.js that doesn't parse
+          node --check _site/config.js
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3

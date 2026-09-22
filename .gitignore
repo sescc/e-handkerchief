@@ -38,6 +38,11 @@ yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 
+# Claude Code (assistant-only files; not needed to build or deploy)
+CLAUDE.md
+CLAUDE.local.md
+.claude/
+
 # PWA
 dev-dist/
 

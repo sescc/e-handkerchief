@@ -386,6 +386,7 @@ e-Handkerchief/
 │       ├── noteDetailScreen.ts # Note detail screen render + logic
 │       └── settingsScreen.ts   # Settings screen render + logic
 ├── sw.ts                       # Service Worker source (~100–150 lines)
+├── config.js                   # Runtime config; Google client ID injected at deploy
 └── tsconfig.json               # TypeScript config (ES2020, strict)
 ```
 
@@ -402,6 +403,13 @@ tsc
 ```
 
 `tsc` reads `tsconfig.json`, compiles all `.ts` sources (including `sw.ts`) to `.js` ES modules in-place, and writes `.js.map` source maps. No bundling, no tree-shaking, no npm install step. The output is deployable as static files served from any HTTP server.
+
+### Deploy-time injection
+
+`config.js` is a plain (non-module, not compiled) script loaded by `index.html` before `src/app.js`. It sets `window.__GOOGLE_CLIENT_ID__`, which `CloudSyncService` reads at module load. The committed file holds the placeholder `@@GOOGLE_CLIENT_ID@@`; the GitHub Pages deploy workflow replaces it with the `GOOGLE_CLIENT_ID` Actions secret via `sed`. If the placeholder is not replaced, the file sets the global to `''`.
+
+- The placeholder token must be distinct from the global name. When they were identical, `sed` also rewrote the assignment target and produced a syntax error.
+- After injection, CI runs `node --check _site/config.js` so a malformed config fails the build instead of deploying silently.
 
 ### tsconfig.json
 
@@ -785,6 +793,7 @@ interface CloudSyncServiceAPI {
 
 **Contracts:**
 - `connect` uses PKCE; no client secret is embedded in the bundle.
+- The OAuth client ID is read from `window.__GOOGLE_CLIENT_ID__` (set by `config.js`, see *Deploy-time injection*). If it is empty, `connect` shows the toast "Google Drive client ID not configured" and does nothing.
 - `importAll` is idempotent: a note with a matching `id` and `createdAt` is silently skipped.
 - Failed uploads are queued in `cloudUploadJobs` and retried up to 3 times.
 - Tokens are never logged or included in error reports.
