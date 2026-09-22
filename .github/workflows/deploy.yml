@@ -49,7 +49,7 @@ jobs:
       - name: Prepare deploy directory
         run: |
           mkdir -p _site
-          cp index.html app.css manifest.webmanifest sw.js _site/
+          cp index.html app.css manifest.webmanifest sw.js config.js _site/
           cp -r src _site/src
           cp -r icons _site/icons
           # Ensure Jekyll processing is disabled on the deployed site
@@ -57,6 +57,17 @@ jobs:
           # Remove TypeScript sources from deploy (keep only compiled JS)
           find _site/src -name '*.ts' -delete
           rm -f _site/src/*.map _site/src/**/*.map 2>/dev/null || true
+
+      - name: Inject Google client ID into config.js
+        env:
+          GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID }}
+        run: |
+          if [ -z "${GOOGLE_CLIENT_ID}" ]; then
+            echo "WARNING: GOOGLE_CLIENT_ID secret is empty — cloud backup will be disabled on the deployed site."
+          else
+            echo "Injecting Google client ID (length: ${#GOOGLE_CLIENT_ID})"
+          fi
+          sed -i "s|__GOOGLE_CLIENT_ID__|${GOOGLE_CLIENT_ID}|g" _site/config.js
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
