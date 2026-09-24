@@ -165,6 +165,9 @@ account shares one Drive app-data folder, a knot created on your phone appears o
 tablet (and vice versa) after their next sync — no pairing step, no per-device setup beyond
 tapping Connect on each one.
 
+Settings → Cloud Backup shows which Google account you're connected to (e.g. "Connected as
+someone@gmail.com"), so it's easy to tell which account a device is syncing to.
+
 There are two different kinds of "delete", and the app explains both right in Settings:
 
 > **Deleting a knot** (from Knots or its detail page) removes it from **this device only**.

@@ -355,6 +355,7 @@ export function renderSettings(container: HTMLElement): () => void {
   cloudRow.className = 'settings-row';
 
   const cloudLabelWrap = document.createElement('div');
+  cloudLabelWrap.className = 'settings-row-labelwrap';
   const cloudLabel = document.createElement('div');
   cloudLabel.className = 'settings-row-label';
   cloudLabel.textContent = 'Google Drive';
@@ -573,7 +574,12 @@ export function renderSettings(container: HTMLElement): () => void {
 
   function updateStatusBadge(status: 'connected' | 'disconnected'): void {
     statusBadge.className = status === 'connected' ? 'badge-connected' : 'badge-disconnected';
-    statusBadge.textContent = status === 'connected' ? 'Connected' : 'Disconnected';
+    if (status === 'connected') {
+      const email = cloudSyncService.getAccountEmail();
+      statusBadge.textContent = email !== null ? `Connected as ${email}` : 'Connected';
+    } else {
+      statusBadge.textContent = 'Disconnected';
+    }
   }
 
   function updateConnectBtn(status: 'connected' | 'disconnected'): void {
@@ -622,6 +628,7 @@ export function renderSettings(container: HTMLElement): () => void {
     }
     updateDateTimePreview();
     updateLastSynced();
+    updateStatusBadge(cloudSyncService.getConnectionStatus());
   });
 
   container.appendChild(root);

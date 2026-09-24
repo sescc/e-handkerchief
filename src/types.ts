@@ -96,6 +96,8 @@ export interface AppSettings {
   notificationPermissionRequested: boolean;
   /** Unix ms of the last successful cloud sync, or null if never synced. */
   lastSyncAt: number | null;
+  /** Email address of the connected Google account, or null if not connected / not yet fetched. */
+  cloudAccountEmail: string | null;
   /** IANA timezone name (e.g. "Asia/Singapore") or "auto" to follow the OS. Default "auto". */
   timezone: string;
   /** Date format token. Default "DD MMM YYYY". */

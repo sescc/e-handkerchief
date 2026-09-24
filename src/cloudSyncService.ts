@@ -113,7 +113,7 @@ async function getAccessToken(force = false): Promise<string | null> {
 }
 
 async function expireConnection(): Promise<void> {
-  await settingsStore.save({ cloudBackupToken: null, cloudBackupProvider: null });
+  await settingsStore.save({ cloudBackupToken: null, cloudBackupProvider: null, cloudAccountEmail: null });
   notifyStatus('disconnected');
   toastService.show('Google Drive session expired — please reconnect');
 }
@@ -354,6 +354,14 @@ export interface CloudSyncServiceAPI {
   connect(): Promise<void>;
   handleOAuthCallback(code: string): Promise<void>;
   disconnect(): Promise<void>;
+  /**
+   * Fetch the connected Google account's email via Drive `about.get` (no
+   * extra scope needed) and save it. Never throws — logs and returns on any
+   * failure, leaving the connection untouched.
+   */
+  refreshAccountInfo(): Promise<void>;
+  /** The connected Google account's email, or null if unknown/not connected. */
+  getAccountEmail(): string | null;
   /** Per-save upload path: upsert now, or queue a retry job on any failure. */
   uploadKnot(knot: Knot): Promise<void>;
   /** Retry queued upload jobs (upsert path; does not create new jobs). */
@@ -440,6 +448,7 @@ export const cloudSyncService: CloudSyncServiceAPI = {
         cloudBackupProvider: 'google-drive',
       });
       notifyStatus('connected');
+      await cloudSyncService.refreshAccountInfo();
       // Kick off a full sync now that we're connected.
       void cloudSyncService.syncAll().catch(() => {});
     } catch {
@@ -463,8 +472,34 @@ export const cloudSyncService: CloudSyncServiceAPI = {
         // Ignore revocation errors — always clear locally
       }
     }
-    await settingsStore.save({ cloudBackupToken: null, cloudBackupProvider: null });
+    await settingsStore.save({ cloudBackupToken: null, cloudBackupProvider: null, cloudAccountEmail: null });
     notifyStatus('disconnected');
+  },
+
+  async refreshAccountInfo(): Promise<void> {
+    try {
+      const res = await driveFetch(
+        'https://www.googleapis.com/drive/v3/about?fields=user(emailAddress,displayName)'
+      );
+      if (!res.ok) {
+        console.warn(`cloudSyncService: about.get failed (${res.status})`);
+        return;
+      }
+      const data = (await res.json()) as { user?: { emailAddress?: unknown; displayName?: unknown } };
+      const email = data.user?.emailAddress;
+      if (typeof email !== 'string') {
+        console.warn('cloudSyncService: about.get response missing user.emailAddress');
+        return;
+      }
+      await settingsStore.save({ cloudAccountEmail: email });
+      notifyStatus('connected');
+    } catch (err) {
+      console.warn('cloudSyncService: failed to refresh account info', err);
+    }
+  },
+
+  getAccountEmail(): string | null {
+    return settingsStore.getCurrent().cloudAccountEmail;
   },
 
   async uploadKnot(knot: Knot): Promise<void> {

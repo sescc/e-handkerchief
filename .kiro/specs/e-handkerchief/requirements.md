@@ -209,7 +209,7 @@ e-Handkerchief is a mobile-first Progressive Web App (PWA) that lets users quick
 4. THE Settings screen SHALL include a text field for the Daily Email Summary recipient address, accepting values that conform to standard email address format (local-part@domain), with a maximum length of 254 characters.
 5. IF the user saves a recipient email address that does not conform to standard email address format, THEN THE App SHALL display an inline validation error indicating the address is invalid and SHALL NOT save the invalid address.
 6. IF the Daily Email Summary toggle is disabled, THEN THE Settings screen SHALL disable the recipient address text field, preventing input.
-7. THE Settings screen SHALL include controls to connect or disconnect Google Drive, displaying the current connection status (connected or disconnected).
+7. THE Settings screen SHALL include controls to connect or disconnect Google Drive, displaying the current connection status (connected or disconnected); when connected, THE Settings screen SHALL show the connected Google account's email address (e.g. "Connected as someone@gmail.com") once it has been fetched.
 8. IF a Google Drive connection attempt fails, THEN THE App SHALL display an error message indicating the connection could not be established and leave the status as disconnected.
 9. THE Settings screen SHALL include a "Merge with Cloud" control that runs a full Cloud Backup sync on demand, and SHALL display the time of the most recently completed sync ("Last merged") or an indication that no sync has occurred yet ("Not merged yet").
 10. THE Settings screen SHALL include the "Manage backups" control described in Requirement 11.9.
