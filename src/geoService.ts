@@ -4,7 +4,7 @@
 // Optional Nominatim reverse geocoding.
 // ============================================================
 
-import type { NoteLocation } from './types.js';
+import type { KnotLocation } from './types.js';
 
 export interface GeoServiceAPI {
   /**
@@ -12,7 +12,7 @@ export interface GeoServiceAPI {
    * Always resolves within 10 seconds — never throws.
    * Returns null on permission denial, timeout, or unavailability.
    */
-  getCurrentPosition(): Promise<NoteLocation | null>;
+  getCurrentPosition(): Promise<KnotLocation | null>;
 
   /**
    * Reverse-geocode a coordinate to a human-readable address via Nominatim.
@@ -23,7 +23,7 @@ export interface GeoServiceAPI {
 }
 
 export const geoService: GeoServiceAPI = {
-  getCurrentPosition(): Promise<NoteLocation | null> {
+  getCurrentPosition(): Promise<KnotLocation | null> {
     return new Promise((resolve) => {
       if (!navigator.geolocation) {
         resolve(null);

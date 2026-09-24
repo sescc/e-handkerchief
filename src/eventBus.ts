@@ -3,11 +3,12 @@
 // Lightweight typed publish/subscribe module.
 // ============================================================
 
-import type { Note, AppSettings } from './types.js';
+import type { Knot, AppSettings } from './types.js';
 
 type EventMap = {
-  'note:saved': Note;
-  'note:deleted': string; // the deleted note's id
+  'knot:saved': Knot;
+  'knot:deleted': string; // the deleted knot's id
+  'knots:synced': { pulled: number; pushed: number };
   'settings:changed': AppSettings;
   'sw:waiting': void;
 };

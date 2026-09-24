@@ -5,12 +5,12 @@
 // day-detail panel listing that day's knots.
 // ============================================================
 
-import { noteStore } from '../noteStore.js';
+import { knotStore } from '../knotStore.js';
 import { eventBus } from '../eventBus.js';
 import { navigate } from '../router.js';
 import { settingsStore } from '../settingsStore.js';
-import { formatNoteTimestamp } from '../dateFormat.js';
-import type { Note } from '../types.js';
+import { formatKnotTimestamp } from '../dateFormat.js';
+import type { Knot } from '../types.js';
 
 const WEEKDAY_LABELS = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'];
 
@@ -49,20 +49,20 @@ function dayKeyFromYMD(year: number, month1: number, day: number): string {
   return `${year}-${m}-${d}`;
 }
 
-/** Short one-line preview for a note in the day-detail list. */
-function notePreview(note: Note): string {
-  const firstText = note.mediaItems.find((m) => m.type === 'text');
+/** Short one-line preview for a knot in the day-detail list. */
+function knotPreview(knot: Knot): string {
+  const firstText = knot.mediaItems.find((m) => m.type === 'text');
   if (firstText && firstText.type === 'text') {
     const content = firstText.content.trim();
     if (content) {
       return content.length > 60 ? content.slice(0, 60) + '…' : content;
     }
   }
-  const hasAudio = note.mediaItems.some((m) => m.type === 'audio');
+  const hasAudio = knot.mediaItems.some((m) => m.type === 'audio');
   if (hasAudio) return '🎤 Voice';
-  const hasPhoto = note.mediaItems.some((m) => m.type === 'photo');
+  const hasPhoto = knot.mediaItems.some((m) => m.type === 'photo');
   if (hasPhoto) return '📷 Photo';
-  const hasVideo = note.mediaItems.some((m) => m.type === 'video');
+  const hasVideo = knot.mediaItems.some((m) => m.type === 'video');
   if (hasVideo) return '🎬 Video';
   return '(empty)';
 }
@@ -70,6 +70,7 @@ function notePreview(note: Note): string {
 export function renderCalendar(container: HTMLElement): () => void {
   let unsubscribeSaved: (() => void) | null = null;
   let unsubscribeDeleted: (() => void) | null = null;
+  let unsubscribeSynced: (() => void) | null = null;
 
   const root = document.createElement('div');
   root.className = 'calendar-screen';
@@ -92,28 +93,28 @@ export function renderCalendar(container: HTMLElement): () => void {
 
   // Track the currently open day so re-tapping the same day toggles it closed.
   let openDayKey: string | null = null;
-  let allNotes: Note[] = [];
+  let allKnots: Knot[] = [];
 
   function renderDayDetail(dayKey: string, tz: string | undefined): void {
     detailEl.innerHTML = '';
 
-    // Notes on this day, newest first (listAll already returns newest first).
-    const dayNotes = allNotes.filter(
+    // Knots on this day, newest first (listAll already returns newest first).
+    const dayKnots = allKnots.filter(
       (n) => localDayKey(new Date(n.timestamp.localISO), tz) === dayKey
     );
-    if (dayNotes.length === 0) return;
+    if (dayKnots.length === 0) return;
 
     const panel = document.createElement('div');
     panel.className = 'calendar-day-detail';
 
     const header = document.createElement('div');
     header.className = 'calendar-day-detail-header';
-    // Use the first note's formatted timestamp to derive a friendly date label
+    // Use the first knot's formatted timestamp to derive a friendly date label
     // is imprecise; build a readable label from the day key instead.
     header.textContent = `Knots on ${friendlyDayLabel(dayKey)}`;
     panel.appendChild(header);
 
-    for (const note of dayNotes) {
+    for (const knot of dayKnots) {
       const row = document.createElement('div');
       row.className = 'calendar-day-detail-row';
       row.setAttribute('role', 'link');
@@ -121,15 +122,15 @@ export function renderCalendar(container: HTMLElement): () => void {
 
       const timeEl = document.createElement('div');
       timeEl.className = 'calendar-day-detail-time';
-      timeEl.textContent = formatNoteTimestamp(note.timestamp.localISO);
+      timeEl.textContent = formatKnotTimestamp(knot.timestamp.localISO);
       row.appendChild(timeEl);
 
       const previewEl = document.createElement('div');
       previewEl.className = 'calendar-day-detail-preview';
-      previewEl.textContent = notePreview(note);
+      previewEl.textContent = knotPreview(knot);
       row.appendChild(previewEl);
 
-      const go = () => navigate(`#/knot/${note.id}`);
+      const go = () => navigate(`#/knot/${knot.id}`);
       row.addEventListener('click', go);
       row.addEventListener('keydown', (ev) => {
         if (ev.key === 'Enter' || ev.key === ' ') {
@@ -257,13 +258,13 @@ export function renderCalendar(container: HTMLElement): () => void {
 
   async function loadAndRender(): Promise<void> {
     const tz = resolveTimeZone();
-    allNotes = await noteStore.listAll();
+    allKnots = await knotStore.listAll();
 
     // Build per-day counts keyed by YYYY-MM-DD in the configured timezone.
     const counts = new Map<string, number>();
     let earliest: Date | null = null;
-    for (const note of allNotes) {
-      const d = new Date(note.timestamp.localISO);
+    for (const knot of allKnots) {
+      const d = new Date(knot.timestamp.localISO);
       if (isNaN(d.getTime())) continue;
       const key = localDayKey(d, tz);
       counts.set(key, (counts.get(key) ?? 0) + 1);
@@ -273,7 +274,7 @@ export function renderCalendar(container: HTMLElement): () => void {
     const now = new Date();
     const todayKey = localDayKey(now, tz);
 
-    // Determine the month range: earliest note's month → current month.
+    // Determine the month range: earliest knot's month → current month.
     // Months rendered most-recent-first (reverse chronological).
     const currentYear = now.getFullYear();
     const currentMonth0 = now.getMonth();
@@ -318,10 +319,13 @@ export function renderCalendar(container: HTMLElement): () => void {
 
   void loadAndRender();
 
-  unsubscribeSaved = eventBus.on('note:saved', () => {
+  unsubscribeSaved = eventBus.on('knot:saved', () => {
     void loadAndRender();
   });
-  unsubscribeDeleted = eventBus.on('note:deleted', () => {
+  unsubscribeDeleted = eventBus.on('knot:deleted', () => {
+    void loadAndRender();
+  });
+  unsubscribeSynced = eventBus.on('knots:synced', () => {
     void loadAndRender();
   });
 
@@ -329,6 +333,7 @@ export function renderCalendar(container: HTMLElement): () => void {
   return () => {
     unsubscribeSaved?.();
     unsubscribeDeleted?.();
+    unsubscribeSynced?.();
     root.remove();
     container.innerHTML = '';
   };

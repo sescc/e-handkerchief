@@ -28,6 +28,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   cloudBackupProvider: null,
   cloudBackupToken: null,
   notificationPermissionRequested: false,
+  lastSyncAt: null,
   timezone: 'auto',
   dateFormat: 'DD MMM YYYY',
   timeFormat: '24h',

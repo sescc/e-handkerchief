@@ -1,7 +1,7 @@
 // ============================================================
 // e-Handkerchief — MediaCapture component
-// Reusable media-capture UI + logic shared by the new-note capture
-// screen and the note edit mode, so both behave identically and future
+// Reusable media-capture UI + logic shared by the new-knot capture
+// screen and the knot edit mode, so both behave identically and future
 // changes only need to be made once.
 //
 // Renders: mic/photo/video/library controls, a recording indicator with
@@ -10,7 +10,7 @@
 // Manages: draft items, live-transcription state, object-URL lifecycle.
 //
 // Does NOT include the text textarea, the timestamp/location header, the
-// Save button, or note-saving logic — those remain screen-specific.
+// Save button, or knot-saving logic — those remain screen-specific.
 // ============================================================
 
 import {
@@ -51,7 +51,7 @@ function speechErrorMessage(code: string): string {
   return 'Dictation error.';
 }
 
-/** A draft item before the note is persisted. Includes a preview URL for cleanup. */
+/** A draft item before the knot is persisted. Includes a preview URL for cleanup. */
 interface DraftMediaItem {
   item: MediaItem;
   previewUrl?: string; // object URL for preview <img>/<audio>
@@ -81,7 +81,7 @@ export interface MediaCaptureHandle {
 /**
  * Render the media-capture UI (mic/photo/video/library + live transcript +
  * previews + errors) into `container`. Shared by the capture screen and the
- * note edit mode so both behave identically.
+ * knot edit mode so both behave identically.
  *
  * @param opts.enableLiveTranscription If true (default), attempt live Web Speech
  *   transcription during audio recording when enabled in settings and online.
@@ -466,7 +466,7 @@ export function renderMediaCapture(
             transcriptionDeferred = false;
           } else if (settingsStore.getCurrent().transcriptionEnabled) {
             // Live recognition produced nothing — allow deferred transcription so
-            // the note can be transcribed later via the Worker.
+            // the knot can be transcribed later via the Worker.
             transcriptionDeferred = true;
             // Capture the error reason (if any) for accurate messaging.
             if (errCode) liveTranscriptionError = errCode;
@@ -494,7 +494,7 @@ export function renderMediaCapture(
           durationSeconds: recordingElapsed,
         };
         // Attach per-item transcription state so each recording carries its own
-        // transcript + status. The note-level CapturedMedia fields are kept in
+        // transcript + status. The knot-level CapturedMedia fields are kept in
         // sync for the capture screen's post-save toast messaging, but this
         // item is now the authoritative source of the transcript.
         if (recordedTranscript) {

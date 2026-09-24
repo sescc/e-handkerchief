@@ -38,10 +38,9 @@ yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 
-# Claude Code (assistant-only files; not needed to build or deploy)
-CLAUDE.md
+# Claude Code — personal/machine-local files (CLAUDE.md is shared and committed)
+.claude/settings.local.json
 CLAUDE.local.md
-.claude/
 
 # PWA
 dev-dist/

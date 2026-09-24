@@ -1,5 +1,7 @@
 # Implementation Plan: e-Handkerchief
 
+> **Historical:** this task list records the original build plan and is not kept in sync with the code. The spec of record is requirements.md + design.md (Knot terminology, Drive sync and Share were added 2026-09-24).
+
 ## Overview
 
 e-Handkerchief is a mobile-first PWA for capturing location-aware notes (voice, photo/video, or text) with automatic GPS tagging and timestamp. All data is stored locally in IndexedDB for full offline operation. The stack is vanilla HTML, CSS, and TypeScript compiled to ES modules via `tsc` — no framework runtime, no bundler, no npm install required by end users. Optional features include voice transcription, email summary, cloud backup to Google Drive, and a persistent Android notification shortcut.

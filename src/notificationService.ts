@@ -21,7 +21,7 @@ export const notificationService = {
       if (permission === 'granted' && 'serviceWorker' in navigator) {
         const reg = await navigator.serviceWorker.ready;
         await reg.showNotification('e-Handkerchief', {
-          body: 'Tap to open Capture Screen',
+          body: 'Tap to tie a knot',
           tag: 'capture-shortcut',
           requireInteraction: true,
         });

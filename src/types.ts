@@ -2,14 +2,14 @@
 // e-Handkerchief — shared TypeScript interfaces
 // ============================================================
 
-export interface NoteTimestamp {
+export interface KnotTimestamp {
   /** ISO 8601 local time, e.g. "2024-07-04T14:30:00+01:00" */
   localISO: string;
   /** UTC offset string, e.g. "+01:00" */
   utcOffset: string;
 }
 
-export interface NoteLocation {
+export interface KnotLocation {
   latitude: number;
   longitude: number;
   accuracyMeters: number | null;
@@ -61,19 +61,19 @@ export interface TextMediaItem extends MediaItemBase {
 
 export type MediaItem = AudioMediaItem | PhotoMediaItem | VideoMediaItem | TextMediaItem;
 
-export interface Note {
+export interface Knot {
   /** UUID v4 */
   id: string;
-  timestamp: NoteTimestamp;
-  location: NoteLocation | null;
-  /** Manually-entered location label used when there are no GPS coordinates (note.location is null). Plain text, no map link. */
+  timestamp: KnotTimestamp;
+  location: KnotLocation | null;
+  /** Manually-entered location label used when there are no GPS coordinates (knot.location is null). Plain text, no map link. */
   manualLabel?: string;
   mediaItems: MediaItem[];
-  /** @deprecated Legacy note-level transcription; new code uses per-AudioMediaItem transcript. Retained for backward compatibility with old notes. */
+  /** @deprecated Legacy knot-level transcription; new code uses per-AudioMediaItem transcript. Retained for backward compatibility with old knots. */
   transcription?: string;
-  /** @deprecated Legacy note-level transcription; new code uses per-AudioMediaItem transcript. Retained for backward compatibility with old notes. */
+  /** @deprecated Legacy knot-level transcription; new code uses per-AudioMediaItem transcript. Retained for backward compatibility with old knots. */
   transcriptionStatus?: 'none' | 'live' | 'pending' | 'done' | 'failed';
-  /** Unix ms — used for Journal sort order */
+  /** Unix ms — used for Knots sort order */
   createdAt: number;
   updatedAt: number;
 }
@@ -94,6 +94,8 @@ export interface AppSettings {
   cloudBackupProvider: 'google-drive' | null;
   cloudBackupToken: OAuthToken | null;
   notificationPermissionRequested: boolean;
+  /** Unix ms of the last successful cloud sync, or null if never synced. */
+  lastSyncAt: number | null;
   /** IANA timezone name (e.g. "Asia/Singapore") or "auto" to follow the OS. Default "auto". */
   timezone: string;
   /** Date format token. Default "DD MMM YYYY". */
@@ -102,33 +104,26 @@ export interface AppSettings {
   timeFormat: '24h' | '12h';
 }
 
-export type EmailJobStatus = 'pending' | 'in-flight' | 'failed';
-
-export interface EmailJob {
-  /** UUID v4 */
-  id: string;
-  noteId: string;
-  recipient: string;
-  subject: string;
-  bodyText: string;
-  /** Note media item IDs */
-  attachmentRefs: string[];
-  createdAt: number;
-  /** 0–3 */
-  attempts: number;
-  lastAttemptAt: number | null;
-  status: EmailJobStatus;
-}
-
 export type UploadJobStatus = 'pending' | 'in-flight' | 'failed';
 
 export interface CloudUploadJob {
   id: string;
-  noteId: string;
+  knotId: string;
   provider: 'google-drive';
   createdAt: number;
   /** 0–3 */
   attempts: number;
   lastAttemptAt: number | null;
   status: UploadJobStatus;
+}
+
+/**
+ * A local record marking that a knot was deleted FROM THIS DEVICE.
+ * Local deletes never delete the Drive backup (Drive is an archive), so this
+ * tombstone exists purely to stop a later sync from pulling that knot back
+ * onto this device.
+ */
+export interface KnotTombstone {
+  id: string;
+  deletedAt: number;
 }

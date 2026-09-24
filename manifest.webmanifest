@@ -1,7 +1,7 @@
 {
   "name": "e-Handkerchief",
   "short_name": "e-HK",
-  "description": "Capture location-aware notes on the go",
+  "description": "Tie a knot to remember — location-aware reminders on the go",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
@@ -14,7 +14,7 @@
   ],
   "shortcuts": [
     {
-      "name": "New Note",
+      "name": "Tie a Knot",
       "short_name": "Capture",
       "url": "./#/",
       "icons": [{ "src": "icons/shortcut-capture.png", "sizes": "192x192" }]

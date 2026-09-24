@@ -1,7 +1,7 @@
 // ============================================================
 // e-Handkerchief — Shared date/time formatter
-// Centralizes timestamp formatting so Journal, Capture, and
-// NoteDetail screens all use the user's preferred format.
+// Centralizes timestamp formatting so Knots, Capture, and
+// KnotDetail screens all use the user's preferred format.
 // ============================================================
 
 import { settingsStore } from './settingsStore.js';
@@ -10,10 +10,10 @@ import type { AppSettings } from './types.js';
 const MONTHS_SHORT = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 
 /**
- * Format a note's ISO timestamp according to the user's date/time/timezone settings.
+ * Format a knot's ISO timestamp according to the user's date/time/timezone settings.
  * Falls back gracefully to the raw ISO string on any error.
  */
-export function formatNoteTimestamp(localISO: string, settings?: AppSettings): string {
+export function formatKnotTimestamp(localISO: string, settings?: AppSettings): string {
   const s = settings ?? settingsStore.getCurrent();
   try {
     const d = new Date(localISO);
