@@ -1,28 +1,28 @@
 // ============================================================
 // e-Handkerchief — CaptureScreen
-// Default landing view for creating new notes.
+// Default landing view for creating new knots.
 // ============================================================
 
 import { geoService } from '../geoService.js';
-import { noteStore } from '../noteStore.js';
+import { knotStore } from '../knotStore.js';
 import { settingsStore } from '../settingsStore.js';
 import { toastService } from '../toastService.js';
 import { eventBus } from '../eventBus.js';
 import { navigate } from '../router.js';
-import { formatNoteTimestamp } from '../dateFormat.js';
+import { formatKnotTimestamp } from '../dateFormat.js';
 import { transcriptionService } from '../transcriptionService.js';
 import { renderMediaCapture } from '../components/mediaCapture.js';
 import type {
-  Note,
-  NoteTimestamp,
-  NoteLocation,
+  Knot,
+  KnotTimestamp,
+  KnotLocation,
   MediaItem,
   TextMediaItem,
 } from '../types.js';
 
-function makeTimestamp(): NoteTimestamp {
+function makeTimestamp(): KnotTimestamp {
   const now = new Date();
-  // Store the true instant as a UTC ISO string (…Z). formatNoteTimestamp()
+  // Store the true instant as a UTC ISO string (…Z). formatKnotTimestamp()
   // converts this instant into the user's chosen timezone for display.
   const localISO = now.toISOString();
   const utcOffset = getUTCOffset(now);
@@ -43,7 +43,7 @@ const MAX_TEXT_LEN = 2000;
 export function renderCapture(container: HTMLElement): () => void {
   // ---- State ----
   const timestamp = makeTimestamp();
-  let location: NoteLocation | null = null;
+  let location: KnotLocation | null = null;
   let locationStatus: 'loading' | 'ok' | 'denied' | 'unavailable' = 'loading';
   let isSaving = false;
 
@@ -60,12 +60,12 @@ export function renderCapture(container: HTMLElement): () => void {
 
   const title = document.createElement('h1');
   title.className = 'page-title';
-  title.textContent = 'New Note';
+  title.textContent = 'Tie a Knot';
   header.appendChild(title);
 
   const metaTimestamp = document.createElement('div');
   metaTimestamp.className = 'capture-meta';
-  metaTimestamp.textContent = formatNoteTimestamp(timestamp.localISO);
+  metaTimestamp.textContent = formatKnotTimestamp(timestamp.localISO);
   header.appendChild(metaTimestamp);
 
   const metaLocation = document.createElement('div');
@@ -84,9 +84,9 @@ export function renderCapture(container: HTMLElement): () => void {
 
   const textarea = document.createElement('textarea');
   textarea.className = 'form-textarea';
-  textarea.placeholder = 'Type a note…';
+  textarea.placeholder = 'What do you want to remember?';
   textarea.maxLength = MAX_TEXT_LEN;
-  textarea.setAttribute('aria-label', 'Note text');
+  textarea.setAttribute('aria-label', 'Knot text');
   textGroup.appendChild(textarea);
 
   const charCounter = document.createElement('div');
@@ -126,7 +126,7 @@ export function renderCapture(container: HTMLElement): () => void {
   // Save button
   const saveBtn = document.createElement('button');
   saveBtn.className = 'btn btn-primary btn-full';
-  saveBtn.textContent = 'Save Note';
+  saveBtn.textContent = 'Tie Knot';
   root.appendChild(saveBtn);
 
   container.appendChild(root);
@@ -134,7 +134,7 @@ export function renderCapture(container: HTMLElement): () => void {
   // ---- Helpers ----
   function updateSaveBtnState(): void {
     saveBtn.disabled = isSaving;
-    saveBtn.textContent = isSaving ? 'Saving…' : 'Save Note';
+    saveBtn.textContent = isSaving ? 'Saving…' : 'Tie Knot';
   }
 
   // ---- Geo location ----
@@ -144,7 +144,7 @@ export function renderCapture(container: HTMLElement): () => void {
       locationStatus = 'ok';
       locSpinner.remove();
       const locText = document.createElement('span');
-      locText.className = 'note-location';
+      locText.className = 'knot-location';
       if (loc.resolvedAddress) {
         locText.textContent = loc.resolvedAddress;
       } else {
@@ -203,7 +203,7 @@ export function renderCapture(container: HTMLElement): () => void {
     updateSaveBtnState();
 
     // Transcription now lives on each AudioMediaItem (set by the media-capture
-    // component). New notes leave the legacy note-level transcription fields
+    // component). New knots leave the legacy knot-level transcription fields
     // undefined and rely on per-item transcript/status.
     const hasAudio = allItems.some((m) => m.type === 'audio');
     const transcriptionEnabled = settingsStore.getCurrent().transcriptionEnabled;
@@ -214,7 +214,7 @@ export function renderCapture(container: HTMLElement): () => void {
       (m) => m.type === 'audio' && m.transcriptionStatus === 'pending'
     );
 
-    const note: Note = {
+    const knot: Knot = {
       id: crypto.randomUUID(),
       timestamp,
       location,
@@ -224,57 +224,45 @@ export function renderCapture(container: HTMLElement): () => void {
     };
 
     try {
-      await noteStore.save(note);
+      await knotStore.save(knot);
     } catch (err) {
       isSaving = false;
       updateSaveBtnState();
       const detail = err instanceof Error ? err.message : String(err);
-      console.error('Note save failed:', err);
-      toastService.show(`Could not save note: ${detail}`, 8000);
+      console.error('Knot save failed:', err);
+      toastService.show(`Could not tie knot: ${detail}`, 8000);
       return;
     }
 
-    // Emit saved event so Journal refreshes
-    eventBus.emit('note:saved', note);
-
-    // Optional side-effects (fire-and-forget)
-    const settings = settingsStore.getCurrent();
+    // Emit saved event so Knots refreshes
+    eventBus.emit('knot:saved', knot);
 
     if (hasAudio && hasPendingAudio) {
       // Craft a message that reflects WHY live transcription didn't produce text.
       let deferredMsg: string;
       if (captured.liveTranscriptionError === 'not-allowed') {
         deferredMsg =
-          'Saved. Live transcription was blocked (mic permission). You can transcribe later from the note.';
+          'Saved. Live transcription was blocked (mic permission). You can transcribe later from the knot.';
       } else if (captured.liveTranscriptionError === 'no-speech') {
         deferredMsg = 'Saved. No speech detected for live transcription.';
       } else if (transcriptionEnabled && !transcriptionService.isSupported) {
         deferredMsg = "Saved. Live transcription isn't supported in this browser.";
       } else if (!navigator.onLine) {
-        deferredMsg = 'Saved. Offline — transcribe later from the note when online.';
+        deferredMsg = 'Saved. Offline — transcribe later from the knot when online.';
       } else if (transcriptionEnabled) {
         // Live was attempted online with no specific error, but produced no text —
         // most likely the mic-sharing platform constraint (e.g. Android Chrome).
         deferredMsg =
-          "Saved. Live transcription didn't work on this device — open the note and tap 'Transcribe voice' to transcribe it via your server.";
+          "Saved. Live transcription didn't work on this device — open the knot and tap 'Transcribe voice' to transcribe it via your server.";
       } else {
         deferredMsg =
-          'Saved. Voice transcription was unavailable — you can transcribe later from the note.';
+          'Saved. Voice transcription was unavailable — you can transcribe later from the knot.';
       }
       toastService.show(deferredMsg, 6000);
     }
 
-    if (settings.emailSummaryEnabled && settings.emailSummaryRecipient) {
-      import('../emailQueue.js')
-        .then(({ emailQueue }) => emailQueue.enqueue(note, settings.emailSummaryRecipient!))
-        .catch(() => {/* silently ignore queue errors */});
-    }
-
-    if (settings.cloudBackupProvider) {
-      import('../cloudSyncService.js')
-        .then(({ cloudSyncService }) => cloudSyncService.uploadNote(note))
-        .catch(() => {/* queued internally */});
-    }
+    // Cloud backup upload is triggered by the app-level knot:saved listener
+    // (src/app.ts), which covers every save path (capture, edit, transcribe).
 
     navigate('#/knots');
   };

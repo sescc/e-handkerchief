@@ -3,7 +3,7 @@
 // Hash-based single-page routing.
 // ============================================================
 
-export type Route = 'capture' | 'knots' | 'calendar' | 'note' | 'settings';
+export type Route = 'capture' | 'knots' | 'calendar' | 'knot' | 'settings';
 
 export interface RouteMatch {
   route: Route;
@@ -21,9 +21,7 @@ export function parseHash(hash: string): RouteMatch {
   if (path === '' || path === '/') {
     return { route: 'capture', params: {} };
   }
-  // '/journal' is kept as a back-compat alias so stale links/bookmarks and
-  // the SW notification deep-links continue to resolve to the Knots screen.
-  if (path === '/knots' || path === '/journal') {
+  if (path === '/knots') {
     return { route: 'knots', params: {} };
   }
   if (path === '/calendar') {
@@ -33,11 +31,10 @@ export function parseHash(hash: string): RouteMatch {
     return { route: 'settings', params: {} };
   }
 
-  // '/knot/{id}' is the current form; '/note/{id}' is kept as a back-compat
-  // alias so stale links/bookmarks and SW notification deep-links resolve.
-  const noteMatch = path.match(/^\/(?:knot|note)\/(.+)$/);
-  if (noteMatch) {
-    return { route: 'note', params: { id: noteMatch[1] } };
+  // '/knot/{id}' is the only form for knot detail routes.
+  const knotMatch = path.match(/^\/knot\/(.+)$/);
+  if (knotMatch) {
+    return { route: 'knot', params: { id: knotMatch[1] } };
   }
 
   // Unknown route → capture (fallback)
@@ -46,7 +43,7 @@ export function parseHash(hash: string): RouteMatch {
 
 /**
  * Navigate to a hash-based path.
- * e.g. navigate('#/knots') or navigate('#/note/some-uuid')
+ * e.g. navigate('#/knots') or navigate('#/knot/some-uuid')
  */
 export function navigate(path: string): void {
   window.location.hash = path;
@@ -89,9 +86,9 @@ export function initRouter(container: HTMLElement): void {
         _currentCleanup = renderCalendar(container);
         break;
       }
-      case 'note': {
-        const { renderNoteDetail } = await import('./screens/noteDetailScreen.js');
-        _currentCleanup = renderNoteDetail(container, match.params);
+      case 'knot': {
+        const { renderKnotDetail } = await import('./screens/knotDetailScreen.js');
+        _currentCleanup = renderKnotDetail(container, match.params);
         break;
       }
       case 'settings': {

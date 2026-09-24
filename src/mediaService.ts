@@ -39,7 +39,7 @@ const ALLOWED_MIME = [
 const MAX_SIZE_BYTES = 100 * 1024 * 1024; // 100 MB
 
 /**
- * Validate a Blob before attaching it to a note.
+ * Validate a Blob before attaching it to a knot.
  * Throws FileSizeError or UnsupportedFormatError; otherwise returns void.
  */
 export function validateMedia(blob: Blob): void {

@@ -3,7 +3,17 @@
 // ============================================================
 
 const DB_NAME = 'e-handkerchief-db';
-const DB_VERSION = 1;
+const DB_VERSION = 4;
+
+/** Object store name for Knots. Used here and by knotStore.ts instead of a string literal. */
+export const KNOT_OBJECT_STORE = 'knots';
+
+/**
+ * Object store name for local delete tombstones. Used here and by
+ * knotStore.ts instead of a string literal. Records are
+ * `{ id: string; deletedAt: number }` — see the KnotTombstone type.
+ */
+export const KNOT_TOMBSTONE_STORE = 'knotTombstones';
 
 let _db: IDBDatabase | null = null;
 
@@ -18,26 +28,62 @@ export function openDB(): Promise<IDBDatabase> {
 
     req.onupgradeneeded = (event) => {
       const db = (event.target as IDBOpenDBRequest).result;
+      const tx = (event.target as IDBOpenDBRequest).transaction;
+      const oldVersion = event.oldVersion;
 
-      if (!db.objectStoreNames.contains('notes')) {
-        const notes = db.createObjectStore('notes', { keyPath: 'id' });
-        notes.createIndex('createdAt', 'createdAt', { unique: false });
-      }
+      if (oldVersion < 1) {
+        // Fresh database — create the full current (v4) schema directly:
+        // knots, cloudUploadJobs, settings, knotTombstones. (No emailJobs —
+        // save-and-send email was retired in favor of a per-knot Share
+        // button; see the v3 -> v4 block below.)
+        const knots = db.createObjectStore(KNOT_OBJECT_STORE, { keyPath: 'id' });
+        knots.createIndex('createdAt', 'createdAt', { unique: false });
 
-      if (!db.objectStoreNames.contains('emailJobs')) {
-        const jobs = db.createObjectStore('emailJobs', { keyPath: 'id' });
-        jobs.createIndex('status', 'status', { unique: false });
-      }
-
-      if (!db.objectStoreNames.contains('cloudUploadJobs')) {
         const uploads = db.createObjectStore('cloudUploadJobs', { keyPath: 'id' });
         uploads.createIndex('status', 'status', { unique: false });
+
+        // Settings store: no keyPath; records stored with explicit key 'app'
+        db.createObjectStore('settings');
+
+        db.createObjectStore(KNOT_TOMBSTONE_STORE, { keyPath: 'id' });
       }
 
-      // Settings store: no keyPath; records stored with explicit key 'app'
-      if (!db.objectStoreNames.contains('settings')) {
-        db.createObjectStore('settings');
+      if (oldVersion >= 1 && oldVersion < 2) {
+        // v1 -> v2: entity rename note -> knot (user decision, 2026-09-24).
+        // The app is still in testing, so this DROPS existing local notes and
+        // any queued cloud-upload jobs (whose records use the old `noteId`
+        // field name) rather than migrating them — no migration is written.
+        if (db.objectStoreNames.contains('notes')) {
+          db.deleteObjectStore('notes');
+        }
+        if (!db.objectStoreNames.contains(KNOT_OBJECT_STORE)) {
+          const knots = db.createObjectStore(KNOT_OBJECT_STORE, { keyPath: 'id' });
+          knots.createIndex('createdAt', 'createdAt', { unique: false });
+        }
+        if (tx && db.objectStoreNames.contains('cloudUploadJobs')) {
+          // Old records used `noteId`; clear rather than migrate the field name.
+          tx.objectStore('cloudUploadJobs').clear();
+        }
+        // 'emailJobs' and 'settings' are unchanged by this version.
       }
+
+      if (oldVersion < 3) {
+        // v2 -> v3: local delete tombstones, so a Drive sync never pulls a
+        // knot back onto a device it was deliberately deleted from.
+        if (!db.objectStoreNames.contains(KNOT_TOMBSTONE_STORE)) {
+          db.createObjectStore(KNOT_TOMBSTONE_STORE, { keyPath: 'id' });
+        }
+      }
+
+      if (oldVersion < 4) {
+        // v3 -> v4: retire save-and-send email (replaced by a per-knot Share
+        // button). Drop the queued email jobs store; nothing reads it anymore.
+        if (db.objectStoreNames.contains('emailJobs')) {
+          db.deleteObjectStore('emailJobs');
+        }
+      }
+
+      // if (oldVersion < 5) { ... }  <- future migrations append a block here
     };
 
     req.onblocked = () => {

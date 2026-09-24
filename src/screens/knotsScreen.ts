@@ -1,15 +1,17 @@
 // ============================================================
 // e-Handkerchief — KnotsScreen
-// Displays all knots (notes) in reverse-chronological order.
+// Displays all knots in reverse-chronological order.
 // ============================================================
 
-import { noteStore } from '../noteStore.js';
+import { knotStore } from '../knotStore.js';
 import { eventBus } from '../eventBus.js';
 import { navigate } from '../router.js';
 import { toastService } from '../toastService.js';
 import { googleMapsUrl } from '../mapsLink.js';
-import { formatNoteTimestamp } from '../dateFormat.js';
-import type { Note, AudioMediaItem, PhotoMediaItem, VideoMediaItem, TextMediaItem } from '../types.js';
+import { formatKnotTimestamp } from '../dateFormat.js';
+import { cloudSyncService } from '../cloudSyncService.js';
+import { collectTranscripts } from '../knotSummary.js';
+import type { Knot, AudioMediaItem, PhotoMediaItem, VideoMediaItem, TextMediaItem } from '../types.js';
 
 function formatCoords(lat: number, lng: number): string {
   const latStr = (lat >= 0 ? '+' : '') + lat.toFixed(5);
@@ -17,24 +19,11 @@ function formatCoords(lat: number, lng: number): string {
   return `${latStr}, ${lngStr}`;
 }
 
-/**
- * Gather all transcripts to display for a note.
- * Prefers per-audio-item transcripts (in media order); falls back to the
- * legacy note-level transcription for back-compat with old notes.
- */
-function collectTranscripts(note: Note): string[] {
-  const perItem = note.mediaItems
-    .filter((m): m is AudioMediaItem => m.type === 'audio' && !!m.transcript && m.transcript.trim().length > 0)
-    .map((m) => m.transcript!.trim());
-  if (perItem.length > 0) return perItem;
-  if (note.transcription && note.transcription.trim().length > 0) return [note.transcription.trim()];
-  return [];
-}
-
 export function renderKnots(container: HTMLElement): () => void {
   const objUrls: string[] = [];
-  let unsubscribeNotesSaved: (() => void) | null = null;
-  let unsubscribeNotesDeleted: (() => void) | null = null;
+  let unsubscribeKnotsSaved: (() => void) | null = null;
+  let unsubscribeKnotsDeleted: (() => void) | null = null;
+  let unsubscribeKnotsSynced: (() => void) | null = null;
 
   function trackUrl(url: string): string {
     objUrls.push(url);
@@ -50,51 +39,51 @@ export function renderKnots(container: HTMLElement): () => void {
   root.appendChild(titleEl);
 
   const listEl = document.createElement('div');
-  listEl.className = 'note-list';
+  listEl.className = 'knot-list';
   root.appendChild(listEl);
 
   container.appendChild(root);
 
-  function renderNoteEntry(note: Note): HTMLElement {
+  function renderKnotEntry(knot: Knot): HTMLElement {
     // The entry is a div (not an anchor) so we can safely nest a
     // location <a> inside it without producing invalid nested-link HTML.
     const entry = document.createElement('div');
-    entry.className = 'note-entry';
+    entry.className = 'knot-entry';
     entry.setAttribute('role', 'link');
     entry.tabIndex = 0;
 
-    const goToNote = () => navigate(`#/knot/${note.id}`);
-    entry.addEventListener('click', goToNote);
+    const goToKnot = () => navigate(`#/knot/${knot.id}`);
+    entry.addEventListener('click', goToKnot);
     entry.addEventListener('keydown', (ev) => {
       if (ev.key === 'Enter' || ev.key === ' ') {
         ev.preventDefault();
-        goToNote();
+        goToKnot();
       }
     });
 
     // Header row: timestamp + delete quick action
     const headerRow = document.createElement('div');
-    headerRow.className = 'note-entry-header';
+    headerRow.className = 'knot-entry-header';
 
     // Timestamp
     const tsEl = document.createElement('div');
-    tsEl.className = 'note-timestamp';
-    tsEl.textContent = formatNoteTimestamp(note.timestamp.localISO);
+    tsEl.className = 'knot-timestamp';
+    tsEl.textContent = formatKnotTimestamp(knot.timestamp.localISO);
     headerRow.appendChild(tsEl);
 
     // Delete quick action — must not trigger navigation
     const deleteBtn = document.createElement('button');
-    deleteBtn.className = 'note-delete-btn';
+    deleteBtn.className = 'knot-delete-btn';
     deleteBtn.textContent = '🗑';
-    deleteBtn.setAttribute('aria-label', 'Delete note');
+    deleteBtn.setAttribute('aria-label', 'Delete knot');
     deleteBtn.addEventListener('click', (ev) => {
       ev.preventDefault();
       ev.stopPropagation();
       void (async () => {
-        if (!confirm('Delete this note permanently? This cannot be undone.')) return;
-        await noteStore.delete(note.id);
-        eventBus.emit('note:deleted', note.id);
-        toastService.show('Note deleted');
+        if (!confirm(cloudSyncService.localDeleteConfirmText())) return;
+        await knotStore.delete(knot.id);
+        eventBus.emit('knot:deleted', knot.id);
+        toastService.show('Knot deleted');
       })();
     });
     headerRow.appendChild(deleteBtn);
@@ -102,39 +91,39 @@ export function renderKnots(container: HTMLElement): () => void {
     entry.appendChild(headerRow);
 
     // Location — clickable Google Maps link
-    if (note.location) {
+    if (knot.location) {
       const locLink = document.createElement('a');
-      locLink.className = 'note-location-link';
-      locLink.href = googleMapsUrl(note.location);
+      locLink.className = 'knot-location-link';
+      locLink.href = googleMapsUrl(knot.location);
       locLink.target = '_blank';
       locLink.rel = 'noopener noreferrer';
-      locLink.textContent = note.location.resolvedAddress
-        ? note.location.resolvedAddress
-        : formatCoords(note.location.latitude, note.location.longitude);
-      // Tapping the location should open Maps, not navigate to the note.
+      locLink.textContent = knot.location.resolvedAddress
+        ? knot.location.resolvedAddress
+        : formatCoords(knot.location.latitude, knot.location.longitude);
+      // Tapping the location should open Maps, not navigate to the knot.
       locLink.addEventListener('click', (ev) => ev.stopPropagation());
       entry.appendChild(locLink);
-    } else if (note.manualLabel && note.manualLabel.trim()) {
+    } else if (knot.manualLabel && knot.manualLabel.trim()) {
       // No GPS — render the manual label as plain text (not a link). Clicking
       // it bubbles to the entry and navigates to the knot, which is fine.
       const locPlain = document.createElement('div');
-      locPlain.className = 'note-location-link note-location-link--plain';
-      locPlain.textContent = note.manualLabel;
+      locPlain.className = 'knot-location-link knot-location-link--plain';
+      locPlain.textContent = knot.manualLabel;
       entry.appendChild(locPlain);
     }
 
     // Media items
     const mediaWrapper = document.createElement('div');
-    mediaWrapper.className = 'note-media';
+    mediaWrapper.className = 'knot-media';
     // Append the media wrapper up-front so text items inserted via
     // insertBefore(textEl, mediaWrapper) have a valid reference child.
     entry.appendChild(mediaWrapper);
 
-    for (const item of note.mediaItems) {
+    for (const item of knot.mediaItems) {
       if (item.type === 'text') {
         const textItem = item as TextMediaItem;
         const textEl = document.createElement('div');
-        textEl.className = 'note-text';
+        textEl.className = 'knot-text';
         textEl.style.whiteSpace = 'pre-wrap';
         textEl.textContent = textItem.content; // safe — never innerHTML
         entry.insertBefore(textEl, mediaWrapper);
@@ -205,7 +194,7 @@ export function renderKnots(container: HTMLElement): () => void {
     }
 
     // Transcriptions (per-audio-item, with legacy fallback)
-    for (const transcript of collectTranscripts(note)) {
+    for (const transcript of collectTranscripts(knot)) {
       const transEl = document.createElement('div');
       transEl.className = 'transcription-block';
       transEl.textContent = transcript;
@@ -230,9 +219,9 @@ export function renderKnots(container: HTMLElement): () => void {
       URL.revokeObjectURL(url);
     }
 
-    const notes = await noteStore.listAll();
+    const knots = await knotStore.listAll();
 
-    if (notes.length === 0) {
+    if (knots.length === 0) {
       const emptyState = document.createElement('div');
       emptyState.className = 'empty-state';
 
@@ -249,25 +238,30 @@ export function renderKnots(container: HTMLElement): () => void {
       return;
     }
 
-    for (const note of notes) {
-      listEl.appendChild(renderNoteEntry(note));
+    for (const knot of knots) {
+      listEl.appendChild(renderKnotEntry(knot));
     }
   }
 
   void loadAndRender();
 
-  // Subscribe to note:saved and note:deleted to reload without a route change
-  unsubscribeNotesSaved = eventBus.on('note:saved', () => {
+  // Subscribe to knot:saved, knot:deleted, and knots:synced to reload
+  // without a route change.
+  unsubscribeKnotsSaved = eventBus.on('knot:saved', () => {
     void loadAndRender();
   });
-  unsubscribeNotesDeleted = eventBus.on('note:deleted', () => {
+  unsubscribeKnotsDeleted = eventBus.on('knot:deleted', () => {
+    void loadAndRender();
+  });
+  unsubscribeKnotsSynced = eventBus.on('knots:synced', () => {
     void loadAndRender();
   });
 
   // Cleanup
   return () => {
-    unsubscribeNotesSaved?.();
-    unsubscribeNotesDeleted?.();
+    unsubscribeKnotsSaved?.();
+    unsubscribeKnotsDeleted?.();
+    unsubscribeKnotsSynced?.();
 
     for (const url of objUrls) {
       URL.revokeObjectURL(url);

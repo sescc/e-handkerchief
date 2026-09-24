@@ -389,9 +389,9 @@ main {
 }
 
 /* ============================================================
-   Note Journal Entry
+   Knot Entry
    ============================================================ */
-.note-entry {
+.knot-entry {
   display: block;
   text-decoration: none;
   color: inherit;
@@ -404,28 +404,28 @@ main {
   transition: border-color var(--transition), box-shadow var(--transition);
 }
 
-.note-entry:hover, .note-entry:focus {
+.knot-entry:hover, .knot-entry:focus {
   border-color: var(--color-primary);
   box-shadow: var(--shadow-sm);
   outline: none;
 }
 
-.note-entry-header {
+.knot-entry-header {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
   gap: var(--space-sm);
 }
 
-.note-timestamp {
+.knot-timestamp {
   font-size: 12px;
   color: var(--color-text-muted);
   font-weight: 500;
   margin-bottom: var(--space-xs);
 }
 
-/* Journal quick-delete button — subtle, red on hover */
-.note-delete-btn {
+/* Knots quick-delete button — subtle, red on hover */
+.knot-delete-btn {
   flex-shrink: 0;
   background: transparent;
   border: none;
@@ -438,7 +438,7 @@ main {
   transition: opacity var(--transition), color var(--transition), background var(--transition);
 }
 
-.note-delete-btn:hover, .note-delete-btn:focus {
+.knot-delete-btn:hover, .knot-delete-btn:focus {
   opacity: 1;
   color: var(--color-error);
   background: rgba(220, 53, 69, 0.1);
@@ -446,7 +446,7 @@ main {
 }
 
 /* Clickable location that opens Google Maps */
-.note-location-link {
+.knot-location-link {
   display: inline-flex;
   align-items: center;
   gap: var(--space-xs);
@@ -456,25 +456,25 @@ main {
   margin-bottom: var(--space-sm);
 }
 
-.note-location-link::before {
+.knot-location-link::before {
   content: "📍";
   font-size: 10px;
 }
 
-.note-location-link:hover {
+.knot-location-link:hover {
   text-decoration: underline;
 }
 
-.note-location-link--plain {
+.knot-location-link--plain {
   cursor: default;
   color: var(--color-text-muted);
 }
 
-.note-location-link--plain:hover {
+.knot-location-link--plain:hover {
   text-decoration: none;
 }
 
-.note-location {
+.knot-location {
   font-size: 12px;
   color: var(--color-text-muted);
   margin-bottom: var(--space-sm);
@@ -483,12 +483,12 @@ main {
   gap: var(--space-xs);
 }
 
-.note-location::before {
+.knot-location::before {
   content: "📍";
   font-size: 10px;
 }
 
-.note-text {
+.knot-text {
   font-size: 15px;
   line-height: 1.6;
   white-space: pre-wrap;
@@ -496,7 +496,7 @@ main {
   margin-bottom: var(--space-sm);
 }
 
-.note-media {
+.knot-media {
   display: flex;
   flex-wrap: wrap;
   gap: var(--space-sm);
@@ -910,10 +910,40 @@ main {
   font-size: 8px;
 }
 
+/* Cloud Backup — "Manage backups" list */
+.backup-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.backup-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-sm);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: var(--space-sm) var(--space-md);
+}
+
+.backup-row-main {
+  font-size: 13px;
+  color: var(--color-text);
+  word-break: break-word;
+}
+
+.backup-row-meta {
+  font-size: 11px;
+  color: var(--color-text-muted);
+  margin-top: 2px;
+}
+
 /* ============================================================
-   Note Detail Screen
+   Knot Detail Screen
    ============================================================ */
-.note-detail-header {
+.knot-detail-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -923,7 +953,7 @@ main {
   border-bottom: 1px solid var(--color-border);
 }
 
-.note-detail-actions {
+.knot-detail-actions {
   display: flex;
   align-items: center;
   gap: var(--space-sm);
@@ -957,14 +987,14 @@ main {
   margin-top: var(--space-md);
 }
 
-/* Detail-screen location link sizing (slightly larger than journal) */
-.note-detail-location.note-location-link {
+/* Detail-screen location link sizing (slightly larger than the Knots list) */
+.knot-detail-location.knot-location-link {
   font-size: 13px;
   color: var(--color-primary);
   margin-bottom: var(--space-md);
 }
 
-.note-detail-location.note-location-link--plain {
+.knot-detail-location.knot-location-link--plain {
   color: var(--color-text-muted);
 }
 
@@ -982,36 +1012,36 @@ main {
   padding: var(--space-xs) 0;
 }
 
-.note-detail-timestamp {
+.knot-detail-timestamp {
   font-size: 13px;
   color: var(--color-text-muted);
   margin-bottom: var(--space-xs);
 }
 
-.note-detail-location {
+.knot-detail-location {
   font-size: 13px;
   color: var(--color-text-muted);
   margin-bottom: var(--space-md);
 }
 
-.note-detail-media {
+.knot-detail-media {
   margin-top: var(--space-md);
 }
 
-.note-detail-media audio,
-.note-detail-media video {
+.knot-detail-media audio,
+.knot-detail-media video {
   width: 100%;
   border-radius: var(--radius-md);
   margin-bottom: var(--space-sm);
 }
 
-.note-detail-media img {
+.knot-detail-media img {
   width: 100%;
   border-radius: var(--radius-md);
   margin-bottom: var(--space-sm);
 }
 
-.note-detail-text {
+.knot-detail-text {
   font-size: 16px;
   line-height: 1.7;
   white-space: pre-wrap;
@@ -1037,7 +1067,7 @@ main {
   color: var(--color-primary);
 }
 
-/* Per-audio-item transcription UI (NoteDetailScreen) */
+/* Per-audio-item transcription UI (KnotDetailScreen) */
 .transcribe-item-panel {
   margin-top: var(--space-sm);
   padding-left: var(--space-sm);

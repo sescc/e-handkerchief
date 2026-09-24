@@ -30,16 +30,18 @@ const ASSETS: string[] = [
   'src/app.js',
   'src/router.js',
   'src/db.js',
-  'src/noteStore.js',
+  'src/knotStore.js',
   'src/settingsStore.js',
   'src/eventBus.js',
   'src/toastService.js',
   'src/geoService.js',
   'src/mediaService.js',
   'src/transcriptionService.js',
-  'src/emailQueue.js',
   'src/notificationService.js',
   'src/cloudSyncService.js',
+  'src/syncPlan.js',
+  'src/knotSummary.js',
+  'src/shareService.js',
   'src/remoteTranscribe.js',
   'src/dateFormat.js',
   'src/mapsLink.js',
@@ -48,7 +50,7 @@ const ASSETS: string[] = [
   'src/screens/captureScreen.js',
   'src/screens/knotsScreen.js',
   'src/screens/calendarScreen.js',
-  'src/screens/noteDetailScreen.js',
+  'src/screens/knotDetailScreen.js',
   'src/screens/settingsScreen.js',
   // icons
   'icons/icon-192.png',
@@ -211,9 +213,7 @@ interface SyncEvt extends ExtendableEvent {
 }
 
 sw.addEventListener('sync', ((event: SyncEvt) => {
-  if (event.tag === 'email-sync') {
-    event.waitUntil(messageClients({ type: 'FLUSH_EMAIL' }));
-  } else if (event.tag === 'cloud-sync') {
+  if (event.tag === 'cloud-sync') {
     event.waitUntil(messageClients({ type: 'FLUSH_CLOUD' }));
   }
 }) as EventListener);

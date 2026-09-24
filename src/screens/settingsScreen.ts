@@ -4,9 +4,10 @@
 // ============================================================
 
 import { settingsStore } from '../settingsStore.js';
-import { cloudSyncService } from '../cloudSyncService.js';
+import { cloudSyncService, type BackupEntry } from '../cloudSyncService.js';
+import { knotStore } from '../knotStore.js';
 import { toastService } from '../toastService.js';
-import { formatNoteTimestamp, getTimezoneOptions } from '../dateFormat.js';
+import { formatKnotTimestamp, getTimezoneOptions } from '../dateFormat.js';
 import { createTimezoneCombobox } from '../components/timezoneCombobox.js';
 import type { AppSettings } from '../types.js';
 
@@ -111,13 +112,13 @@ export function renderSettings(container: HTMLElement): () => void {
   );
 
   // =========================================================
-  // Section: Email Summary
+  // Section: Daily Email Summary
   // =========================================================
   const emailSection = document.createElement('div');
   emailSection.className = 'settings-section';
 
   const emailHeading = document.createElement('h2');
-  emailHeading.textContent = 'Email Summary';
+  emailHeading.textContent = 'Daily Email Summary';
   emailSection.appendChild(emailHeading);
 
   const emailRow = document.createElement('div');
@@ -126,13 +127,21 @@ export function renderSettings(container: HTMLElement): () => void {
   const emailLabelWrap = document.createElement('div');
   const emailLabel = document.createElement('div');
   emailLabel.className = 'settings-row-label';
-  emailLabel.textContent = 'Enable Email Summary';
+  emailLabel.textContent = 'Enable daily email summary';
   emailLabelWrap.appendChild(emailLabel);
   emailRow.appendChild(emailLabelWrap);
 
   const emailToggle = buildToggle(current.emailSummaryEnabled);
   emailRow.appendChild(emailToggle.wrapper);
   emailSection.appendChild(emailRow);
+
+  // Not implemented yet — the toggle/recipient are saved for when it ships.
+  // Sharing a single knot right now goes through the Share button instead.
+  const emailComingSoonHint = document.createElement('div');
+  emailComingSoonHint.className = 'settings-row-desc mt-sm';
+  emailComingSoonHint.textContent =
+    "Coming soon — your recipient address is saved for when it's available. To send a single knot now, open it and tap Share.";
+  emailSection.appendChild(emailComingSoonHint);
 
   // Recipient field
   const recipientGroup = document.createElement('div');
@@ -288,7 +297,7 @@ export function renderSettings(container: HTMLElement): () => void {
   const previewLine = document.createElement('div');
   previewLine.className = 'settings-row-desc mt-sm';
   function updateDateTimePreview(): void {
-    previewLine.textContent = `Preview: ${formatNoteTimestamp(new Date().toISOString())}`;
+    previewLine.textContent = `Preview: ${formatKnotTimestamp(new Date().toISOString())}`;
   }
   updateDateTimePreview();
   dateTimeSection.appendChild(previewLine);
@@ -362,13 +371,205 @@ export function renderSettings(container: HTMLElement): () => void {
 
   cloudSection.appendChild(cloudRow);
 
-  // Import from Cloud button
-  const importBtn = document.createElement('button');
-  importBtn.className = 'btn btn-ghost btn-full mt-sm';
-  importBtn.textContent = 'Import from Cloud';
-  cloudSection.appendChild(importBtn);
+  // --- Explanatory copy: what each delete action does, in plain words.
+  // Built with DOM APIs / textContent (never innerHTML) even though the
+  // text itself is static, per the project's no-innerHTML-with-content rule. ---
+  const explainEl = document.createElement('div');
+  explainEl.className = 'settings-row-desc mt-sm';
+
+  const explainPara1 = document.createElement('p');
+  appendBoldSentence(explainPara1, [
+    { text: 'Deleting a knot', bold: true },
+    { text: ' (from Knots or its detail page) removes it from ', bold: false },
+    { text: 'this device only', bold: true },
+    { text: '. Its cloud backup is kept, and your other devices keep their copies.', bold: false },
+  ]);
+  explainEl.appendChild(explainPara1);
+
+  const explainPara2 = document.createElement('p');
+  explainPara2.className = 'mt-sm';
+  appendBoldSentence(explainPara2, [
+    { text: 'Manage backups', bold: true },
+    { text: " deletes a knot's ", bold: false },
+    { text: 'cloud backup', bold: true },
+    { text: ". Copies already on your devices are not deleted, and they won't be backed up again unless you edit them.", bold: false },
+  ]);
+  explainEl.appendChild(explainPara2);
+
+  cloudSection.appendChild(explainEl);
+
+  // --- Merge with Cloud button ---
+  const syncBtn = document.createElement('button');
+  syncBtn.className = 'btn btn-ghost btn-full mt-sm';
+  syncBtn.textContent = 'Merge with Cloud';
+  cloudSection.appendChild(syncBtn);
+
+  // --- Merge description line ---
+  const syncDescEl = document.createElement('div');
+  syncDescEl.className = 'settings-row-desc mt-sm';
+  syncDescEl.textContent =
+    'Sends new and edited knots from this device to Google Drive, and brings in new and edited knots from your other devices. Data is never deleted during a merge.';
+  cloudSection.appendChild(syncDescEl);
+
+  // --- Last merged line ---
+  const lastSyncedEl = document.createElement('div');
+  lastSyncedEl.className = 'settings-row-desc mt-sm';
+  function updateLastSynced(): void {
+    const lastSyncAt = settingsStore.getCurrent().lastSyncAt;
+    lastSyncedEl.textContent =
+      lastSyncAt !== null
+        ? `Last merged: ${formatKnotTimestamp(new Date(lastSyncAt).toISOString())}`
+        : 'Not merged yet';
+  }
+  updateLastSynced();
+  cloudSection.appendChild(lastSyncedEl);
+
+  // --- Manage backups button + inline panel ---
+  const manageBtn = document.createElement('button');
+  manageBtn.className = 'btn btn-ghost btn-full mt-sm';
+  manageBtn.textContent = 'Manage backups';
+  cloudSection.appendChild(manageBtn);
+
+  const backupHint = document.createElement('div');
+  backupHint.className = 'settings-row-desc mt-sm';
+  backupHint.textContent = 'Connect Google Drive and go online to merge or manage backups.';
+  cloudSection.appendChild(backupHint);
+
+  const backupPanel = document.createElement('div');
+  backupPanel.className = 'backup-list mt-sm';
+  backupPanel.style.display = 'none';
+  cloudSection.appendChild(backupPanel);
 
   root.appendChild(cloudSection);
+
+  let syncInFlight = false;
+  let backupPanelOpen = false;
+
+  /** Merge with Cloud / Manage backups are only usable when connected AND online. */
+  function updateAvailability(): void {
+    const available = cloudSyncService.getConnectionStatus() === 'connected' && navigator.onLine;
+    syncBtn.disabled = !available || syncInFlight;
+    manageBtn.disabled = !available;
+    backupHint.style.display = available ? 'none' : 'block';
+    if (!available && backupPanelOpen) {
+      backupPanelOpen = false;
+      backupPanel.style.display = 'none';
+      backupPanel.innerHTML = '';
+    }
+  }
+  updateAvailability();
+
+  const onSyncClick = async (): Promise<void> => {
+    syncInFlight = true;
+    syncBtn.disabled = true;
+    syncBtn.textContent = 'Merging…';
+    try {
+      const result = await cloudSyncService.syncAll();
+      toastService.show(`Merged — ${result.pulled} knots updated on this device, ${result.pushed} backed up`);
+    } catch {
+      toastService.show('Merge failed — check your connection');
+    } finally {
+      syncInFlight = false;
+      syncBtn.textContent = 'Merge with Cloud';
+      updateAvailability();
+      updateLastSynced();
+      if (backupPanelOpen) void loadBackups();
+    }
+  };
+  syncBtn.addEventListener('click', () => void onSyncClick());
+  listenerCleanups.push(() => syncBtn.removeEventListener('click', () => void onSyncClick()));
+
+  function renderBackupRow(b: BackupEntry, localIds: Set<string>): HTMLElement {
+    const row = document.createElement('div');
+    row.className = 'backup-row';
+
+    const mainWrap = document.createElement('div');
+    mainWrap.style.flex = '1';
+    mainWrap.style.minWidth = '0';
+
+    const mainLine = document.createElement('div');
+    mainLine.className = 'backup-row-main';
+    mainLine.textContent = b.description
+      ? b.description
+      : b.kind === 'knot'
+      ? `Backup from ${formatKnotTimestamp(b.modifiedTime)}`
+      : `Old-format backup (${b.name})`;
+    mainWrap.appendChild(mainLine);
+
+    const metaLine = document.createElement('div');
+    metaLine.className = 'backup-row-meta';
+    metaLine.textContent =
+      b.kind === 'old' ? 'Old format' : b.knotId && localIds.has(b.knotId) ? 'On this device' : 'Only in backup';
+    mainWrap.appendChild(metaLine);
+
+    row.appendChild(mainWrap);
+
+    const deleteBtn = document.createElement('button');
+    deleteBtn.className = 'btn btn-danger btn-sm';
+    deleteBtn.textContent = 'Delete';
+    deleteBtn.addEventListener('click', () => {
+      void (async () => {
+        if (!confirm('Delete this backup from Google Drive? Copies on your devices are not deleted.')) return;
+        try {
+          await cloudSyncService.deleteBackup(b.fileId, b.knotId);
+          row.remove();
+          toastService.show('Backup deleted');
+        } catch {
+          toastService.show('Could not delete backup — check your connection');
+        }
+      })();
+    });
+    row.appendChild(deleteBtn);
+
+    return row;
+  }
+
+  async function loadBackups(): Promise<void> {
+    backupPanel.innerHTML = '';
+    const loadingEl = document.createElement('div');
+    loadingEl.className = 'settings-row-desc';
+    loadingEl.textContent = 'Loading backups…';
+    backupPanel.appendChild(loadingEl);
+
+    try {
+      const [backups, localKnots] = await Promise.all([cloudSyncService.listBackups(), knotStore.listAll()]);
+      const localIds = new Set(localKnots.map((k) => k.id));
+
+      backupPanel.innerHTML = '';
+      if (backups.length === 0) {
+        const empty = document.createElement('div');
+        empty.className = 'settings-row-desc';
+        empty.textContent = 'No backups in Google Drive yet.';
+        backupPanel.appendChild(empty);
+        return;
+      }
+      for (const b of backups) {
+        backupPanel.appendChild(renderBackupRow(b, localIds));
+      }
+    } catch {
+      backupPanel.innerHTML = '';
+      const errEl = document.createElement('div');
+      errEl.className = 'settings-row-desc';
+      errEl.textContent = 'Could not load backups — check your connection';
+      backupPanel.appendChild(errEl);
+    }
+  }
+
+  const onManageClick = (): void => {
+    backupPanelOpen = !backupPanelOpen;
+    backupPanel.style.display = backupPanelOpen ? 'block' : 'none';
+    if (backupPanelOpen) void loadBackups();
+  };
+  manageBtn.addEventListener('click', onManageClick);
+  listenerCleanups.push(() => manageBtn.removeEventListener('click', onManageClick));
+
+  const onOnlineOrOffline = (): void => updateAvailability();
+  window.addEventListener('online', onOnlineOrOffline);
+  window.addEventListener('offline', onOnlineOrOffline);
+  listenerCleanups.push(() => {
+    window.removeEventListener('online', onOnlineOrOffline);
+    window.removeEventListener('offline', onOnlineOrOffline);
+  });
 
   function updateStatusBadge(status: 'connected' | 'disconnected'): void {
     statusBadge.className = status === 'connected' ? 'badge-connected' : 'badge-disconnected';
@@ -392,28 +593,11 @@ export function renderSettings(container: HTMLElement): () => void {
     connectBtn.removeEventListener('click', () => void onConnectClick())
   );
 
-  const onImportClick = async (): Promise<void> => {
-    importBtn.disabled = true;
-    importBtn.textContent = 'Importing…';
-    try {
-      const result = await cloudSyncService.importAll();
-      toastService.show(`Imported ${result.imported} notes (${result.skipped} skipped)`);
-    } catch {
-      toastService.show('Import failed — check your connection');
-    } finally {
-      importBtn.disabled = false;
-      importBtn.textContent = 'Import from Cloud';
-    }
-  };
-  importBtn.addEventListener('click', () => void onImportClick());
-  listenerCleanups.push(() =>
-    importBtn.removeEventListener('click', () => void onImportClick())
-  );
-
   // Subscribe to connection status changes
   unsubscribeStatus = cloudSyncService.onStatusChange((status) => {
     updateStatusBadge(status);
     updateConnectBtn(status);
+    updateAvailability();
   });
 
   // Subscribe to settings changes (keep controls in sync)
@@ -437,6 +621,7 @@ export function renderSettings(container: HTMLElement): () => void {
       timeFormatControl.select.value = settings.timeFormat;
     }
     updateDateTimePreview();
+    updateLastSynced();
   });
 
   container.appendChild(root);
@@ -493,4 +678,21 @@ function buildSelect(
 
   wrapper.appendChild(select);
   return { wrapper, select };
+}
+
+// ---------------------------------------------------------------------------
+// Bold-sentence builder — appends a sequence of text/bold runs to `parent`
+// using textContent-based DOM nodes (createTextNode / <strong>.textContent),
+// never innerHTML, even though this particular text is static.
+// ---------------------------------------------------------------------------
+function appendBoldSentence(parent: HTMLElement, runs: Array<{ text: string; bold: boolean }>): void {
+  for (const run of runs) {
+    if (run.bold) {
+      const strong = document.createElement('strong');
+      strong.textContent = run.text;
+      parent.appendChild(strong);
+    } else {
+      parent.appendChild(document.createTextNode(run.text));
+    }
+  }
 }

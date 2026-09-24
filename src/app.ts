@@ -6,9 +6,9 @@
 import { settingsStore } from './settingsStore.js';
 import { initRouter, navigate } from './router.js';
 import { toastService } from './toastService.js';
-import { emailQueue } from './emailQueue.js';
 import { cloudSyncService } from './cloudSyncService.js';
 import { notificationService } from './notificationService.js';
+import { eventBus } from './eventBus.js';
 
 async function init(): Promise<void> {
   // 1. Load settings before any screen renders (Requirement 12.10)
@@ -31,10 +31,22 @@ async function init(): Promise<void> {
   const navBar = buildNavBar();
   appEl.appendChild(navBar);
 
-  // 4. Init the hash-based router into the main content area
+  // 4. Upload a knot right after it's saved locally (capture, edit,
+  // transcribe). Registered BEFORE initRouter (and the awaited SW
+  // registration below) so a save made while either is still in flight is
+  // never missed.
+  eventBus.on('knot:saved', (k) => {
+    if (cloudSyncService.getConnectionStatus() === 'connected') {
+      void cloudSyncService.uploadKnot(k).catch(() => {
+        /* queued internally by uploadKnot */
+      });
+    }
+  });
+
+  // 5. Init the hash-based router into the main content area
   initRouter(main);
 
-  // 5. Register the Service Worker
+  // 6. Register the Service Worker
   if ('serviceWorker' in navigator) {
     try {
       await navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' });
@@ -48,10 +60,8 @@ async function init(): Promise<void> {
           });
         } else if (data?.type === 'NAVIGATE' && data.to) {
           navigate(data.to);
-        } else if (data?.type === 'FLUSH_EMAIL') {
-          void emailQueue.flush();
         } else if (data?.type === 'FLUSH_CLOUD') {
-          void cloudSyncService.uploadPending();
+          void cloudSyncService.syncAll().catch(() => {});
         }
       });
     } catch (err) {
@@ -59,17 +69,21 @@ async function init(): Promise<void> {
     }
   }
 
-  // 6. On reconnect: flush the email queue and any pending uploads
+  // 7. On reconnect: run a full cloud sync
   window.addEventListener('online', () => {
-    void emailQueue.flush();
     if (cloudSyncService.getConnectionStatus() === 'connected') {
-      void cloudSyncService.uploadPending();
+      void cloudSyncService.syncAll().catch(() => {});
     }
   });
 
-  // 7. Request notification permission when running as an installed PWA
+  // 8. Request notification permission when running as an installed PWA
   if (window.matchMedia('(display-mode: standalone)').matches) {
     void notificationService.requestAndRegister();
+  }
+
+  // 9. Run a full sync on startup when already connected and online.
+  if (cloudSyncService.getConnectionStatus() === 'connected' && navigator.onLine) {
+    void cloudSyncService.syncAll().catch(() => {});
   }
 }
 
@@ -99,7 +113,7 @@ function buildNavBar(): HTMLElement {
   const captureBtn = document.createElement('a');
   captureBtn.href = '#/';
   captureBtn.className = 'nav-link capture-btn';
-  captureBtn.setAttribute('aria-label', 'New Note');
+  captureBtn.setAttribute('aria-label', 'Tie a new knot');
   captureBtn.innerHTML = '<span class="nav-icon">＋</span>';
 
   const settingsLink = document.createElement('a');
@@ -113,8 +127,7 @@ function buildNavBar(): HTMLElement {
     calendarLink.removeAttribute('aria-current');
     captureBtn.removeAttribute('aria-current');
     settingsLink.removeAttribute('aria-current');
-    // '#/journal' is the back-compat alias for the Knots tab.
-    if (hash === '#/knots' || hash === '#/journal') {
+    if (hash === '#/knots') {
       knotsLink.setAttribute('aria-current', 'page');
     } else if (hash === '#/calendar') {
       calendarLink.setAttribute('aria-current', 'page');

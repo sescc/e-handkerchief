@@ -1,20 +1,22 @@
 // ============================================================
-// e-Handkerchief — NoteDetailScreen
-// Displays the full content of a single note by UUID.
+// e-Handkerchief — KnotDetailScreen
+// Displays the full content of a single knot by UUID.
 // Fully offline — loads from local IndexedDB only.
 // ============================================================
 
-import { noteStore } from '../noteStore.js';
+import { knotStore } from '../knotStore.js';
 import { navigate } from '../router.js';
 import { eventBus } from '../eventBus.js';
 import { toastService } from '../toastService.js';
 import { googleMapsUrl } from '../mapsLink.js';
-import { formatNoteTimestamp } from '../dateFormat.js';
+import { formatKnotTimestamp } from '../dateFormat.js';
 import { remoteTranscribe } from '../remoteTranscribe.js';
 import { settingsStore } from '../settingsStore.js';
+import { cloudSyncService } from '../cloudSyncService.js';
+import { shareKnot } from '../shareService.js';
 import { renderMediaCapture } from '../components/mediaCapture.js';
 import type {
-  Note,
+  Knot,
   MediaItem,
   AudioMediaItem,
   PhotoMediaItem,
@@ -37,7 +39,7 @@ function makeMediaUnavailable(): HTMLElement {
   return div;
 }
 
-export function renderNoteDetail(
+export function renderKnotDetail(
   container: HTMLElement,
   params: Record<string, string>
 ): () => void {
@@ -49,12 +51,12 @@ export function renderNoteDetail(
   }
 
   const root = document.createElement('div');
-  root.className = 'note-detail-screen';
+  root.className = 'knot-detail-screen';
   container.appendChild(root);
 
-  // --- Header with back button (+ action buttons added once note is loaded) ---
+  // --- Header with back button (+ action buttons added once knot is loaded) ---
   const headerEl = document.createElement('div');
-  headerEl.className = 'note-detail-header';
+  headerEl.className = 'knot-detail-header';
 
   const backBtn = document.createElement('button');
   backBtn.className = 'back-btn';
@@ -62,9 +64,9 @@ export function renderNoteDetail(
   backBtn.addEventListener('click', () => navigate('#/knots'));
   headerEl.appendChild(backBtn);
 
-  // Container for Delete / Edit actions (shown only when a note is loaded)
+  // Container for Delete / Edit actions (shown only when a knot is loaded)
   const actionsEl = document.createElement('div');
-  actionsEl.className = 'note-detail-actions';
+  actionsEl.className = 'knot-detail-actions';
   headerEl.appendChild(actionsEl);
 
   root.appendChild(headerEl);
@@ -76,10 +78,13 @@ export function renderNoteDetail(
   // --- Loading indicator ---
   const loadingEl = document.createElement('div');
   loadingEl.className = 'loading-state';
-  loadingEl.innerHTML = '<div class="spinner spinner--lg"></div><p>Loading note…</p>';
+  loadingEl.innerHTML = '<div class="spinner spinner--lg"></div><p>Loading knot…</p>';
   contentEl.appendChild(loadingEl);
 
-  const noteId = params['id'];
+  const knotId = params['id'];
+  // True while the edit form is open. Gates the 'knots:synced' handler below
+  // so an in-progress edit is never clobbered by a pulled update.
+  let isEditing = false;
 
   function clearContentUrls(): void {
     for (const url of objUrls.splice(0)) {
@@ -87,35 +92,50 @@ export function renderNoteDetail(
     }
   }
 
-  function renderLocation(note: Note, className: string): HTMLElement | null {
-    if (note.location) {
+  function renderLocation(knot: Knot, className: string): HTMLElement | null {
+    if (knot.location) {
       const locLink = document.createElement('a');
-      locLink.className = `note-location-link ${className}`;
-      locLink.href = googleMapsUrl(note.location);
+      locLink.className = `knot-location-link ${className}`;
+      locLink.href = googleMapsUrl(knot.location);
       locLink.target = '_blank';
       locLink.rel = 'noopener noreferrer';
-      locLink.textContent = note.location.resolvedAddress
-        ? note.location.resolvedAddress
-        : formatCoords(note.location.latitude, note.location.longitude);
+      locLink.textContent = knot.location.resolvedAddress
+        ? knot.location.resolvedAddress
+        : formatCoords(knot.location.latitude, knot.location.longitude);
       return locLink;
     }
     // No GPS coordinates — render the manual label as plain text (no map link).
-    if (note.manualLabel && note.manualLabel.trim().length > 0) {
+    if (knot.manualLabel && knot.manualLabel.trim().length > 0) {
       const locPlain = document.createElement('div');
-      locPlain.className = `note-location-link note-location-link--plain ${className}`;
-      locPlain.textContent = note.manualLabel;
+      locPlain.className = `knot-location-link knot-location-link--plain ${className}`;
+      locPlain.textContent = knot.manualLabel;
       return locPlain;
     }
     return null;
   }
 
-  function renderActions(note: Note): void {
+  function renderActions(knot: Knot): void {
     actionsEl.innerHTML = '';
+
+    const shareBtn = document.createElement('button');
+    shareBtn.className = 'btn btn-ghost';
+    shareBtn.textContent = '📤 Share';
+    shareBtn.addEventListener('click', () => {
+      // Call shareKnot() directly, synchronously, from the click handler —
+      // no awaits before it. shareKnot builds everything synchronously up
+      // to its single navigator.share() call, so this preserves the
+      // click's user-gesture / transient-activation window.
+      void shareKnot(knot);
+    });
+    actionsEl.appendChild(shareBtn);
 
     const editBtn = document.createElement('button');
     editBtn.className = 'btn btn-ghost';
     editBtn.textContent = '✏️ Edit';
-    editBtn.addEventListener('click', () => renderEditMode(note));
+    editBtn.addEventListener('click', () => {
+      isEditing = true;
+      renderEditMode(knot);
+    });
     actionsEl.appendChild(editBtn);
 
     const deleteBtn = document.createElement('button');
@@ -123,45 +143,46 @@ export function renderNoteDetail(
     deleteBtn.textContent = '🗑 Delete';
     deleteBtn.addEventListener('click', () => {
       void (async () => {
-        if (!confirm('Delete this note permanently? This cannot be undone.')) return;
-        await noteStore.delete(note.id);
-        eventBus.emit('note:deleted', note.id);
-        toastService.show('Note deleted');
+        if (!confirm(cloudSyncService.localDeleteConfirmText())) return;
+        await knotStore.delete(knot.id);
+        eventBus.emit('knot:deleted', knot.id);
+        toastService.show('Knot deleted');
         navigate('#/knots');
       })();
     });
     actionsEl.appendChild(deleteBtn);
   }
 
-  function renderNote(note: Note): void {
+  function renderKnot(knot: Knot): void {
+    isEditing = false;
     clearContentUrls();
     contentEl.innerHTML = '';
-    renderActions(note);
+    renderActions(knot);
 
     // Timestamp
     const tsEl = document.createElement('div');
-    tsEl.className = 'note-detail-timestamp';
-    tsEl.textContent = formatNoteTimestamp(note.timestamp.localISO);
+    tsEl.className = 'knot-detail-timestamp';
+    tsEl.textContent = formatKnotTimestamp(knot.timestamp.localISO);
     contentEl.appendChild(tsEl);
 
     // Location — clickable Google Maps link
-    const locLink = renderLocation(note, 'note-detail-location');
+    const locLink = renderLocation(knot, 'knot-detail-location');
     if (locLink) {
       contentEl.appendChild(locLink);
     }
 
     // Media items
     const mediaEl = document.createElement('div');
-    mediaEl.className = 'note-detail-media';
+    mediaEl.className = 'knot-detail-media';
     // Append up-front so text items inserted via insertBefore(textEl, mediaEl)
     // have a valid reference child.
     contentEl.appendChild(mediaEl);
 
-    note.mediaItems.forEach((item, index) => {
+    knot.mediaItems.forEach((item, index) => {
       if (item.type === 'text') {
         const textItem = item as TextMediaItem;
         const textEl = document.createElement('div');
-        textEl.className = 'note-detail-text';
+        textEl.className = 'knot-detail-text';
         textEl.style.whiteSpace = 'pre-wrap';
         textEl.textContent = textItem.content;
         contentEl.insertBefore(textEl, mediaEl);
@@ -178,7 +199,7 @@ export function renderNoteDetail(
         mediaEl.appendChild(audio);
 
         // Per-audio transcription sub-panel beneath THIS player.
-        mediaEl.appendChild(renderAudioTranscribePanel(note, audioItem, index));
+        mediaEl.appendChild(renderAudioTranscribePanel(knot, audioItem, index));
       } else if (item.type === 'photo') {
         const photoItem = item as PhotoMediaItem;
         const img = document.createElement('img');
@@ -211,15 +232,15 @@ export function renderNoteDetail(
       }
     });
 
-    // Legacy edge case: an old note carrying a note-level transcription but no
-    // audio item at all. Show it read-only so nothing is lost. (When audio
-    // exists, the legacy transcript is surfaced via the first audio item's
-    // per-item panel instead — see renderAudioTranscribePanel.)
-    const hasAudio = note.mediaItems.some((m) => m.type === 'audio');
-    if (note.transcription && !hasAudio) {
+    // Legacy edge case: an old knot carrying a legacy knot-level transcription
+    // but no audio item at all. Show it read-only so nothing is lost. (When
+    // audio exists, the legacy transcript is surfaced via the first audio
+    // item's per-item panel instead — see renderAudioTranscribePanel.)
+    const hasAudio = knot.mediaItems.some((m) => m.type === 'audio');
+    if (knot.transcription && !hasAudio) {
       const transEl = document.createElement('div');
       transEl.className = 'transcription-block';
-      transEl.textContent = note.transcription;
+      transEl.textContent = knot.transcription;
       contentEl.appendChild(transEl);
     }
   }
@@ -229,13 +250,13 @@ export function renderNoteDetail(
    * audio player. Each audio item carries its own transcript + status and can
    * be transcribed, re-transcribed, or hand-edited independently.
    *
-   * Backward compat: if this item has no per-item transcript but the note has a
-   * legacy note-level `transcription` AND this is the first audio item, that
+   * Backward compat: if this item has no per-item transcript but the knot has a
+   * legacy knot-level `transcription` AND this is the first audio item, that
    * legacy text is used as the initial editable value. It's promoted to the
    * per-item transcript the moment the user saves an edit or (re-)transcribes.
    */
   function renderAudioTranscribePanel(
-    note: Note,
+    knot: Knot,
     audioItem: AudioMediaItem,
     index: number
   ): HTMLElement {
@@ -243,15 +264,15 @@ export function renderNoteDetail(
     panel.className = 'transcribe-item-panel';
 
     // Determine whether an earlier audio item precedes this one, so the legacy
-    // note-level transcript only backfills the FIRST audio item.
+    // knot-level transcript only backfills the FIRST audio item.
     const isFirstAudio =
-      note.mediaItems.findIndex((m) => m.type === 'audio') === index;
+      knot.mediaItems.findIndex((m) => m.type === 'audio') === index;
 
     // Effective transcript for display: prefer the per-item transcript; else
-    // fall back to the legacy note-level transcript for the first audio item.
+    // fall back to the legacy knot-level transcript for the first audio item.
     const legacyFallback =
-      !audioItem.transcript && isFirstAudio && note.transcription
-        ? note.transcription
+      !audioItem.transcript && isFirstAudio && knot.transcription
+        ? knot.transcription
         : '';
     const effectiveTranscript = audioItem.transcript ?? legacyFallback;
 
@@ -274,16 +295,16 @@ export function renderNoteDetail(
         if (result.ok && result.text !== undefined) {
           audioItem.transcript = (result.text ?? '').trim();
           audioItem.transcriptionStatus = 'done';
-          note.updatedAt = Date.now();
-          await noteStore.save(note);
-          eventBus.emit('note:saved', note);
+          knot.updatedAt = Date.now();
+          await knotStore.save(knot);
+          eventBus.emit('knot:saved', knot);
           toastService.show(isRetry ? 'Re-transcribed' : 'Transcription added');
-          renderNote(note);
+          renderKnot(knot);
         } else {
           audioItem.transcriptionStatus = 'failed';
-          note.updatedAt = Date.now();
-          await noteStore.save(note);
-          eventBus.emit('note:saved', note);
+          knot.updatedAt = Date.now();
+          await knotStore.save(knot);
+          eventBus.emit('knot:saved', knot);
           toastService.show(result.error ?? 'Transcription failed');
           btn.disabled = false;
           btn.textContent = isRetry ? '🎧 Re-transcribe' : '🎧 Transcribe voice';
@@ -309,11 +330,11 @@ export function renderNoteDetail(
         void (async () => {
           audioItem.transcript = textarea.value.trim();
           audioItem.transcriptionStatus = 'done';
-          note.updatedAt = Date.now();
-          await noteStore.save(note);
-          eventBus.emit('note:saved', note);
+          knot.updatedAt = Date.now();
+          await knotStore.save(knot);
+          eventBus.emit('knot:saved', knot);
           toastService.show('Transcript saved');
-          renderNote(note);
+          renderKnot(knot);
         })();
       });
       actions.appendChild(saveBtn);
@@ -354,18 +375,18 @@ export function renderNoteDetail(
     return panel;
   }
 
-  function renderEditMode(note: Note): void {
+  function renderEditMode(knot: Knot): void {
     clearContentUrls();
     contentEl.innerHTML = '';
     actionsEl.innerHTML = ''; // hide view-mode actions while editing
 
     // Timestamp (read-only)
     const tsEl = document.createElement('div');
-    tsEl.className = 'note-detail-timestamp';
-    tsEl.textContent = formatNoteTimestamp(note.timestamp.localISO);
+    tsEl.className = 'knot-detail-timestamp';
+    tsEl.textContent = formatKnotTimestamp(knot.timestamp.localISO);
     contentEl.appendChild(tsEl);
 
-    // Location label — editable display text. Only shown when the note has
+    // Location label — editable display text. Only shown when the knot has
     // coordinates. Editing the label never touches lat/lng, so the view-mode
     // Google Maps link still points to the original GPS coordinates.
     let locationInput: HTMLInputElement | undefined;
@@ -386,14 +407,14 @@ export function renderNoteDetail(
       const locHelp = document.createElement('div');
       locHelp.className = 'settings-row-desc';
 
-      if (note.location) {
-        const lat = note.location.latitude;
-        const lng = note.location.longitude;
+      if (knot.location) {
+        const lat = knot.location.latitude;
+        const lng = knot.location.longitude;
         locationInput.value =
-          note.location.resolvedAddress ?? `${lat.toFixed(5)}, ${lng.toFixed(5)}`;
+          knot.location.resolvedAddress ?? `${lat.toFixed(5)}, ${lng.toFixed(5)}`;
         locHelp.textContent = `Shown on the knot. The map link still points to the original GPS coordinates. Map pin: ${lat.toFixed(5)}, ${lng.toFixed(5)}`;
       } else {
-        locationInput.value = note.manualLabel ?? '';
+        locationInput.value = knot.manualLabel ?? '';
         locationInput.placeholder = "e.g. Grandma's house";
         locHelp.textContent =
           'No GPS coordinates detected for this knot. Label location manually.';
@@ -406,9 +427,9 @@ export function renderNoteDetail(
     }
 
     // Text content — one editable textarea PER existing text item so that
-    // notes with multiple dictations/text blocks are all preserved on save.
+    // knots with multiple dictations/text blocks are all preserved on save.
     // Collect ALL text items in their original order.
-    const textItems = note.mediaItems.filter(
+    const textItems = knot.mediaItems.filter(
       (m): m is TextMediaItem => m.type === 'text'
     );
 
@@ -445,19 +466,19 @@ export function renderNoteDetail(
       const textarea = document.createElement('textarea');
       textarea.className = 'form-textarea';
       textarea.maxLength = 2000;
-      textarea.placeholder = 'Add text to this note…';
+      textarea.placeholder = 'Add text to this knot…';
       contentEl.appendChild(textarea);
       textEditors.push({ textarea });
     }
 
     // Existing (non-text) media items — each with a Remove button. This shows
-    // the note's EXISTING media and is edit-specific.
-    const nonTextItems = note.mediaItems.filter((m) => m.type !== 'text');
+    // the knot's EXISTING media and is edit-specific.
+    const nonTextItems = knot.mediaItems.filter((m) => m.type !== 'text');
     // Track which media item ids the user has removed.
     const removedIds = new Set<string>();
 
     const mediaEl = document.createElement('div');
-    mediaEl.className = 'note-detail-media';
+    mediaEl.className = 'knot-detail-media';
 
     for (const item of nonTextItems) {
       const wrapper = document.createElement('div');
@@ -513,7 +534,7 @@ export function renderNoteDetail(
 
     // ---- Add-new-media UI via the shared component (mic/photo/video/library +
     //      previews + live transcript + errors). Behaves identically to the
-    //      new-note capture screen. ----
+    //      new-knot capture screen. ----
     const addMountEl = document.createElement('div');
     contentEl.appendChild(addMountEl);
     const mediaCapture = renderMediaCapture(addMountEl);
@@ -577,7 +598,7 @@ export function renderNoteDetail(
         // Validate: must still have at least one media item.
         if (newMediaItems.length === 0) {
           errorEl.textContent =
-            'A note must have at least one item. Add some text or keep a media item.';
+            'A knot must have at least one item. Add some text or keep a media item.';
           errorEl.style.display = '';
           return;
         }
@@ -586,9 +607,9 @@ export function renderNoteDetail(
         // their own transcript/status (they're the same objects), and newly
         // captured audio items already carry their per-item transcript/status
         // from the media-capture component. We do NOT copy the legacy
-        // note-level transcript onto any item here.
-        const updatedNote: Note = {
-          ...note,
+        // knot-level transcript onto any item here.
+        const updatedKnot: Knot = {
+          ...knot,
           mediaItems: newMediaItems,
           updatedAt: Date.now(),
         };
@@ -598,24 +619,24 @@ export function renderNoteDetail(
         // empty field falls back to showing coordinates (resolvedAddress unset).
         if (locationInput) {
           const label = locationInput.value.trim();
-          if (note.location) {
+          if (knot.location) {
             // GPS present: edit the address label; coords/link unchanged.
-            updatedNote.location = {
-              ...note.location,
+            updatedKnot.location = {
+              ...knot.location,
               resolvedAddress: label.length > 0 ? label : undefined,
             };
           } else {
             // No GPS: store as a plain manual label (no map link).
-            updatedNote.manualLabel = label.length > 0 ? label : undefined;
+            updatedKnot.manualLabel = label.length > 0 ? label : undefined;
           }
         }
 
         mediaCapture.destroy();
 
-        await noteStore.save(updatedNote);
-        eventBus.emit('note:saved', updatedNote);
-        toastService.show('Note updated');
-        renderNote(updatedNote);
+        await knotStore.save(updatedKnot);
+        eventBus.emit('knot:saved', updatedKnot);
+        toastService.show('Knot updated');
+        renderKnot(updatedKnot);
       })();
     });
     editActions.appendChild(saveBtn);
@@ -627,7 +648,7 @@ export function renderNoteDetail(
       // Tear down the media capture component (stops recording/recognition,
       // revokes object URLs) before leaving edit mode.
       mediaCapture.destroy();
-      renderNote(note);
+      renderKnot(knot);
     });
     editActions.appendChild(cancelBtn);
 
@@ -640,13 +661,13 @@ export function renderNoteDetail(
     actionsEl.innerHTML = '';
 
     const heading = document.createElement('h2');
-    heading.textContent = 'Note not found';
+    heading.textContent = 'Knot not found';
     heading.className = 'page-title';
     contentEl.appendChild(heading);
 
     const msg = document.createElement('p');
     msg.className = 'text-muted';
-    msg.textContent = 'The requested note could not be found in local storage.';
+    msg.textContent = "This knot isn't on this device.";
     contentEl.appendChild(msg);
 
     const goBtn = document.createElement('button');
@@ -656,12 +677,12 @@ export function renderNoteDetail(
     contentEl.appendChild(goBtn);
   }
 
-  if (!noteId) {
+  if (!knotId) {
     renderNotFound();
   } else {
-    noteStore.get(noteId).then((note) => {
-      if (note) {
-        renderNote(note);
+    knotStore.get(knotId).then((knot) => {
+      if (knot) {
+        renderKnot(knot);
       } else {
         renderNotFound();
       }
@@ -670,8 +691,22 @@ export function renderNoteDetail(
     });
   }
 
+  // On a cloud sync, re-fetch and re-render this knot so a pulled update from
+  // another device shows up here too. Ignored while editing, so an
+  // in-progress edit is never clobbered by an incoming pull.
+  const unsubscribeSynced = eventBus.on('knots:synced', () => {
+    if (!knotId || isEditing) return;
+    knotStore.get(knotId).then((knot) => {
+      if (isEditing || !knot) return; // editing may have started meanwhile
+      renderKnot(knot);
+    }).catch(() => {
+      /* ignore — keep showing the current view */
+    });
+  });
+
   // Cleanup
   return () => {
+    unsubscribeSynced();
     for (const url of objUrls) {
       URL.revokeObjectURL(url);
     }
