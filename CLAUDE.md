@@ -68,6 +68,10 @@ Audit findings (Claude): the Knot theme was half-applied. The nav, list and cale
 - **Decision (user asked, Claude advised):** `.claude/settings.local.json` holds no secrets, but it exposes the Windows username and local temp paths. It is now git-ignored, together with `CLAUDE.local.md`, following the Claude Code convention that personal settings aren't committed. `CLAUDE.md` is shared and meant to be committed.
   - This replaces the user's pre-existing uncommitted `.gitignore` edit, which had removed the ignore lines for `CLAUDE.md`, `CLAUDE.local.md` and `.claude/`.
   - Commit `.claude/settings.json`, `agents/`, `commands/` and `skills/` if they're ever created.
+- **Decision (user asked, Claude designed):** the Cloud Backup badge shows "Connected as <email>".
+  - The email comes from Drive `about.get` (`fields=user(emailAddress,displayName)`), which the existing `drive.appdata` scope allows. So there's **no new OAuth scope and no re-consent**.
+  - The email is stored locally as `AppSettings.cloudAccountEmail`. It's fetched after connecting, and at startup for older connections that have none stored. Disconnecting or an expired session clears it.
+  - If the fetch fails, the badge simply shows "Connected".
 - **Decision (Claude, implementation):** Settings renames the email section to "Daily Email Summary", with the hint "Coming soon … To send a single knot now, open it and tap Share". The toggle and recipient validation are unchanged, and no email is ever sent.
 
 ## Session status (as of 2026-09-24)

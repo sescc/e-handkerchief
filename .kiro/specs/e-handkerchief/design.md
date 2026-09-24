@@ -168,6 +168,7 @@ interface AppSettings {
   cloudBackupToken: OAuthToken | null;
   notificationPermissionRequested: boolean;
   lastSyncAt: number | null;              // default: null — Unix ms of the last successful sync
+  cloudAccountEmail: string | null;       // default: null — connected Google account's email, via Drive about.get
   timezone: string;                       // default: 'auto'
   dateFormat: "DD MMM YYYY" | "MMM DD, YYYY" | "YYYY-MM-DD" | "DD/MM/YYYY" | "MM/DD/YYYY"; // default: 'DD MMM YYYY'
   timeFormat: "24h" | "12h";              // default: '24h'
@@ -356,6 +357,18 @@ interface CloudSyncServiceAPI {
   connect(): Promise<void>;
   handleOAuthCallback(code: string): Promise<void>;
   disconnect(): Promise<void>;
+
+  /**
+   * Fetches the connected Google account's email via Drive `about.get`
+   * (no extra OAuth scope needed — `drive.appdata` already covers it) and
+   * saves it to `settings.cloudAccountEmail`. Never throws: logs and
+   * returns on any failure, leaving the connection untouched. Called after
+   * `handleOAuthCallback` connects, and at startup when the email is still
+   * unknown (covers connections made before this existed).
+   */
+  refreshAccountInfo(): Promise<void>;
+  /** The connected Google account's email (from settings), or null if unknown/not connected. */
+  getAccountEmail(): string | null;
 
   /** Per-save upload path: upsert now, or queue a retry job on any failure. */
   uploadKnot(knot: Knot): Promise<void>;
@@ -675,7 +688,7 @@ Route `#/settings`. All controls read from and write to `SettingsStore`, in four
 
 **Date & Time** — Timezone (searchable combobox, see `timezoneCombobox.ts`), Date Format, Time Format, and a live preview line, all via `formatKnotTimestamp`.
 
-**Cloud Backup** — Google Drive status badge (Connected/Disconnected) and a Connect/Disconnect button; an explanatory block (two `<p>` elements inside one `settings-row-desc`, built with `createElement`/`textContent`/`<strong>`, never `innerHTML`) reading:
+**Cloud Backup** — Google Drive status badge and a Connect/Disconnect button. Badge text: "Disconnected" when not connected; when connected, "Connected as `{email}`" once `cloudSyncService.getAccountEmail()` returns the account's email (fetched via `refreshAccountInfo()`), or plain "Connected" while it is still unknown. Set via `textContent` only. The badge wraps long addresses (`overflow-wrap: anywhere`) instead of overflowing, and its wrapper (`settings-row-labelwrap`, `min-width: 0; flex: 1`) lets it shrink so the Connect/Disconnect button stays on-screen at narrow widths. It re-renders on `cloudSyncService.onStatusChange` and on `settingsStore.onChange` (so the badge picks up the email once `refreshAccountInfo()` resolves after connecting). Below the badge: an explanatory block (two `<p>` elements inside one `settings-row-desc`, built with `createElement`/`textContent`/`<strong>`, never `innerHTML`) reading:
 
 > **Deleting a knot** (from Knots or its detail page) removes it from **this device only**. Its cloud backup is kept, and your other devices keep their copies.
 >
@@ -881,6 +894,8 @@ function planSync(
 
 Authenticates with Google Drive via OAuth2 PKCE, upserts each knot's single backup file, runs the full two-way sync via `SyncPlan`, and exposes the "Manage backups" list/delete API. Connection state is available via `getConnectionStatus()` / `onStatusChange()`.
 
+**Account email:** `refreshAccountInfo()` calls Drive `about.get` (`GET /drive/v3/about?fields=user(emailAddress,displayName)`) through the existing `driveFetch` helper — no additional OAuth scope is needed, since `drive.appdata` already authorises it — and saves the result to `settings.cloudAccountEmail`. It never throws: a non-OK response or a missing/non-string `emailAddress` is logged with `console.warn` and the function returns, leaving the connection as-is. It's called once after `handleOAuthCallback` connects (before the post-connect `syncAll()` kick-off), and again at app startup (`app.ts`) when already connected, online, and `cloudAccountEmail` is still `null` — covering accounts connected before this feature existed. `getAccountEmail()` just reads `settings.cloudAccountEmail`. `disconnect()` and `expireConnection()` both clear it back to `null`.
+
 #### Backup file format
 
 Each knot's backup is one Drive file `knot-{id}.json` in the app-data folder (`spaces=appDataFolder`, so the app can only see its own files):
@@ -1050,6 +1065,7 @@ For any subset of settings keys that are absent from IndexedDB, `SettingsStore.l
 | `cloudBackupToken` | `null` |
 | `notificationPermissionRequested` | `false` |
 | `lastSyncAt` | `null` |
+| `cloudAccountEmail` | `null` |
 | `timezone` | `'auto'` |
 | `dateFormat` | `'DD MMM YYYY'` |
 | `timeFormat` | `'24h'` |

@@ -85,6 +85,16 @@ async function init(): Promise<void> {
   if (cloudSyncService.getConnectionStatus() === 'connected' && navigator.onLine) {
     void cloudSyncService.syncAll().catch(() => {});
   }
+
+  // 10. Backfill the connected account's email for connections made before
+  // this feature existed.
+  if (
+    cloudSyncService.getConnectionStatus() === 'connected' &&
+    navigator.onLine &&
+    settingsStore.getCurrent().cloudAccountEmail === null
+  ) {
+    void cloudSyncService.refreshAccountInfo().catch(() => {});
+  }
 }
 
 function buildNavBar(): HTMLElement {
