@@ -12,8 +12,9 @@ import {
   resetDBCache,
   KNOT_OBJECT_STORE,
   KNOT_TOMBSTONE_STORE,
+  SYNC_STATE_STORE,
 } from './db.js';
-import type { Knot, KnotTombstone } from './types.js';
+import type { Knot, KnotTombstone, SyncStateRecord } from './types.js';
 
 export interface KnotStoreAPI {
   /** Save a new or updated knot. Resolves within 1 second under normal conditions. */
@@ -39,6 +40,12 @@ export interface KnotStoreAPI {
    * edit to the rest of the app.
    */
   saveFromSync(knot: Knot): Promise<void>;
+  /** Sync bookkeeping (base version + recorded conflict) for one knot, or undefined if none. */
+  getSyncState(knotId: string): Promise<SyncStateRecord | undefined>;
+  /** Create or replace a knot's sync bookkeeping record. */
+  putSyncState(record: SyncStateRecord): Promise<void>;
+  /** Every sync bookkeeping record. */
+  listSyncStates(): Promise<SyncStateRecord[]>;
 }
 
 async function saveWithRetry(knot: Knot): Promise<void> {
@@ -77,6 +84,13 @@ export const knotStore: KnotStoreAPI = {
     // records a tombstone — a local delete must never be undone by a pull.
     const tombstone: KnotTombstone = { id, deletedAt: Date.now() };
     await dbPut(db, KNOT_TOMBSTONE_STORE, tombstone);
+    // A deleted knot can no longer be reviewed, so drop any recorded conflict.
+    // The base is left in place — it is harmless and never consulted for a
+    // knot that doesn't exist locally.
+    const state = await dbGet<SyncStateRecord>(db, SYNC_STATE_STORE, id);
+    if (state?.conflict) {
+      await dbPut(db, SYNC_STATE_STORE, { knotId: state.knotId, baseUpdatedAt: state.baseUpdatedAt });
+    }
   },
 
   async listTombstones(): Promise<KnotTombstone[]> {
@@ -87,5 +101,20 @@ export const knotStore: KnotStoreAPI = {
   async saveFromSync(knot: Knot): Promise<void> {
     // Plain save — MUST NOT emit events (see the KnotStoreAPI doc comment).
     await saveWithRetry(knot);
+  },
+
+  async getSyncState(knotId: string): Promise<SyncStateRecord | undefined> {
+    const db = await openDB();
+    return dbGet<SyncStateRecord>(db, SYNC_STATE_STORE, knotId);
+  },
+
+  async putSyncState(record: SyncStateRecord): Promise<void> {
+    const db = await openDB();
+    await dbPut(db, SYNC_STATE_STORE, record);
+  },
+
+  async listSyncStates(): Promise<SyncStateRecord[]> {
+    const db = await openDB();
+    return dbGetAll<SyncStateRecord>(db, SYNC_STATE_STORE);
   },
 };

@@ -31,7 +31,7 @@ Audit findings (Claude): the Knot theme was half-applied. The nav, list and cale
 - **Decision (user):** keep `"note"` where it means something else: the `// NOTE:` remarks, "Note the `.js` extension" in the proptest, and the aria-label "Record voice note" (a generic term for an audio clip).
 - **Decision (user):** per-knot save-and-send email is not wanted. Email Summary was always meant as a **daily digest** of the day's knots, which is deferred for a later decision. Claude presented the cost and architecture options: not strictly free, because Resend Free needs an owned domain and caps at 100/day, and knots live only on-device, so a server cron can't read them. Instead, add a standard per-knot **Share** button using the Web Share API with a clipboard fallback. Save-and-send is removed. The recipient setting is kept for the future digest.
 - **Decision (user):** a local knot delete does **not** delete its Drive backup; Drive is an archive. Individual backups must be deletable from inside the app, because Drive's own control ("Delete hidden app data") is desktop-only and all-or-nothing. The difference between the two delete actions must be explained in the app (Settings › Cloud Backup text and the confirm dialogs) and in the README.
-- **Decision (user):** automatic **two-way sync** across devices on the same Google account runs at startup, on `online`, from "Sync now", and after connecting. The newest `updatedAt` wins. A local tombstone store stops locally deleted knots from being pulled back. A cloud tombstone file stops backups deleted in the manager from being re-uploaded until the knot is edited again.
+- **Decision (user):** automatic **two-way sync** across devices on the same Google account runs at startup, on `online`, from "Sync now", and after connecting. The newest `updatedAt` wins. A local tombstone store stops locally deleted knots from being pulled back. A cloud tombstone file stops backups deleted in the manager from being re-uploaded until the knot is edited again. **(Superseded 2026-09-29 for content: see the 2026-09-28/29 section below. Check-off state still uses newest-wins, on its own clock.)**
 - **Decision (Claude, approved in plan):** a Drive upsert PATCHes the newest file for a knot without `parents` and deletes older duplicates. Share makes exactly one `navigator.share` call with the payload chosen up front, because a retry would lose the user gesture. Files are included only if `canShare({files})` passes and their total is ≤ 50 MB.
 - **Decision (Claude):** tests follow the existing no-framework pattern (TS compiled by `tsc`, run with `node`, `*.chartest.ts`). Node is on Windows PATH, not in WSL.
 - **Decision (user):** after Step 0, the user authorized running all remaining steps without per-step stops. Claude reviews each subagent diff and escalates only unexpected outcomes.
@@ -74,7 +74,93 @@ Audit findings (Claude): the Knot theme was half-applied. The nav, list and cale
   - If the fetch fails, the badge simply shows "Connected".
 - **Decision (Claude, implementation):** Settings renames the email section to "Daily Email Summary", with the hint "Coming soon … To send a single knot now, open it and tap Share". The toggle and recipient validation are unchanged, and no email is ever sent.
 
-## Session status (as of 2026-09-24)
+### 2026-09-28/29 — Merge toast fix, Check-off, Edit-conflict review, Share attribution + multi-share, Quick-capture notification (plan: `~/.claude/plans/issue-even-though-the-sorted-moth.md`)
+- **Bug (found by Claude):** the Merge toast said "0 knots updated on this device, 0 backed up" even when backups worked. The main reason: every save already uploads the knot, so Merge usually had nothing left to do (0/0 was true but read as failure). There were also two real defects:
+  - queued uploads flushed at the start of a merge were never counted (`uploadPending` returned void);
+  - there was no "already up to date" wording and no pluralisation ("1 knots").
+  - **Fix:** `uploadPending` returns a count, and the pure `src/mergeMessage.ts` builds the message. The copy is "Already up to date — nothing to merge" or "Merged — N knot(s) brought in, N backed up, N need(s) review", with zero parts omitted.
+- **Decision (user):** check off a knot, distinct from delete. The user chose wording that avoids "done" or "tie", because tying a knot means creating one:
+  - "Check off" / "Checked off" / "Uncheck".
+  - Toasts "Checked off · Undo" and "Unchecked · Undo". Both are undoable, so an accidental uncheck can be undone.
+  - "Show N checked-off knots" / "Hide checked-off knots".
+- **Decision (user):**
+  - A checked-off knot stays faded and struck through until the "New day starts at" time. After that it is hidden from the Knots list only. It stays in Calendar (faded) and on its detail page, where it can be unchecked.
+  - The default cutoff is **03:00** (user's choice). Claude explained that 04:00 is only a convention (Anki's default), not evidence-based.
+- **Decision (user):** checking off must **not** count as an edit. The user rejected the earlier proposal (a tick bumps `updatedAt`) because it would lift cloud tombstones and let a tick overwrite a text edit.
+  - Check-off is a separate indicator: `Knot.checkedOffAt` plus its own clock, `checkOffChangedAt`.
+  - It syncs through Drive `appProperties` with a metadata-only PATCH.
+  - Manage backups shows a "Checked off" badge, so the user can see which backups are safe to delete.
+- **Decision (user):** content edits made on two devices must never be silently lost. The user rejected last-write-wins. There must be a diff and a choice: keep this device's version, keep the cloud version, or keep both (the cloud version becomes a new knot). **Supersedes** the 2026-09-24 "newest `updatedAt` wins" rule for content.
+- **Decision (user asked, Claude designed):** with three or more devices, every review is two-way: this device vs the latest cloud version, whichever device wrote it. Devices resolve in turn. If the cloud changes again while the review is open, the newer version is shown and nothing is overwritten. Reviews show which device made the cloud edit, via the `editedOn` appProperty ("Android", "iPhone", …).
+- **Decision (user):** share attribution is on by default, with a Settings › Sharing toggle. The footer is "— Shared from e-Handkerchief" plus the app link. Multi-share is a "Select" mode in the Knots list with "Share (N)": one combined text with the header "N knots from e-Handkerchief", `———` separators and one footer.
+- **Decision (user):** the notification-drawer shortcut keeps opening **Capture**. Claude explained that Android web apps can't pin an undismissable notification; that would need a native/TWA wrapper, which is out of scope. The implementation:
+  - A Settings toggle requests permission on tap, not at startup.
+  - The notification is re-posted on every launch and after every tap.
+  - A tap opens Capture under the app's scope (this fixes the old `openWindow('/#/')` subpath bug).
+- **Decision (user):** for all other new copy, the user chose Option A from the plan's copy table.
+- **Decision (user):** the Settings "Merge with Cloud" description gains a final sentence, chosen by the user: "If a knot was edited on two devices, you'll be asked which version to keep."
+- **Decision (Claude, implementation — approved plan):**
+  - The sync base is stored per knot in a new IDB v5 store, `syncState` (`baseUpdatedAt` + an optional `conflict`).
+  - `planSync` is base-aware:
+    - only local changed → push;
+    - only remote changed → pull;
+    - both changed → conflict;
+    - no base (knots from before the upgrade) → pull if remote is newer and no upload job exists, else conflict.
+  - The per-save upload is guarded the same way (`ConflictError`: no overwrite, no retry job).
+  - Content PATCHes omit the check-off keys, so a stale value can't overwrite a newer check-off made elsewhere.
+  - `resolveConflict` sets `updatedAt = max(now, remote + 1)` for the kept local version.
+- **Decision (Claude, review fix):**
+  - Detail-screen content saves merge the latest stored check-off fields (`withLatestCheckOff`), because a save of the screen's stale object could revert a check-off.
+  - "Keep both" saves the cloud copy locally **before** overwriting the Drive file, so the cloud version can never be lost.
+- **Decision (Claude):**
+  - The conflict review screen is `#/conflict/{id}` ("Review changes") and needs a connection.
+  - One persistent toast ("N knot(s) also has/have edits from another device — tap to review"), a list badge ("⚠ Also edited on another device") and a detail-page banner surface conflicts.
+  - Claude invented this extra copy, and the user may change it:
+    - "All your knots are checked off."
+    - "Could not save — please try again" / "Could not undo — please try again".
+    - The diff legend and section titles.
+    - "Kept this device's version" / "Kept the cloud version" / "Kept both versions".
+    - "Couldn't finish — please try again. Nothing was deleted."
+    - "This knot also has edits from another device." + "Review".
+    - "Allow notifications" / "Blocked in browser settings".
+- **Decision (Claude):** supercharge ran degraded. There is no `docs/`, OpenSpec or graphify graph in this repo, and none was scaffolded. The Kiro spec stays the spec of record.
+
+## Session status (as of 2026-09-29)
+- All of the above is implemented, and **nothing is committed or pushed**.
+  - `tsc` (app + SW) passes.
+  - All chartests pass: dayCutoff, deviceLabel, knotDiff, knotSummary, mergeMessage, router, syncPlan, plus the timezone proptest.
+  - Kiro requirements (new Req 14–18, and amendments to 6, 8, 9, 11, 12, 13), design.md and README are updated.
+- **Browser smoke-tested locally:**
+  - DB v5 upgrade.
+  - Check-off and Undo, in the list and on the detail page.
+  - Cutoff hiding plus "Show 1 checked-off knot".
+  - Calendar shows the faded knot.
+  - Multi-share text with attribution on and off.
+  - Conflict badge, toast, banner and review screen (with a stubbed cloud copy).
+  - The Settings sections.
+- **Suggested commit message:** "Fix Merge toast counts/copy; add knot check-off with day cutoff (synced separately from content); replace newest-wins with edit-conflict review; add share attribution and multi-knot share; make quick-capture notification persistent-ish and scope-correct; IDB v5; update Kiro spec and README".
+- **Pending verification (real Google account, two or more devices):**
+  - Merge after an offline save says "1 backed up".
+  - A check-off syncs to device B without a content re-upload and shows "Checked off" in Manage backups.
+  - Checking off on A and editing text on B keeps both changes. This also confirms that Drive merges `appProperties` per key, which is inferred from the docs but unconfirmed.
+  - The same knot edited on two offline devices gives a review, and all three choices work.
+  - With 3 devices, reviews come in turn.
+  - The notification survives a tap and a relaunch on Android and opens Capture under the Pages subpath.
+  - Multi-share with media opens the native sheet.
+  - The earlier 2026-09-24 checks still apply, except "An edit made on B wins on A", which now gives a review if A also edited.
+- **Open items:**
+  - The daily email digest.
+  - `?error=access_denied` handling.
+  - The no-op `removeEventListener` cleanups in the other screens.
+  - The Req 7 30-second transcription timeout wording.
+  - Deployed `*.chartest.js` files.
+  - `timezoneCombobox.js` isn't in the precache list.
+  - The centre "+" nav button loses its "+" glyph on `#/knot/...` and `#/conflict/...` (pre-existing).
+- **Resolved this session:**
+  - The SW `openWindow` subpath bug.
+  - The design.md "Service Worker Scope" wording.
+
+## Session status (as of 2026-09-24) — superseded by 2026-09-29 below
 - The Knot rename, Drive two-way sync with the backup manager, Share, and the email retirement are all implemented.
   - `tsc` passes for the app and the SW. All `*.chartest.ts` tests and the timezone proptest pass.
   - Browser smoke-tested locally: DB upgrade, tie/list/delete a knot, the Settings Cloud Backup UI while disconnected, and the Share fallback.
@@ -140,7 +226,7 @@ Audit findings (Claude): the Knot theme was half-applied. The nav, list and cale
 ### Edge cases added 2026-09-24 (Knot rename / sync / Share)
 - **Existing v1 test data:** the v2 upgrade drops the `notes` store and clears queued upload jobs. This is intentional (user decision) and there's no migration. Leftover `note-*.json` Drive files are listed in Manage backups as "Old-format backup", can be deleted there, and are never imported.
 - ~~**Old `#/journal` or `#/note/{id}` links:** they now fall back to the Capture screen. Covered by `src/router.chartest.ts`.~~ **Superseded (user, 2026-09-24):** these are ordinary unknown routes. They have no special tests and no spec mention.
-- **Knot changed on both devices:** the newer `updatedAt` wins. Equal timestamps mean no change. Covered by `src/syncPlan.chartest.ts`.
+- ~~**Knot changed on both devices:** the newer `updatedAt` wins. Equal timestamps mean no change. Covered by `src/syncPlan.chartest.ts`.~~ **(Superseded 2026-09-29 for content: see the 2026-09-28/29 section below. Check-off state still uses newest-wins, on its own clock.)**
 - **Knot deleted locally:** a local tombstone means it's never pulled back onto that device. The Drive backup and other devices' copies stay. Covered by `syncPlan.chartest.ts`.
 - **Backup deleted in Manage backups:** a cloud tombstone blocks re-upload from every device until the knot is edited again. Copies already on devices stay. Covered by `syncPlan.chartest.ts` (tombstone before and after an edit).
 - **Duplicate Drive files for one knot** (a race between devices, or old POST-only uploads): the newest is kept and the rest are deleted, both during sync and on each upsert. Covered by `syncPlan.chartest.ts`.
@@ -154,6 +240,31 @@ Audit findings (Claude): the Knot theme was half-applied. The nav, list and cale
 - **Share media over 50 MB, or `canShare({files})` returns false:** text only is shared. The user cancelling (AbortError) is silent. Any other share error triggers a clipboard copy and a toast. There's only ever one `navigator.share` call.
 - **Share text contents:** timestamp; place with a Maps link, or the manual label; text items; transcripts, including the legacy knot-level one; and a correctly pluralised media count. No blank line is ever doubled. Covered by `src/knotSummary.chartest.ts`.
 
+
+### Edge cases added 2026-09-29 (Check-off / conflicts / share / notification)
+- **Check-off crosses the cutoff while the list is open:** the list re-renders on `visibilitychange` and on a timer set to the next cutoff. Covered by `dayCutoff.chartest.ts` (the maths); the rest is a manual test.
+- **Cutoff falls in a DST gap or overlap:**
+  - In a gap, the first instant after it is used.
+  - In an overlap, the first occurrence is used.
+  - Covered by `dayCutoff.chartest.ts` (Europe/London 2026-03-29 and 2026-10-25), including UTC+14 and UTC−12 zones.
+- **Checked off at 01:00 with a 03:00 cutoff:** hides at 03:00 the same morning. Checked off at 23:00: hides at 03:00 the next day. Covered by `dayCutoff.chartest.ts`.
+- **Check-off on a knot whose backup was deleted in Manage backups:** it never recreates the backup or lifts the tombstone, because `updatedAt` is unchanged. Covered by `syncPlan.chartest.ts`.
+- **Check-off on A, text edit on B:** both survive. Content PATCHes omit the check-off keys, and check-off merges on its own clock. Covered by `syncPlan.chartest.ts`. The Drive per-key merge needs a real-device check.
+- **Detail screen saves after an Undo or a synced check-off:** `withLatestCheckOff` merges the stored check-off fields first. A tiny read-then-save gap remains. Manual test only.
+- **Both devices edited since the last agreed version:** a conflict, never an overwrite. Covered by `syncPlan.chartest.ts`.
+- **Knots from before the v5 upgrade (no base):**
+  - Remote newer and no upload job → pull.
+  - Otherwise → a one-time review.
+  - Covered by `syncPlan.chartest.ts`.
+- **Upsert race:** two devices saving the same knot within a few seconds can both pass the guard. One edit is then pulled over without review. Documented in design.md Known Limitations. Closing it needs Drive ETag writes, which are out of scope.
+- **Cloud changes again during a review:** `resolveConflict` returns `changed-again`, and the screen reloads the newer version. Manual test only.
+- **"Keep both" fails partway:** the cloud copy is saved locally first. If the upload of the copy fails, it stays as a local-only knot and is pushed on the next sync. Manual test only.
+- **Review while offline:** "Connect to the internet to review this knot".
+- **Three or more devices:** reviews are pairwise against the latest cloud version, one device at a time.
+- **Multi-share media:** filenames `knot1-photo-1.jpg`, `knot2-…` never collide. The 50 MB cap applies to the combined size. There's exactly one `navigator.share` call. Covered by `knotSummary.chartest.ts` (naming); share itself was smoke-tested with a stub.
+- **Attribution off:** no footer, and the multi-share header is "N knots" without the app name. Covered by `knotSummary.chartest.ts`.
+- **Notification permission states:** granted = toggle; not asked = "Allow notifications" button; denied = "Blocked in browser settings"; unsupported = section hidden. Manual test only.
+- **Notification swiped away on Android:** it returns at the next app launch. It can't be made unswipeable on the web.
 
 ## Refactoring Standard Operating Procedure (SOP)
 When instructed to refactor code, adopt the role of a principal software engineer and execute in four strict phases:

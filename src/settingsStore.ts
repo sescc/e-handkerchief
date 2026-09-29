@@ -33,6 +33,9 @@ const DEFAULT_SETTINGS: AppSettings = {
   timezone: 'auto',
   dateFormat: 'DD MMM YYYY',
   timeFormat: '24h',
+  dayCutoff: '03:00',
+  shareAttribution: true,
+  quickCaptureNotification: true,
 };
 
 let _current: AppSettings | null = null;

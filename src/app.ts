@@ -10,6 +10,50 @@ import { cloudSyncService } from './cloudSyncService.js';
 import { notificationService } from './notificationService.js';
 import { eventBus } from './eventBus.js';
 
+// ---- Conflict toast -------------------------------------------------------
+// ONE persistent toast reflects how many knots currently await conflict
+// review. 'knots:conflicts' can fire several times per sync and carries
+// current state, so we only (re)show the toast when the COUNT changes.
+let conflictToast: { dismiss: () => void; cancelled: boolean } | null = null;
+let conflictToastCount = 0;
+
+function clearConflictToast(): void {
+  if (conflictToast) {
+    conflictToast.cancelled = true; // a programmatic dismiss must not count as a tap
+    conflictToast.dismiss();
+    conflictToast = null;
+  }
+}
+
+/** Take the user to the review screen, or to the list when several knots need review. */
+function openConflictReview(): void {
+  void cloudSyncService
+    .listConflicts()
+    .then((list) => navigate(list.length === 1 ? `#/conflict/${list[0].knotId}` : '#/knots'))
+    .catch(() => navigate('#/knots'));
+}
+
+function syncConflictToast(count: number): void {
+  if (count === conflictToastCount) return;
+  clearConflictToast();
+  conflictToastCount = count;
+  if (count <= 0) return;
+
+  const state = { dismiss: () => {}, cancelled: false };
+  const message =
+    count === 1
+      ? '1 knot also has edits from another device — tap to review'
+      : `${count} knots also have edits from another device — tap to review`;
+  state.dismiss = toastService.showPersistent(message, () => {
+    if (state.cancelled) return;
+    // Dismissed by tapping: clear the handle (the count stays, so the same
+    // count doesn't pop the toast up again).
+    if (conflictToast === state) conflictToast = null;
+    openConflictReview();
+  });
+  conflictToast = state;
+}
+
 async function init(): Promise<void> {
   // 1. Load settings before any screen renders (Requirement 12.10)
   await settingsStore.load();
@@ -42,6 +86,24 @@ async function init(): Promise<void> {
       });
     }
   });
+
+  // Sync a check-off / uncheck to Drive as a metadata-only update. Fire and
+  // forget: a failure is harmless (the next full sync reconciles it). Also
+  // registered before initRouter so nothing is missed.
+  eventBus.on('knot:checkedOff', (k) => {
+    void cloudSyncService.pushCheckOff(k).catch((err) => {
+      console.warn('Check-off sync failed (the next full sync will retry):', err);
+    });
+  });
+
+  // Keep the conflict toast in step with the recorded conflicts.
+  eventBus.on('knots:conflicts', ({ count }) => syncConflictToast(count));
+  void cloudSyncService
+    .listConflicts()
+    .then((list) => syncConflictToast(list.length))
+    .catch(() => {
+      /* no conflict state yet — nothing to show */
+    });
 
   // 5. Init the hash-based router into the main content area
   initRouter(main);
@@ -76,10 +138,10 @@ async function init(): Promise<void> {
     }
   });
 
-  // 8. Request notification permission when running as an installed PWA
-  if (window.matchMedia('(display-mode: standalone)').matches) {
-    void notificationService.requestAndRegister();
-  }
+  // 8. Re-post the quick-capture notification on every launch (only when the
+  // setting is on and permission is already granted — the permission prompt
+  // itself lives behind the Settings toggle, which needs a user gesture).
+  void notificationService.ensureShown();
 
   // 9. Run a full sync on startup when already connected and online.
   if (cloudSyncService.getConnectionStatus() === 'connected' && navigator.onLine) {

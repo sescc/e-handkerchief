@@ -47,4 +47,49 @@ export const toastService = {
     getContainer().appendChild(el);
     return dismiss;
   },
+
+  /**
+   * Show an auto-dismissing toast with one action button (e.g. "Undo").
+   * Clicking the button runs `onAction` once and removes the toast.
+   * @param message Text to display (set via textContent).
+   * @param actionLabel Label of the action button (set via textContent).
+   * @param onAction Callback fired when the button is clicked (at most once).
+   * @param durationMs Milliseconds before auto-removal (default: 5000).
+   * @returns A dismiss function — removes the toast without running `onAction`.
+   */
+  showAction(
+    message: string,
+    actionLabel: string,
+    onAction: () => void,
+    durationMs = 5000
+  ): () => void {
+    const el = document.createElement('div');
+    el.className = 'toast toast--action';
+
+    const text = document.createElement('span');
+    text.className = 'toast-action-text';
+    text.textContent = message; // never innerHTML
+
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'toast-action-btn';
+    btn.textContent = actionLabel; // never innerHTML
+
+    let done = false;
+    const timer = setTimeout(() => dismiss(), durationMs);
+    const dismiss = () => {
+      clearTimeout(timer);
+      el.remove();
+    };
+    btn.addEventListener('click', () => {
+      if (done) return;
+      done = true;
+      dismiss();
+      onAction();
+    });
+
+    el.append(text, btn);
+    getContainer().appendChild(el);
+    return dismiss;
+  },
 };

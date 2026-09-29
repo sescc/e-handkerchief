@@ -3,7 +3,7 @@
 // Hash-based single-page routing.
 // ============================================================
 
-export type Route = 'capture' | 'knots' | 'calendar' | 'knot' | 'settings';
+export type Route = 'capture' | 'knots' | 'calendar' | 'knot' | 'settings' | 'conflict';
 
 export interface RouteMatch {
   route: Route;
@@ -35,6 +35,12 @@ export function parseHash(hash: string): RouteMatch {
   const knotMatch = path.match(/^\/knot\/(.+)$/);
   if (knotMatch) {
     return { route: 'knot', params: { id: knotMatch[1] } };
+  }
+
+  // '/conflict/{id}' is the edit-conflict review screen.
+  const conflictMatch = path.match(/^\/conflict\/(.+)$/);
+  if (conflictMatch) {
+    return { route: 'conflict', params: { id: conflictMatch[1] } };
   }
 
   // Unknown route → capture (fallback)
@@ -89,6 +95,11 @@ export function initRouter(container: HTMLElement): void {
       case 'knot': {
         const { renderKnotDetail } = await import('./screens/knotDetailScreen.js');
         _currentCleanup = renderKnotDetail(container, match.params);
+        break;
+      }
+      case 'conflict': {
+        const { renderConflict } = await import('./screens/conflictScreen.js');
+        _currentCleanup = renderConflict(container, match.params);
         break;
       }
       case 'settings': {

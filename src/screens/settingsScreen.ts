@@ -7,8 +7,10 @@ import { settingsStore } from '../settingsStore.js';
 import { cloudSyncService, type BackupEntry } from '../cloudSyncService.js';
 import { knotStore } from '../knotStore.js';
 import { toastService } from '../toastService.js';
+import { mergeResultMessage } from '../mergeMessage.js';
 import { formatKnotTimestamp, getTimezoneOptions } from '../dateFormat.js';
 import { createTimezoneCombobox } from '../components/timezoneCombobox.js';
+import { notificationService } from '../notificationService.js';
 import type { AppSettings } from '../types.js';
 
 // RFC 5321-compatible email regex (local-part@domain)
@@ -293,6 +295,26 @@ export function renderSettings(container: HTMLElement): () => void {
   timeFormatGroup.appendChild(timeFormatControl.wrapper);
   dateTimeSection.appendChild(timeFormatGroup);
 
+  // --- New day starts at (checked-off knots leave the Knots list then) ---
+  const cutoffGroup = document.createElement('div');
+  cutoffGroup.className = 'form-group mt-sm';
+  const cutoffLabel = document.createElement('label');
+  cutoffLabel.className = 'form-label';
+  cutoffLabel.htmlFor = 'day-cutoff-input';
+  cutoffLabel.textContent = 'New day starts at';
+  cutoffGroup.appendChild(cutoffLabel);
+  const cutoffInput = document.createElement('input');
+  cutoffInput.type = 'time';
+  cutoffInput.id = 'day-cutoff-input';
+  cutoffInput.className = 'form-input';
+  cutoffInput.value = current.dayCutoff;
+  cutoffGroup.appendChild(cutoffInput);
+  const cutoffHint = document.createElement('div');
+  cutoffHint.className = 'settings-row-desc';
+  cutoffHint.textContent =
+    'Checked-off knots stay visible (faded) until this time, then leave the Knots list. They stay in Calendar.';
+  cutoffGroup.appendChild(cutoffHint);
+
   // --- Live preview ---
   const previewLine = document.createElement('div');
   previewLine.className = 'settings-row-desc mt-sm';
@@ -301,6 +323,9 @@ export function renderSettings(container: HTMLElement): () => void {
   }
   updateDateTimePreview();
   dateTimeSection.appendChild(previewLine);
+
+  // Below the Preview line so the preview isn't read as belonging to the cutoff.
+  dateTimeSection.appendChild(cutoffGroup);
 
   root.appendChild(dateTimeSection);
 
@@ -340,6 +365,150 @@ export function renderSettings(container: HTMLElement): () => void {
   listenerCleanups.push(() =>
     timeFormatControl.select.removeEventListener('change', () => void onTimeFormatChange())
   );
+
+  const onCutoffChange = async (): Promise<void> => {
+    const prev = settingsStore.getCurrent().dayCutoff;
+    const next = cutoffInput.value;
+    // A cleared time input is invalid: put the previous value back.
+    if (!/^\d{2}:\d{2}$/.test(next)) {
+      cutoffInput.value = prev;
+      return;
+    }
+    if (next === prev) return;
+    try {
+      await settingsStore.save({ dayCutoff: next });
+    } catch {
+      cutoffInput.value = prev;
+      toastService.show('Could not save setting');
+    }
+  };
+  const onCutoffChangeEvent = (): void => void onCutoffChange();
+  cutoffInput.addEventListener('change', onCutoffChangeEvent);
+  listenerCleanups.push(() => cutoffInput.removeEventListener('change', onCutoffChangeEvent));
+
+  // =========================================================
+  // Section: Sharing
+  // =========================================================
+  const sharingSection = document.createElement('div');
+  sharingSection.className = 'settings-section';
+
+  const sharingHeading = document.createElement('h2');
+  sharingHeading.textContent = 'Sharing';
+  sharingSection.appendChild(sharingHeading);
+
+  const sharingRow = document.createElement('div');
+  sharingRow.className = 'settings-row';
+  const sharingLabelWrap = document.createElement('div');
+  const sharingLabel = document.createElement('div');
+  sharingLabel.className = 'settings-row-label';
+  sharingLabel.textContent = "Add 'Shared from e-Handkerchief' to shared knots";
+  sharingLabelWrap.appendChild(sharingLabel);
+  sharingRow.appendChild(sharingLabelWrap);
+
+  const attributionToggle = buildToggle(current.shareAttribution !== false);
+  sharingRow.appendChild(attributionToggle.wrapper);
+  sharingSection.appendChild(sharingRow);
+  root.appendChild(sharingSection);
+
+  const onAttributionChange = async (): Promise<void> => {
+    const prev = settingsStore.getCurrent().shareAttribution !== false;
+    const next = attributionToggle.input.checked;
+    try {
+      await settingsStore.save({ shareAttribution: next });
+    } catch {
+      attributionToggle.input.checked = prev;
+      toastService.show('Could not save setting');
+    }
+  };
+  const onAttributionChangeEvent = (): void => void onAttributionChange();
+  attributionToggle.input.addEventListener('change', onAttributionChangeEvent);
+  listenerCleanups.push(() =>
+    attributionToggle.input.removeEventListener('change', onAttributionChangeEvent)
+  );
+
+  // =========================================================
+  // Section: Quick-capture notification
+  // The control follows Notification.permission: a toggle when granted, an
+  // "Allow notifications" button when not asked yet, plain text when blocked,
+  // and the whole section is hidden when the API is unavailable.
+  // =========================================================
+  const notifSection = document.createElement('div');
+  notifSection.className = 'settings-section';
+
+  const notifHeading = document.createElement('h2');
+  notifHeading.textContent = 'Notifications';
+  notifSection.appendChild(notifHeading);
+
+  const notifRow = document.createElement('div');
+  notifRow.className = 'settings-row';
+  const notifLabelWrap = document.createElement('div');
+  const notifLabel = document.createElement('div');
+  notifLabel.className = 'settings-row-label';
+  notifLabel.textContent = 'Quick-capture notification';
+  const notifDesc = document.createElement('div');
+  notifDesc.className = 'settings-row-desc';
+  notifDesc.textContent =
+    "Keeps a 'Tap to tie a knot' notification in your notification drawer. On Android you can still swipe it away; it comes back the next time you open the app.";
+  notifLabelWrap.appendChild(notifLabel);
+  notifLabelWrap.appendChild(notifDesc);
+  notifRow.appendChild(notifLabelWrap);
+
+  const notifControlEl = document.createElement('div');
+  notifControlEl.className = 'settings-row-control';
+  notifRow.appendChild(notifControlEl);
+  notifSection.appendChild(notifRow);
+  root.appendChild(notifSection);
+
+  /** The current toggle input, when the permission state shows one. */
+  let notifToggleInput: HTMLInputElement | null = null;
+
+  function renderNotificationControl(): void {
+    notifControlEl.textContent = '';
+    notifToggleInput = null;
+
+    const permission = notificationService.permission();
+    notifSection.style.display = permission === 'unsupported' ? 'none' : '';
+
+    if (permission === 'granted') {
+      const toggle = buildToggle(settingsStore.getCurrent().quickCaptureNotification !== false);
+      notifToggleInput = toggle.input;
+      toggle.input.addEventListener('change', () => {
+        void (async () => {
+          try {
+            if (toggle.input.checked) {
+              // enable() re-checks permission; if it was revoked meanwhile, re-render.
+              const result = await notificationService.enable();
+              if (result !== 'granted') renderNotificationControl();
+            } else {
+              await notificationService.disable();
+            }
+          } catch {
+            toggle.input.checked = !toggle.input.checked;
+            toastService.show('Could not save setting');
+          }
+        })();
+      });
+      notifControlEl.appendChild(toggle.wrapper);
+    } else if (permission === 'default') {
+      const allowBtn = document.createElement('button');
+      allowBtn.className = 'btn btn-ghost';
+      allowBtn.textContent = 'Allow notifications';
+      // enable() must run straight from this click (the permission prompt needs a user gesture).
+      allowBtn.addEventListener('click', () => {
+        void notificationService
+          .enable()
+          .catch(() => toastService.show('Could not save setting'))
+          .finally(() => renderNotificationControl());
+      });
+      notifControlEl.appendChild(allowBtn);
+    } else if (permission === 'denied') {
+      const blocked = document.createElement('div');
+      blocked.className = 'settings-row-desc notif-blocked';
+      blocked.textContent = 'Blocked in browser settings';
+      notifControlEl.appendChild(blocked);
+    }
+  }
+  renderNotificationControl();
 
   // =========================================================
   // Section: Cloud Backup
@@ -409,7 +578,7 @@ export function renderSettings(container: HTMLElement): () => void {
   const syncDescEl = document.createElement('div');
   syncDescEl.className = 'settings-row-desc mt-sm';
   syncDescEl.textContent =
-    'Sends new and edited knots from this device to Google Drive, and brings in new and edited knots from your other devices. Data is never deleted during a merge.';
+    'Sends new and edited knots from this device to Google Drive, and brings in new and edited knots from your other devices. Data is never deleted during a merge. If a knot was edited on two devices, you\'ll be asked which version to keep.';
   cloudSection.appendChild(syncDescEl);
 
   // --- Last merged line ---
@@ -466,7 +635,7 @@ export function renderSettings(container: HTMLElement): () => void {
     syncBtn.textContent = 'Merging…';
     try {
       const result = await cloudSyncService.syncAll();
-      toastService.show(`Merged — ${result.pulled} knots updated on this device, ${result.pushed} backed up`);
+      toastService.show(mergeResultMessage(result.pulled, result.pushed, result.conflicts));
     } catch {
       toastService.show('Merge failed — check your connection');
     } finally {
@@ -502,6 +671,13 @@ export function renderSettings(container: HTMLElement): () => void {
     metaLine.textContent =
       b.kind === 'old' ? 'Old format' : b.knotId && localIds.has(b.knotId) ? 'On this device' : 'Only in backup';
     mainWrap.appendChild(metaLine);
+
+    if (b.checkedOffAt !== null) {
+      const badge = document.createElement('span');
+      badge.className = 'backup-badge';
+      badge.textContent = 'Checked off';
+      mainWrap.appendChild(badge);
+    }
 
     row.appendChild(mainWrap);
 
@@ -625,6 +801,13 @@ export function renderSettings(container: HTMLElement): () => void {
     }
     if (document.activeElement !== timeFormatControl.select) {
       timeFormatControl.select.value = settings.timeFormat;
+    }
+    if (document.activeElement !== cutoffInput) {
+      cutoffInput.value = settings.dayCutoff;
+    }
+    attributionToggle.input.checked = settings.shareAttribution !== false;
+    if (notifToggleInput) {
+      notifToggleInput.checked = settings.quickCaptureNotification !== false;
     }
     updateDateTimePreview();
     updateLastSynced();

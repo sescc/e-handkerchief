@@ -8,7 +8,9 @@ import type { Knot, AppSettings } from './types.js';
 type EventMap = {
   'knot:saved': Knot;
   'knot:deleted': string; // the deleted knot's id
+  'knot:checkedOff': Knot; // a knot was checked off or unchecked (NOT a content save)
   'knots:synced': { pulled: number; pushed: number };
+  'knots:conflicts': { count: number }; // number of knots currently awaiting conflict review
   'settings:changed': AppSettings;
   'sw:waiting': void;
 };

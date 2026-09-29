@@ -10,6 +10,7 @@ import { eventBus } from '../eventBus.js';
 import { navigate } from '../router.js';
 import { settingsStore } from '../settingsStore.js';
 import { formatKnotTimestamp } from '../dateFormat.js';
+import { isCheckedOff } from '../dayCutoff.js';
 import type { Knot } from '../types.js';
 
 const WEEKDAY_LABELS = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'];
@@ -71,6 +72,7 @@ export function renderCalendar(container: HTMLElement): () => void {
   let unsubscribeSaved: (() => void) | null = null;
   let unsubscribeDeleted: (() => void) | null = null;
   let unsubscribeSynced: (() => void) | null = null;
+  let unsubscribeCheckedOff: (() => void) | null = null;
 
   const root = document.createElement('div');
   root.className = 'calendar-screen';
@@ -117,6 +119,8 @@ export function renderCalendar(container: HTMLElement): () => void {
     for (const knot of dayKnots) {
       const row = document.createElement('div');
       row.className = 'calendar-day-detail-row';
+      // Checked-off knots stay in the Calendar (never hidden), just faded.
+      if (isCheckedOff(knot)) row.classList.add('calendar-day-detail-row--checked-off');
       row.setAttribute('role', 'link');
       row.tabIndex = 0;
 
@@ -328,12 +332,16 @@ export function renderCalendar(container: HTMLElement): () => void {
   unsubscribeSynced = eventBus.on('knots:synced', () => {
     void loadAndRender();
   });
+  unsubscribeCheckedOff = eventBus.on('knot:checkedOff', () => {
+    void loadAndRender();
+  });
 
   // Cleanup
   return () => {
     unsubscribeSaved?.();
     unsubscribeDeleted?.();
     unsubscribeSynced?.();
+    unsubscribeCheckedOff?.();
     root.remove();
     container.innerHTML = '';
   };

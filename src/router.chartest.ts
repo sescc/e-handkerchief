@@ -82,6 +82,11 @@ const CASES: Case[] = [
   // --- knot detail ---
   { label: "'#/knot/abc' -> knot, params.id='abc'", hash: '#/knot/abc', expected: { route: 'knot', params: { id: 'abc' } } },
 
+  // --- edit-conflict review ---
+  { label: "'#/conflict/abc' -> conflict, params.id='abc'", hash: '#/conflict/abc', expected: { route: 'conflict', params: { id: 'abc' } } },
+  { label: "'#/conflict/' -> capture (fallback, no id)", hash: '#/conflict/', expected: { route: 'capture', params: {} } },
+  { label: "'#/conflict' -> capture (fallback, no id)", hash: '#/conflict', expected: { route: 'capture', params: {} } },
+
   // --- unknown -> capture fallback ---
   { label: "'#/unknown' -> capture (fallback)", hash: '#/unknown', expected: { route: 'capture', params: {} } },
   { label: "'#/knots/extra' -> capture (fallback)", hash: '#/knots/extra', expected: { route: 'capture', params: {} } },

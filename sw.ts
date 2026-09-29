@@ -41,6 +41,11 @@ const ASSETS: string[] = [
   'src/cloudSyncService.js',
   'src/syncPlan.js',
   'src/knotSummary.js',
+  'src/knotDiff.js',
+  'src/checkOffActions.js',
+  'src/dayCutoff.js',
+  'src/mergeMessage.js',
+  'src/deviceLabel.js',
   'src/shareService.js',
   'src/remoteTranscribe.js',
   'src/dateFormat.js',
@@ -52,6 +57,7 @@ const ASSETS: string[] = [
   'src/screens/calendarScreen.js',
   'src/screens/knotDetailScreen.js',
   'src/screens/settingsScreen.js',
+  'src/screens/conflictScreen.js',
   // icons
   'icons/icon-192.png',
   'icons/icon-512.png',
@@ -228,9 +234,22 @@ async function messageClients(message: unknown): Promise<void> {
 // ------------------------------------------------------------
 // Notification click — open the capture screen
 // ------------------------------------------------------------
+const CAPTURE_NOTIFICATION_TAG = 'capture-shortcut';
+
+/** (Re-)post the quick-capture notification: same title/body/tag as the app's own `ensureShown`. */
+function showCaptureNotification(): Promise<void> {
+  return sw.registration.showNotification('e-Handkerchief', {
+    body: 'Tap to tie a knot',
+    tag: CAPTURE_NOTIFICATION_TAG,
+    silent: true,
+    requireInteraction: true,
+  });
+}
+
 sw.addEventListener('notificationclick', (event: NotificationEvent) => {
   event.notification.close();
-  if (event.notification.tag === 'capture-shortcut' || !event.notification.tag) {
+  const tag = event.notification.tag;
+  if (tag === CAPTURE_NOTIFICATION_TAG || !tag) {
     event.waitUntil(
       sw.clients
         .matchAll({ type: 'window', includeUncontrolled: true })
@@ -242,8 +261,13 @@ sw.addEventListener('notificationclick', (event: NotificationEvent) => {
               return;
             }
           }
-          return sw.clients.openWindow('/#/');
+          // Resolve against the SW scope so this works on a GitHub Pages
+          // subpath too (a bare '/#/' would open the origin root).
+          return sw.clients.openWindow(new URL('./#/', sw.registration.scope).href);
         })
+        // A tap removes the notification; put it back so it stays available.
+        .then(() => (tag === CAPTURE_NOTIFICATION_TAG ? showCaptureNotification() : undefined))
+        .catch(() => undefined)
     );
   }
 });
