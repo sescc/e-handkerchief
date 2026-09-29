@@ -2,7 +2,7 @@
 
 ## Overview
 
-e-Handkerchief is a mobile-first Progressive Web App that lets users capture location-aware knots — via voice recording, photo/video, or text — with minimal friction. Every knot is timestamped and geo-tagged automatically. The app stores all data locally in IndexedDB and works fully offline after first load. Voice transcription is optional and additive; it never blocks the core capture flow. Cloud backup (Google Drive) is always available on a deployed site and, once connected, runs an automatic two-way sync — newest edit wins — so the same knots appear on every device signed into that account. A single knot can also be sent elsewhere at any time through the platform's own Share sheet. A Daily Email Summary is planned but not yet implemented; the Settings screen keeps its toggle and recipient address for when it ships.
+e-Handkerchief is a mobile-first Progressive Web App that lets users capture location-aware knots — via voice recording, photo/video, or text — with minimal friction. Every knot is timestamped and geo-tagged automatically. The app stores all data locally in IndexedDB and works fully offline after first load. Voice transcription is optional and additive; it never blocks the core capture flow. Cloud backup (Google Drive) is always available on a deployed site and, once connected, runs an automatic two-way sync so the same knots appear on every device signed into that account. Content sync is **base-aware**: a copy is replaced silently only when just one side changed since the two last agreed, and a knot edited on two devices is surfaced as a **conflict** for the user to review — it is never resolved by "newest wins". A knot can be **checked off**, which is deliberately not a content edit and syncs on its own clock. One or several knots can be sent elsewhere at any time through the platform's own Share sheet. A Daily Email Summary is planned but not yet implemented; the Settings screen keeps its toggle and recipient address for when it ships.
 
 The implementation uses vanilla HTML, CSS, and TypeScript compiled to plain ES module JavaScript. There is no framework runtime, no bundler, and no npm install step required by the end user. `tsc` (the TypeScript compiler) is the only build tool.
 
@@ -24,7 +24,12 @@ graph TD
         TranscriptionService[transcriptionService.ts<br/>Web Speech API]
         KnotSummary[knotSummary.ts<br/>pure: summary text + filenames]
         ShareService[shareService.ts<br/>Web Share API]
-        SyncPlan[syncPlan.ts<br/>pure: push/pull/dedupe decisions]
+        SyncPlan[syncPlan.ts<br/>pure: base-aware push/pull/conflict/check-off decisions]
+        DayCutoff[dayCutoff.ts<br/>pure: checked-off visibility]
+        CheckOffActions[checkOffActions.ts<br/>check off / uncheck / undo]
+        KnotDiff[knotDiff.ts<br/>pure: conflict-review diff]
+        MergeMessage[mergeMessage.ts<br/>pure: merge toast wording]
+        DeviceLabel[deviceLabel.ts<br/>pure: user agent to device label]
         CloudSync[cloudSyncService.ts<br/>Google Drive API]
         NotifService[notificationService.ts<br/>Notification API]
         EventBus[eventBus.ts<br/>Custom event emitter]
@@ -51,6 +56,13 @@ graph TD
     Router --> EventBus
     ShareService --> KnotSummary
     CloudSync --> SyncPlan
+    CloudSync --> DeviceLabel
+    Router --> DayCutoff
+    Router --> CheckOffActions
+    CheckOffActions --> KnotStore
+    CheckOffActions --> EventBus
+    Router --> KnotDiff
+    Router --> MergeMessage
     SW --> KnotStore
     SW -->|FLUSH_CLOUD message| CloudSync
     CloudSync --> GDrive
@@ -67,20 +79,25 @@ The architecture is intentionally flat: a thin vanilla-JS UI layer built from Ty
 | Component | Responsibility |
 |---|---|
 | **index.html** | App shell; loads `src/app.js` as an ES module, links `app.css` and `manifest.webmanifest`. |
-| **router.ts** | Hash-based single-page routing (`#/`, `#/knots`, `#/calendar`, `#/knot/:id`, `#/settings`). Calls screen `render`/cleanup functions. An unrecognised hash falls back to `#/`. |
-| **KnotStore** | CRUD on Knots in IndexedDB using hand-written Promise wrappers from `db.ts`. `delete()` also writes a local delete tombstone; `saveFromSync()` is a plain save used by sync pulls that deliberately does not emit events. |
+| **router.ts** | Hash-based single-page routing (`#/`, `#/knots`, `#/calendar`, `#/knot/:id`, `#/conflict/:id`, `#/settings`). Calls screen `render`/cleanup functions. An unrecognised hash falls back to `#/`. |
+| **KnotStore** | CRUD on Knots in IndexedDB using hand-written Promise wrappers from `db.ts`. `delete()` also writes a local delete tombstone and drops any recorded conflict; `saveFromSync()` is a plain save used by sync pulls that deliberately does not emit events. Also reads and writes the per-knot sync bookkeeping (`syncState`). |
 | **SettingsStore** | Reads/writes app settings to IndexedDB with an in-memory reactive cache using a custom event-emitter pattern. |
 | **MediaService** | Wraps MediaRecorder API (audio) and HTML Media Capture (photo/video). Returns Blobs. |
 | **GeoService** | Wraps `navigator.geolocation`, enforces 10-second timeout, resolves reverse-geocoding via Nominatim. |
 | **TranscriptionService** | Wraps Web Speech API for live transcription while recording; `remoteTranscribe.ts` handles deferred transcription of a saved recording via the user's own Worker. |
-| **KnotSummary** | Pure module (`knotSummary.ts`, no DOM, no settingsStore/db imports): builds the plain-text share summary for a knot and the filename for each media attachment. Used by ShareService and imported by KnotsScreen for `collectTranscripts`. |
-| **ShareService** | Wraps the Web Share API (`navigator.share`) for a single knot, with a clipboard fallback when it's unavailable. |
-| **SyncPlan** | Pure module (`syncPlan.ts`, no DOM, no imports beyond its own types): given local knots, remote Drive entries, and local/cloud tombstones, decides what to push, pull, and de-duplicate. |
-| **CloudSyncService** | Authenticates with Google Drive OAuth2 PKCE flow (token exchange and refresh via `oauth-worker`); upserts each knot's single backup file; runs the full two-way sync (via SyncPlan); lists and deletes individual backups; manages local/cloud delete tombstones. |
+| **KnotSummary** | Pure module (`knotSummary.ts`, no DOM, no settingsStore/db imports): builds the plain-text share summary for one knot or several (with the optional attribution footer) and the filename for each media attachment. Used by ShareService and imported by KnotsScreen for `collectTranscripts`. |
+| **ShareService** | Wraps the Web Share API (`navigator.share`) for one or several knots (`shareKnots`; `shareKnot` delegates to it), with a clipboard fallback when it's unavailable. |
+| **SyncPlan** | Pure module (`syncPlan.ts`, no DOM, no imports beyond its own types): given local knots, remote Drive entries, local/cloud tombstones, per-knot base versions, pending-job ids and already-conflicted ids, decides what to push, pull, de-duplicate, record as a conflict, and reconcile as check-off state. |
+| **DayCutoff** | Pure module (`dayCutoff.ts`): when a checked-off knot leaves the Knots list, given the "New day starts at" time and the app's timezone. |
+| **CheckOffActions** | `checkOffActions.ts`, shared by the Knots list and the detail screen: `setCheckedOff` (re-reads the knot, sets the two check-off fields, saves, emits `knot:checkedOff`), `toggleCheckOff` (adds the Undo toast), and `withLatestCheckOff` (copies the stored check-off state onto a knot just before a content save). |
+| **KnotDiff** | Pure module (`knotDiff.ts`): the structural difference between this device's copy of a knot and the cloud copy, for the conflict review screen. |
+| **DeviceLabel** | Pure module (`deviceLabel.ts`): user-agent string to a short device label ("Android", "Windows", …) stored as `editedOn` on Drive content writes. |
+| **MergeMessage** | Pure module (`mergeMessage.ts`): the wording of the "Merge with Cloud" result toast. |
+| **CloudSyncService** | Authenticates with Google Drive OAuth2 PKCE flow (token exchange and refresh via `oauth-worker`); upserts each knot's single backup file behind a conflict guard; runs the full two-way sync (via SyncPlan); pushes check-off state as metadata; lists and resolves conflicts; lists and deletes individual backups; manages local/cloud delete tombstones. |
 | **oauth-worker** | Owner-operated Cloudflare Worker (`oauth-worker/src/index.js`). `POST /token` and `POST /refresh` add the Google client secret (a Wrangler secret) and relay Google's token endpoint. CORS is locked to `ALLOWED_ORIGIN`. |
-| **NotificationService** | Requests permission, creates persistent notification, manages lifecycle. |
-| **EventBus** | Lightweight publish/subscribe module; decouples service events (`knot:saved`, `knot:deleted`, `knots:synced`, `settings:changed`, `sw:waiting`) from screen renders. |
-| **Service Worker** | Hand-written `sw.ts` compiled to `sw.js` (via `tsconfig.sw.json`); precaches all static assets; relays the `cloud-sync` Background Sync tag to the page as `FLUSH_CLOUD`. |
+| **NotificationService** | The quick-capture notification: reports the permission state, posts it on launch (`ensureShown`), turns it on from a user gesture (`enable`, which is where the permission prompt happens) and off (`disable`). |
+| **EventBus** | Lightweight publish/subscribe module; decouples service events (`knot:saved`, `knot:deleted`, `knot:checkedOff`, `knots:synced`, `knots:conflicts`, `settings:changed`, `sw:waiting`) from screen renders. |
+| **Service Worker** | Hand-written `sw.ts` compiled to `sw.js` (via `tsconfig.sw.json`); precaches all static assets; relays the `cloud-sync` Background Sync tag to the page as `FLUSH_CLOUD`; opens Capture from the quick-capture notification and re-posts it. |
 
 ---
 
@@ -98,9 +115,15 @@ interface Knot {
   transcription?: string;      // @deprecated legacy knot-level transcript; see AudioMediaItem.transcript
   transcriptionStatus?: "none" | "live" | "pending" | "done" | "failed"; // @deprecated, see above
   createdAt: number;           // Unix ms — used for Knots list sort order
-  updatedAt: number;           // Unix ms — bumped on every save; drives sync's newest-wins rule
+  updatedAt: number;           // Unix ms — bumped on every CONTENT edit; the content version compared by sync and conflict detection
+  checkedOffAt?: number | null;   // Unix ms when checked off; null/absent = not checked off. Does NOT bump updatedAt.
+  checkOffChangedAt?: number;     // Unix ms of the last check/uncheck — the check-off state's own last-write-wins clock; absent = 0. Does NOT bump updatedAt.
 }
+```
 
+Check-off is deliberately kept out of the content version. Checking off or unchecking a knot sets `checkedOffAt` and `checkOffChangedAt` and leaves `updatedAt` alone, so it causes no content conflict, never lifts a cloud tombstone, and never re-uploads media. Whether a checked-off knot is *listed* is derived at render time (see *DayCutoff*), not stored.
+
+```typescript
 interface KnotTimestamp {
   localISO: string;            // "2024-07-04T14:30:00+01:00"
   utcOffset: string;           // "+01:00"
@@ -172,6 +195,9 @@ interface AppSettings {
   timezone: string;                       // default: 'auto'
   dateFormat: "DD MMM YYYY" | "MMM DD, YYYY" | "YYYY-MM-DD" | "DD/MM/YYYY" | "MM/DD/YYYY"; // default: 'DD MMM YYYY'
   timeFormat: "24h" | "12h";              // default: '24h'
+  dayCutoff: string;                      // default: '03:00' — "HH:MM" local time at which a new day starts; checked-off knots leave the Knots list then
+  shareAttribution: boolean;              // default: true — append the "Shared from e-Handkerchief" footer to shared text
+  quickCaptureNotification: boolean;      // default: true — keep the quick-capture notification posted (only takes effect once permission is granted)
 }
 
 interface OAuthToken {
@@ -208,6 +234,21 @@ interface KnotTombstone {
 
 A record of a knot deleted **from this device**. Local deletes never delete the knot's Drive backup — Drive is an archive — and this tombstone stops a later sync from pulling the knot back onto this device. (The parallel *cloud* tombstone, keyed the same way but keyed by knot id inside a single JSON file rather than an object store, is described under CloudSyncService below.)
 
+### SyncStateRecord
+
+```typescript
+interface SyncStateRecord {
+  knotId: string;                // key
+  baseUpdatedAt: number | null;  // the content updatedAt this device and Drive last agreed on; null = none recorded
+  conflict?: {                   // present while the knot awaits review
+    fileId: string;              // Drive file id of the newest cloud copy when the conflict was recorded
+    remoteUpdatedAt: number;     // that cloud copy's content updatedAt
+  };
+}
+```
+
+Local-only bookkeeping (IndexedDB store `syncState`, keyed on `knotId`; never uploaded). `baseUpdatedAt` is the **base version** of a three-way comparison: it lets sync distinguish "only one side changed" (safe to push or pull) from "both sides changed" (a conflict). It is set after every successful push or upsert (to the local `updatedAt`), after every pull (to the remote `updatedAt`), and whenever a sync finds local and remote equal. Setting a base always clears `conflict`. A local delete clears `conflict` but leaves the base in place (harmless: it is never consulted for a knot that doesn't exist locally).
+
 There is no longer an `EmailJob` type or `emailJobs` store — save-and-send email was retired in favor of the per-knot Share button (Requirement 8); see *IndexedDB Schema* below for how the store was removed.
 
 ---
@@ -235,15 +276,23 @@ interface KnotStoreAPI {
 
   /** Plain save used by a sync pull. MUST NOT emit events — a pull is not a local edit. */
   saveFromSync(knot: Knot): Promise<void>;
+
+  /** Sync bookkeeping (base version + recorded conflict) for one knot, or undefined. */
+  getSyncState(knotId: string): Promise<SyncStateRecord | undefined>;
+  /** Create or replace a knot's sync bookkeeping record. */
+  putSyncState(record: SyncStateRecord): Promise<void>;
+  /** Every sync bookkeeping record. */
+  listSyncStates(): Promise<SyncStateRecord[]>;
 }
 ```
 
-Implemented using hand-written Promise wrappers around the raw `indexedDB` API in `db.ts`. Four object stores exist at DB version 4:
+Implemented using hand-written Promise wrappers around the raw `indexedDB` API in `db.ts`. Five object stores exist at DB version 5:
 
 - `knots` — keyed on `id`, indexed on `createdAt` for efficient reverse-chronological queries.
 - `cloudUploadJobs` — keyed on `id`, indexed on `status`.
 - `settings` — single-record store keyed on the fixed constant `"app"`.
 - `knotTombstones` — keyed on `id`; records are `{ id, deletedAt }`.
+- `syncState` — keyed on `knotId`; records are `SyncStateRecord` (base version and recorded conflict).
 
 See *IndexedDB Schema* below for the full version-by-version upgrade history.
 
@@ -330,11 +379,16 @@ Live transcription streams through `LiveTranscriptionHandle` (`onText`/`onError`
 /** Gather all transcripts to display for a knot (per-item, falling back to the legacy knot-level one). */
 function collectTranscripts(knot: Knot): string[]
 
-/** Build the plain-text share/copy summary for a knot. */
-function knotSummaryText(knot: Knot, formatTimestamp: (iso: string) => string): string
+/** Build the plain-text share/copy summary for a knot; opts.attribution adds the footer once, at the end. */
+function knotSummaryText(knot: Knot, formatTimestamp: (iso: string) => string, opts?: SummaryOptions): string
 
-/** Build a share-friendly filename for a media item, e.g. "knot-photo-1.jpg". */
-function mediaFileName(item: PhotoMediaItem | VideoMediaItem | AudioMediaItem, index: number): string
+/** Build one combined summary for several knots: header, "———" separators, footer once. */
+function knotsSummaryText(knots: Knot[], formatTimestamp: (iso: string) => string, opts?: SummaryOptions): string
+
+interface SummaryOptions { attribution?: { appUrl: string } }
+
+/** Build a share-friendly filename for a media item, e.g. "knot-photo-1.jpg" (or "knot2-photo-1.jpg" with a per-knot prefix). */
+function mediaFileName(item: PhotoMediaItem | VideoMediaItem | AudioMediaItem, index: number, prefix?: string): string
 ```
 
 Pure — no DOM, no `settingsStore`/`db` imports — so it is importable and testable under plain `node` (`knotSummary.chartest.ts`). See *ShareService* below for how the summary text and filenames are assembled into an actual share.
@@ -342,8 +396,11 @@ Pure — no DOM, no `settingsStore`/`db` imports — so it is importable and tes
 ### ShareService API
 
 ```typescript
-/** Share one knot via the platform share sheet, or copy its text to the clipboard as a fallback. */
-async function shareKnot(knot: Knot): Promise<void>
+/** Share one or several knots via the platform share sheet, or copy the text to the clipboard as a fallback. */
+async function shareKnots(knots: Knot[]): Promise<void>
+
+/** Share one knot; delegates to shareKnots([knot]). */
+function shareKnot(knot: Knot): Promise<void>
 ```
 
 See the dedicated *ShareService* section under *Components and Interfaces* for the full contract.
@@ -372,12 +429,26 @@ interface CloudSyncServiceAPI {
 
   /** Per-save upload path: upsert now, or queue a retry job on any failure. */
   uploadKnot(knot: Knot): Promise<void>;
-  /** Retry queued upload jobs (upsert path; never creates new jobs). */
-  uploadPending(): Promise<void>;
-  /** Full two-way sync: push local changes, pull remote changes, reconcile duplicates. Single-flight. */
-  syncAll(): Promise<{ pulled: number; pushed: number }>;
+  /** Retry queued upload jobs (upsert path; never creates new jobs). Resolves with the number of jobs uploaded successfully this run. */
+  uploadPending(): Promise<number>;
+  /** Full two-way sync: push/pull only where one side changed, record conflicts, reconcile check-off and duplicates. Single-flight. */
+  syncAll(): Promise<{ pulled: number; pushed: number; conflicts: number }>;
   /** Reset every 'failed' upload job to 'pending' and run a full sync. */
   retryFailed(): Promise<void>;
+
+  /** Metadata-only Drive update of a knot's check-off state. No-op if not connected, no backup file, or cloud-tombstoned. Throws on failure; no retry queue. */
+  pushCheckOff(knot: Knot): Promise<void>;
+
+  /** Knots currently awaiting conflict review. */
+  listConflicts(): Promise<Array<{ knotId: string; fileId: string; remoteUpdatedAt: number }>>;
+  /** Download the newest cloud copy of a knot for review. Throws if offline, not connected, or the backup is gone. */
+  fetchRemoteKnot(knotId: string): Promise<{ knot: Knot; updatedAt: number; editedOn: string | null; fileId: string }>;
+  /** Apply the user's choice. Refuses with { ok:false, reason:'changed-again' } (writing nothing) if the cloud copy moved since expectedRemoteUpdatedAt. */
+  resolveConflict(
+    knotId: string,
+    choice: 'local' | 'remote' | 'both',
+    expectedRemoteUpdatedAt: number
+  ): Promise<{ ok: true } | { ok: false; reason: 'changed-again' }>;
 
   /** List every backup file in the Drive appDataFolder, for "Manage backups". */
   listBackups(): Promise<BackupEntry[]>;
@@ -389,7 +460,57 @@ interface CloudSyncServiceAPI {
 }
 ```
 
-See the dedicated *CloudSyncService* section under *Components and Interfaces* for the full contract (Drive file format, upsert semantics, sync steps, tombstones, and `planSync`).
+See the dedicated *CloudSyncService* section under *Components and Interfaces* for the full contract (Drive file format, upsert and conflict guard, sync steps, check-off, conflict resolution, tombstones, and `planSync`).
+
+### DayCutoff API
+
+```typescript
+function resolveTimeZone(setting: string | null | undefined): string;   // "auto"/empty -> device zone; else the IANA name as-is
+function isCheckedOff(knot: { checkedOffAt?: number | null }): boolean; // true only for a numeric checkedOffAt
+function nextCutoffAfter(ms: number, cutoff: string, timeZone: string): number;
+function isCheckedOffVisible(checkedOffAt: number | null | undefined, now: number, cutoff: string, timeZone: string): boolean;
+```
+
+### CheckOffActions API
+
+```typescript
+function setCheckedOff(knotId: string, checkedOff: boolean): Promise<Knot | undefined>;   // undefined if the knot is gone
+function toggleCheckOff(knotId: string): Promise<Knot | undefined>;                        // + Undo toast
+function withLatestCheckOff(knot: Knot): Promise<Knot>;                                    // copies stored check-off fields onto `knot`, in place
+```
+
+### KnotDiff API
+
+```typescript
+function diffKnots(local: Knot, remote: Knot): KnotDiff;            // local = this device, remote = the cloud copy
+function diffLines(local: string, remote: string): LineDiffOp[];    // LCS line diff, local -> remote
+```
+
+### DeviceLabel and MergeMessage APIs
+
+```typescript
+function deviceLabelFromUserAgent(userAgent: string): string;       // "Android" | "iPhone" | "iPad" | "Windows" | "Mac" | "Linux" | "another device"
+function mergeResultMessage(pulled: number, pushed: number, conflicts: number): string;
+```
+
+### NotificationService API
+
+```typescript
+const notificationService: {
+  permission(): NotificationPermission | 'unsupported';
+  ensureShown(): Promise<void>;                                     // post the notification if the setting is on and permission is granted; never throws
+  enable(): Promise<NotificationPermission | 'unsupported'>;        // call from a click: asks permission if needed, saves the setting, shows it
+  disable(): Promise<void>;                                         // saves the setting off and closes any shown notification
+};
+```
+
+### ToastService API
+
+```typescript
+function show(message: string, durationMs?: number): void;
+function showPersistent(message: string, onDismiss?: () => void): () => void;
+function showAction(message: string, actionLabel: string, onAction: () => void, durationMs?: number): () => void;
+```
 
 ### Browser APIs Used
 
@@ -399,11 +520,13 @@ See the dedicated *CloudSyncService* section under *Components and Interfaces* f
 | `MediaRecorder` | Audio recording |
 | `<input type="file" accept="..." capture="...">` | Photo/video capture and library pick |
 | `SpeechRecognition` / `webkitSpeechRecognition` | Live voice transcription |
-| `navigator.share` / `navigator.canShare` | Sharing a single knot (Web Share API) |
+| `navigator.share` / `navigator.canShare` | Sharing one or several knots (Web Share API) |
 | `navigator.clipboard.writeText` | Clipboard fallback when Web Share is unavailable, or after a share failure |
 | `indexedDB` (raw, wrapped in Promise helpers) | All local persistence |
 | `ServiceWorker` + `BackgroundSync` | Offline queuing (`cloud-sync` tag) |
-| `Notification` | Persistent Android shortcut notification |
+| `Notification` / `ServiceWorkerRegistration.showNotification` | Quick-capture notification (re-posted at launch and after each tap) |
+| `Intl.DateTimeFormat#formatToParts` | Timezone-aware wall-clock arithmetic for the "New day starts at" cutoff |
+| `visibilitychange` | Re-evaluate which checked-off knots are still listed when the app returns to the foreground |
 | `navigator.onLine` + `online`/`offline` events | Connectivity detection |
 | Web App Manifest `shortcuts` | Home-screen quick-launch |
 | Google OAuth2 (PKCE) + `oauth-worker` broker | Drive OAuth2 |
@@ -420,7 +543,7 @@ e-Handkerchief/
 ├── src/
 │   ├── types.ts                # All TypeScript interfaces
 │   ├── db.ts                   # Raw IndexedDB Promise helpers; DB_VERSION, store name constants
-│   ├── knotStore.ts            # Knot CRUD + local tombstones
+│   ├── knotStore.ts            # Knot CRUD + local tombstones + sync bookkeeping (syncState)
 │   ├── settingsStore.ts        # Settings load/save/cache
 │   ├── router.ts                 # Hash-based router
 │   ├── router.chartest.ts        # Characterization test for parseHash
@@ -431,12 +554,21 @@ e-Handkerchief/
 │   ├── dateFormat.ts           # Date/time formatting helpers
 │   ├── remoteTranscribe.ts     # Deferred transcription via the user's own Worker
 │   ├── transcriptionService.ts # Web Speech API (live) wrapper
-│   ├── knotSummary.ts            # Pure: share summary text + media filenames
+│   ├── knotSummary.ts            # Pure: share summary text (one or several knots) + media filenames
 │   ├── knotSummary.chartest.ts   # Characterization test for knotSummary
-│   ├── shareService.ts         # Web Share API wrapper + clipboard fallback
-│   ├── syncPlan.ts               # Pure: two-way sync push/pull/dedupe decisions
+│   ├── shareService.ts         # Web Share API wrapper (one or several knots) + clipboard fallback
+│   ├── syncPlan.ts               # Pure: base-aware push/pull/conflict/check-off/dedupe decisions
 │   ├── syncPlan.chartest.ts      # Characterization test for planSync
-│   ├── notificationService.ts  # Notification permission + registration
+│   ├── checkOffActions.ts        # Check off / uncheck / Undo, shared by the Knots list and detail screen
+│   ├── dayCutoff.ts              # Pure: when a checked-off knot leaves the Knots list
+│   ├── dayCutoff.chartest.ts     # Characterization test for dayCutoff
+│   ├── knotDiff.ts               # Pure: conflict-review diff of two versions of a knot
+│   ├── knotDiff.chartest.ts      # Characterization test for knotDiff
+│   ├── deviceLabel.ts            # Pure: user agent -> short device label
+│   ├── deviceLabel.chartest.ts   # Characterization test for deviceLabel
+│   ├── mergeMessage.ts           # Pure: "Merge with Cloud" result wording
+│   ├── mergeMessage.chartest.ts  # Characterization test for mergeMessage
+│   ├── notificationService.ts  # Quick-capture notification: permission, ensureShown, enable, disable
 │   ├── cloudSyncService.ts     # Google Drive OAuth2 PKCE + upsert + two-way sync + backups
 │   ├── toastService.ts         # Global toast UI (DOM-based)
 │   ├── app.ts                  # Entry point: init, SW registration, routing, sync triggers
@@ -448,7 +580,8 @@ e-Handkerchief/
 │       ├── captureScreen.ts    # Capture screen render + logic
 │       ├── knotsScreen.ts      # Knots list screen render + logic
 │       ├── calendarScreen.ts   # Calendar screen render + logic
-│       ├── knotDetailScreen.ts # Knot detail screen render + logic (Share/Edit/Delete)
+│       ├── knotDetailScreen.ts # Knot detail screen render + logic (Share/Check off/Edit/Delete, conflict banner)
+│       ├── conflictScreen.ts   # Conflict review screen (#/conflict/{id})
 │       └── settingsScreen.ts   # Settings screen render + logic
 ├── sw.ts                       # Service Worker source
 ├── config.js                   # Runtime config; Google client ID + OAuth broker URL injected at deploy
@@ -459,7 +592,7 @@ e-Handkerchief/
 └── tsconfig.sw.json              # Separate TypeScript config for sw.ts (WebWorker lib)
 ```
 
-After `tsc` compilation every `.ts` file produces a `.js` sibling at the same path. `index.html` references `<script type="module" src="src/app.js">`. The Service Worker is registered from `sw.js` at the root. `*.chartest.ts` and `*.proptest.ts` files are test infrastructure, not app code — see *Correctness Properties and Testing* below.
+After `tsc` compilation every `.ts` file produces a `.js` sibling at the same path. `index.html` references `<script type="module" src="src/app.js">`. The Service Worker is registered from `sw.js`, relative to the app's own base path. `*.chartest.ts` and `*.proptest.ts` files are test infrastructure, not app code — see *Correctness Properties and Testing* below.
 
 ---
 
@@ -531,7 +664,7 @@ tsc -p tsconfig.sw.json
 }
 ```
 
-`outDir: "."` means compiled `.js` files are emitted next to their `.ts` sources in both configs. `index.html` loads `src/app.js`; the Service Worker is registered as `/sw.js`.
+`outDir: "."` means compiled `.js` files are emitted next to their `.ts` sources in both configs. `index.html` loads `src/app.js`; the Service Worker is registered as `sw.js` relative to the app's base path (so it works at the origin root or on a GitHub Pages subpath).
 
 ---
 
@@ -543,7 +676,7 @@ tsc -p tsconfig.sw.json
 - The router calls the current screen's cleanup function, clears the container, then calls the new screen's `render`.
 - All DOM manipulation uses `document.createElement`, `element.textContent`, or `element.innerHTML` only with static/sanitized markup — never with raw user data.
 - No virtual DOM, no reactive framework — the DOM is updated imperatively when state changes (e.g. a counter element's `textContent` is set directly on input events).
-- The `eventBus.ts` module is a lightweight typed pub/sub; services emit named events (`knot:saved`, `knot:deleted`, `knots:synced`, `settings:changed`, `sw:waiting`) that screens subscribe to and unsubscribe from in their cleanup functions.
+- The `eventBus.ts` module is a lightweight typed pub/sub; services emit named events (`knot:saved`, `knot:deleted`, `knot:checkedOff`, `knots:synced`, `knots:conflicts`, `settings:changed`, `sw:waiting`) that screens subscribe to and unsubscribe from in their cleanup functions.
 
 ### IndexedDB Implementation (`db.ts`)
 
@@ -568,11 +701,11 @@ function dbGetAllByIndex<T>(
 ): Promise<T[]>
 ```
 
-Every helper wraps `IDBRequest.onsuccess`/`onerror` in a `new Promise` and resolves/rejects accordingly. `db.ts` also exports the object-store name constants `KNOT_OBJECT_STORE` (`'knots'`) and `KNOT_TOMBSTONE_STORE` (`'knotTombstones'`), used by `knotStore.ts` instead of string literals.
+Every helper wraps `IDBRequest.onsuccess`/`onerror` in a `new Promise` and resolves/rejects accordingly. `db.ts` also exports the object-store name constants `KNOT_OBJECT_STORE` (`'knots'`), `KNOT_TOMBSTONE_STORE` (`'knotTombstones'`) and `SYNC_STATE_STORE` (`'syncState'`), used by `knotStore.ts` instead of string literals.
 
-#### IndexedDB Schema (DB_VERSION 4)
+#### IndexedDB Schema (DB_VERSION 5)
 
-`openDB()` opens `"e-handkerchief-db"` at version **4**. `onupgradeneeded` branches on `event.oldVersion`, so each version's block only does the work needed for that step, and a brand-new database takes the `oldVersion < 1` branch straight to the current schema:
+`openDB()` opens `"e-handkerchief-db"` at version **5**. `onupgradeneeded` branches on `event.oldVersion`, so each version's block only does the work needed for that step, and a brand-new database takes the `oldVersion < 1` branch straight to the current schema:
 
 | Store | Key | Index | Since |
 |---|---|---|---|
@@ -580,6 +713,7 @@ Every helper wraps `IDBRequest.onsuccess`/`onerror` in a `new Promise` and resol
 | `cloudUploadJobs` | `id` | `status` (non-unique) | v1 |
 | `settings` | fixed key `"app"` | — | v1 |
 | `knotTombstones` | `id` | — | v3 |
+| `syncState` | `knotId` | — | v5 |
 
 Upgrade history:
 
@@ -587,19 +721,20 @@ Upgrade history:
 - **v1 → v2 — entity rename, note → knot (2026-09-24):** deletes the `notes` store and creates `knots` with the same shape; clears `cloudUploadJobs` (its records used the old `noteId` field name). **This intentionally drops existing local data** — the app was still in testing at the time, only test knots existed, and no migration script was written. `emailJobs` and `settings` were untouched at this step.
 - **v2 → v3 — local delete tombstones:** creates `knotTombstones`, so a later Drive sync can never pull a knot back onto a device it was deliberately deleted from.
 - **v3 → v4 — retire save-and-send email:** deletes the `emailJobs` store (nothing reads it anymore; Share replaced per-knot email, and the Daily Email Summary is a future feature — Requirement 8.6).
-- A fresh database (`oldVersion < 1`) creates the final v4 shape directly — `knots`, `cloudUploadJobs`, `settings`, `knotTombstones` — without ever creating `notes` or `emailJobs`.
+- **v4 → v5 — edit-conflict detection (2026-09-29):** creates `syncState`. Nothing is migrated: existing knots simply have no base version yet, and `planSync`'s no-base rule (see *SyncPlan*) decides them without losing data. The block is `if (oldVersion >= 1 && oldVersion < 5)`, guarded with `objectStoreNames.contains`, because a fresh database already gets the store in its `oldVersion < 1` branch. The new `Knot` check-off fields and the new settings need no upgrade step: absent `checkedOffAt`/`checkOffChangedAt` mean "not checked off" and "0", and `SettingsStore.load` merges defaults over stored settings.
+- A fresh database (`oldVersion < 1`) creates the final v5 shape directly — `knots`, `cloudUploadJobs`, `settings`, `knotTombstones`, `syncState` — without ever creating `notes` or `emailJobs`.
 
-Each version's block is additive to `onupgradeneeded`, so a future `v4 → v5` step is a new `if (oldVersion < 5) { ... }` block alongside the existing ones.
+Each version's block is additive to `onupgradeneeded`, so a future `v5 → v6` step is a new `if (oldVersion < 6) { ... }` block alongside the existing ones.
 
 ### Router (`router.ts`)
 
 Manages a single `<main id="app">` container element. On `hashchange` and initial load:
 1. Calls the current cleanup function (if any) and clears the container's children.
-2. Parses `window.location.hash` against the known routes (`#/`, `#/knots`, `#/calendar`, `#/knot/:id`, `#/settings`); unknown hashes fall back to `#/`.
+2. Parses `window.location.hash` against the known routes (`#/`, `#/knots`, `#/calendar`, `#/knot/:id`, `#/conflict/:id`, `#/settings`); unknown hashes fall back to `#/`.
 3. Calls the matching screen's `render(container)` and stores the returned cleanup function.
 
 ```typescript
-type Route = "capture" | "knots" | "calendar" | "knot" | "settings";
+type Route = "capture" | "knots" | "calendar" | "knot" | "conflict" | "settings";
 interface RouteMatch { route: Route; params: Record<string, string>; }
 
 function parseHash(hash: string): RouteMatch
@@ -629,7 +764,13 @@ Default landing view rendered at route `#/`. Title "Tie a Knot"; Save button "Ti
 
 Route `#/knots`. Displays all knots as an inline, scrollable feed, newest first.
 
-**Data loading:** Calls `KnotStore.listAll()` on every `render`. Subscribes to `knot:saved`, `knot:deleted`, and `knots:synced` via `eventBus` to reload without a full re-route (the last of these is how a knot pulled from another device shows up here). Cleans up all three subscriptions.
+**Data loading:** Calls `KnotStore.listAll()` on every `render`. Subscribes to `knot:saved`, `knot:deleted`, `knot:checkedOff`, `knots:synced`, and `knots:conflicts` via `eventBus` to reload without a full re-route (`knots:synced` is how a knot pulled from another device shows up here; `knots:conflicts` refreshes the conflict badge). Cleans up all the subscriptions.
+
+**Checked-off knots:** each entry has a check-off button (`.knot-check-btn`) showing **✓** (aria-label "Check off knot"), or **↩** (aria-label "Uncheck knot") when the knot is already checked off; it stops propagation so it never navigates. It calls `toggleCheckOff(knot.id)` from *CheckOffActions* (which saves without touching `updatedAt`, emits `knot:checkedOff`, and shows the "Checked off · Undo" / "Unchecked · Undo" toast). A checked-off entry is drawn faded and struck through (`.knot-entry--checked-off`) while `isCheckedOffVisible(checkedOffAt, now, settings.dayCutoff, resolveTimeZone(settings.timezone))` is true; once it is false the entry is omitted from the list. When any knots are hidden that way, a toggle "Show N checked-off knot(s)" / "Hide checked-off knots" reveals them. Visibility is derived at render time — nothing is stored and there is no persistent background job. The list re-renders (a) on `visibilitychange` when the app becomes visible, and (b) on a **timer** set to the earliest upcoming cutoff among the visible checked-off knots (`nextCutoffAfter`, plus 500 ms, capped at 24 hours), so a knot disappears while the list is open. The timer is cleared on every render and on cleanup. Empty states: "No knots yet — tap + to tie your first." when there are no knots at all, and "All your knots are checked off." when every knot is hidden.
+
+**Select mode:** a "Select" header button (hidden when there is nothing to select) turns entries into checkbox rows and shows a sticky bar with "Cancel" and "Share (N)" (disabled while N is 0). The selection survives re-renders while in select mode, and entries that leave the screen are dropped from it. In select mode a tap on an entry — including on its **location link**, whose default action is suppressed — toggles its selection instead of opening the knot or Maps; the per-entry check-off/delete buttons and conflict badge are not shown. Share (N) builds the list from the in-memory knots and calls `shareKnots(chosen)` synchronously from the click handler, then leaves select mode. Long-press is not used because it clashes with the media controls.
+
+**Conflict badge:** an entry whose knot is in conflict (from `cloudSyncService.listConflicts()`, refreshed on `knots:conflicts`) shows a button "⚠ Also edited on another device" that navigates to `#/conflict/{id}`.
 
 **Each entry renders (via `createElement` / DOM manipulation):**
 - Timestamp formatted per the user's Date Format / Time Format settings.
@@ -645,48 +786,71 @@ Route `#/knots`. Displays all knots as an inline, scrollable feed, newest first.
 
 **Empty state:** "No knots yet — tap + to tie your first."
 
-**Cleanup function:** revokes all object URLs created for this render; unsubscribes all three event listeners.
+**Cleanup function:** revokes all object URLs created for this render; unsubscribes every event listener and the `visibilitychange` listener; clears the cutoff refresh timer.
 
 ### CalendarScreen (`src/screens/calendarScreen.ts`)
 
 Route `#/calendar`. A scrollable, reverse-chronological month grid.
 
-**Data loading:** Calls `KnotStore.listAll()` on `render`; groups knots into per-day counts keyed by `YYYY-MM-DD` in the user's configured timezone (or the device default). Subscribes to `knot:saved`, `knot:deleted`, and `knots:synced` to reload.
+**Data loading:** Calls `KnotStore.listAll()` on `render`; groups knots into per-day counts keyed by `YYYY-MM-DD` in the user's configured timezone (or the device default). Subscribes to `knot:saved`, `knot:deleted`, `knot:checkedOff`, and `knots:synced` to reload. Checked-off knots are never hidden here: they still count toward the day's dots/badge and appear in the day-detail panel, drawn faded.
 
 **Rendering:** One month block per month from the earliest knot's month through the current month, most-recent month first. Each month is a 7-column grid (Sunday-first) with leading blank cells for the 1st's weekday offset. A day with knots gets `calendar-day--has-knots`, an `aria-label` stating the count, and either up to 4 dots or (for 5+) a numeric badge. Today's cell gets `calendar-day--today`.
 
 **Day-detail panel:** Tapping a day with knots toggles an inline panel below the grid listing that day's knots (newest first): each row shows the formatted time and a short preview (first text item's leading ~60 characters, or "🎤 Voice" / "📷 Photo" / "🎬 Video" for a media-only knot), and navigates to `#/knot/{id}` on click/Enter/Space. Tapping the same day again closes the panel; tapping a different day replaces it.
 
-**Cleanup function:** unsubscribes all three event listeners.
+**Cleanup function:** unsubscribes all event listeners.
 
 ### KnotDetailScreen (`src/screens/knotDetailScreen.ts`)
 
 Route `#/knot/:id`. Loads a single `Knot` from `KnotStore` by UUID on mount.
 
-**View-mode header actions**, in order: **Share**, **Edit**, **Delete** (all `btn btn-ghost` except Delete, which is `btn btn-danger`).
+**View-mode header actions**, in order: **Share**, **Check off** / **Uncheck**, **Edit**, **Delete** (all `btn btn-ghost` except Delete, which is `btn btn-danger`).
+- **Check off / Uncheck** calls `toggleCheckOff(knot.id)` — the same change as the Knots list (no `updatedAt` bump, `knot:checkedOff` event, "Checked off · Undo" / "Unchecked · Undo" toast). The screen does not update itself directly: it re-renders from the `knot:checkedOff` event. A checked-off knot stays viewable here after it leaves the Knots list, and this is where it can be unchecked.
+- **Conflict banner:** a `.conflict-banner` at the top of the content, filled asynchronously from `cloudSyncService.listConflicts()` and refreshed on `knots:conflicts`. While the knot is in conflict it reads "This knot also has edits from another device." and offers a **Review** button that navigates to `#/conflict/{id}`; otherwise it is hidden.
 - **Share** calls `shareKnot(knot)` directly and synchronously from the click handler (see *ShareService* — this preserves the click's user-gesture window).
-- **Edit** switches to an inline edit form (location label, one textarea per existing text item plus an "add text" box, existing non-text media with per-item Remove, and the shared media-capture component for adding more). Saving rebuilds the knot's `mediaItems`, bumps `updatedAt`, calls `KnotStore.save`, and emits `knot:saved`.
+- **Edit** switches to an inline edit form (location label, one textarea per existing text item plus an "add text" box, existing non-text media with per-item Remove, and the shared media-capture component for adding more). Saving rebuilds the knot's `mediaItems`, bumps `updatedAt`, calls `withLatestCheckOff` (the form was built from a possibly stale copy, so the latest stored check-off state is taken rather than written back over), calls `KnotStore.save`, and emits `knot:saved`. **Cancel** tears down the media-capture component and **re-reads the knot from the store** before leaving edit mode, because its check-off state may have changed while editing. Transcript saves also call `withLatestCheckOff` before saving.
 - **Delete** confirms via `cloudSyncService.localDeleteConfirmText()` (its wording depends on whether Google Drive is connected — see *CloudSyncService*), then calls `KnotStore.delete(knot.id)` (which also records the local tombstone), emits `knot:deleted`, shows "Knot deleted", and navigates to `#/knots`.
 
 **Media rendering:** audio via `<audio controls>` with a per-item transcription sub-panel beneath it (showing the effective transcript — this item's own, or, for the first audio item only, the legacy knot-level `transcription` as a backward-compatible fallback — with Transcribe/Re-transcribe/Save-transcript controls wired to `remoteTranscribe()`); photo at full resolution; video via `<video controls>` with a poster frame; text via `textContent` with `white-space: pre-wrap`. A failed media element is replaced with a "Media unavailable" placeholder.
 
 **Not-found state:** heading "Knot not found", body "This knot isn't on this device.", and a "Go to Knots" button.
 
-**Cloud sync reactivity:** subscribes to `knots:synced`; while not in edit mode, re-fetches and re-renders the current knot so a pulled update from another device appears. While editing, the handler is a no-op, so an in-progress edit is never clobbered by an incoming pull.
+**Reactivity:** subscribes to `knots:synced`, `knot:checkedOff`, and `knots:conflicts`. While **not** editing, `knots:synced` re-fetches and re-renders the current knot so a pulled update from another device appears, and `knot:checkedOff` for **this** knot re-renders it so the button label and faded state are current (for example after Undo from the toast, or a change made in the Knots list). While editing, both handlers are no-ops, so an in-progress edit is never clobbered; the edit's Save then merges the latest check-off state via `withLatestCheckOff`, so nothing is lost. `knots:conflicts` just refreshes the banner.
 
 **Navigation:** "← Back to Knots" button calls `navigate('#/knots')`.
 
-**Cleanup function:** unsubscribes from `knots:synced`; revokes all object URLs.
+**Cleanup function:** unsubscribes from `knots:synced` (and the conflict/check-off listeners); revokes all object URLs.
+
+### ConflictScreen (`src/screens/conflictScreen.ts`)
+
+Route `#/conflict/:id`, exported as `renderConflict(container, params)`. Title "Review changes", with a "← Back to Knots" button. It reviews one knot that was edited on this device and also changed in the cloud.
+
+- **Loading:** shows a spinner, reads the local knot from `KnotStore`, and checks `cloudSyncService.listConflicts()`. **If there is no local knot, or no recorded conflict for it, it navigates to `#/knots`** (for example a stale link or an already-resolved conflict). Otherwise it downloads the latest cloud copy with `cloudSyncService.fetchRemoteKnot(id)`; if that throws (offline, not connected, backup gone) it shows "Connect to the internet to review this knot" and offers no choice.
+- **Comparison:** `diffKnots(local, remote)` from `knotDiff.ts` drives the view. A two-line header reads "On this device · <time>" and "Latest in the cloud · Edited on <device> · <time>" (the device label is `editedOn`, or "another device" when the backup has none). Sections, each shown only when it has content: **"Changed text"** (with the legend "− marks lines only on this device. + marks lines only in the cloud version." and a line diff — a `del` line exists only on this device, an `add` line only in the cloud version), **"Only on this device"** and **"Only in the cloud"** (text, photo/video thumbnails, and playable voice recordings present on one side only), **"Transcripts"**, **"Location"**, and **"Location label"**. When the two versions' content is identical it says "The content is the same; only the edit times differ." Check-off state is never shown — it merges on its own clock.
+- **Choices**, each calling `cloudSyncService.resolveConflict(id, choice, remote.updatedAt)` with the `updatedAt` of the copy the user was shown, and disabling the buttons while it runs: "Keep this device's version" (`'local'`), "Keep the cloud version" (`'remote'`), "Keep both" (`'both'`). A hint under the buttons reads "Keep both keeps this version and saves the cloud version as a new knot."
+- **`changed-again`:** if `resolveConflict` returns `{ ok: false, reason: 'changed-again' }`, nothing was written; the screen toasts "This knot changed again on another device — please review the latest version" and reloads, re-rendering the newer cloud version.
+- **Success:** toasts "Kept this device's version" / "Kept the cloud version" / "Kept both versions", then navigates to `#/knot/{id}` for `'local'` and `'remote'`, and to `#/knots` for `'both'` (which has produced a new knot). The Knots list, Calendar, and detail view refresh from `knots:synced` and `knots:conflicts`.
+- **Errors:** if `resolveConflict` throws (offline, backup or local knot missing, or a later step of "Keep both" failing), the screen toasts "Couldn't finish — please try again. Nothing was deleted." and re-enables the buttons. With the current `resolveConflict` order that message is accurate — see *Conflict resolution* under CloudSyncService.
+- **Entry points:** the persistent conflict toast from `app.ts`, the Knots-list badge, and the detail-page banner.
 
 ### SettingsScreen (`src/screens/settingsScreen.ts`)
 
-Route `#/settings`. All controls read from and write to `SettingsStore`, in four sections:
+Route `#/settings`. All controls read from and write to `SettingsStore`, in these sections (the "New day starts at" field inside Date & Time, and the **Sharing** and **Notifications** sections, are new):
 
 **Voice Transcription** — enable toggle; a "Transcription server URL (optional)" field for deferred transcription, validated only by being a URL-shaped string.
 
 **Daily Email Summary** — "Enable daily email summary" toggle (bound to `emailSummaryEnabled`) and a "Recipient Email" field (`emailSummaryRecipient`, `<input type="email" maxlength="254">`, disabled when the toggle is off, validated on `blur` with an RFC-5321-style regex). A `settings-row-desc` hint beneath the toggle row reads: *"Coming soon — your recipient address is saved for when it's available. To send a single knot now, open it and tap Share."* The feature is not implemented; nothing reads these values to send mail today.
 
-**Date & Time** — Timezone (searchable combobox, see `timezoneCombobox.ts`), Date Format, Time Format, and a live preview line, all via `formatKnotTimestamp`.
+**Date & Time** — Timezone (searchable combobox, see `timezoneCombobox.ts`), Date Format, Time Format, a live preview line, all via `formatKnotTimestamp`, and — placed **after** the preview line so the preview isn't read as belonging to it — a **"New day starts at"** `<input type="time">` bound to `dayCutoff` (default `03:00`) with the hint "Checked-off knots stay visible (faded) until this time, then leave the Knots list. They stay in Calendar." A change that isn't a valid `HH:MM` (a cleared input) reverts to the previous value; a failed save reverts and toasts "Could not save setting".
+
+**Sharing** — toggle "Add 'Shared from e-Handkerchief' to shared knots", bound to `shareAttribution` (default on; a stored absent value counts as on).
+
+**Notifications** — "Quick-capture notification", with the hint "Keeps a 'Tap to tie a knot' notification in your notification drawer. On Android you can still swipe it away; it comes back the next time you open the app." The control follows `notificationService.permission()`:
+- `granted` → an on/off **toggle** bound to `quickCaptureNotification` (a stored absent value counts as on). Turning it on calls `notificationService.enable()` and off calls `disable()`; if `enable()` finds permission has been revoked meanwhile, the control is re-rendered.
+- `default` (not asked yet) → an **"Allow notifications"** button. Its click handler calls `notificationService.enable()` directly (the permission prompt needs a user gesture), then re-renders the control.
+- `denied` → the plain text **"Blocked in browser settings"**.
+- `unsupported` (no Notification API) → the **whole section is hidden**.
+The stored setting defaults to on but only takes effect once permission is granted.
 
 **Cloud Backup** — Google Drive status badge and a Connect/Disconnect button. Badge text: "Disconnected" when not connected; when connected, "Connected as `{email}`" once `cloudSyncService.getAccountEmail()` returns the account's email (fetched via `refreshAccountInfo()`), or plain "Connected" while it is still unknown. Set via `textContent` only. The badge wraps long addresses (`overflow-wrap: anywhere`) instead of overflowing, and its wrapper (`settings-row-labelwrap`, `min-width: 0; flex: 1`) lets it shrink so the Connect/Disconnect button stays on-screen at narrow widths. It re-renders on `cloudSyncService.onStatusChange` and on `settingsStore.onChange` (so the badge picks up the email once `refreshAccountInfo()` resolves after connecting). Below the badge: an explanatory block (two `<p>` elements inside one `settings-row-desc`, built with `createElement`/`textContent`/`<strong>`, never `innerHTML`) reading:
 
@@ -694,9 +858,9 @@ Route `#/settings`. All controls read from and write to `SettingsStore`, in four
 >
 > **Manage backups** deletes a knot's **cloud backup**. Copies already on your devices are not deleted, and they won't be backed up again unless you edit them.
 
-Below that: a **"Merge with Cloud"** button (disabled + labelled "Merging…" while a sync is in flight; result toast `Merged — {pulled} knots updated on this device, {pushed} backed up`; error toast "Merge failed — check your connection"), a description line reading "Sends new and edited knots from this device to Google Drive, and brings in new and edited knots from your other devices. Data is never deleted during a merge.", a **"Last merged: …"** / **"Not merged yet"** line (from `settings.lastSyncAt`, updated after every sync and on `settings:changed`), and a **"Manage backups"** button that toggles an inline panel (`.backup-list`) below it.
+Below that: a **"Merge with Cloud"** button (disabled + labelled "Merging…" while a sync is in flight; result toast `mergeResultMessage(pulled, pushed, conflicts)` — see *MergeMessage*; error toast "Merge failed — check your connection"), a description line reading "Sends new and edited knots from this device to Google Drive, and brings in new and edited knots from your other devices. Data is never deleted during a merge. If a knot was edited on two devices, you'll be asked which version to keep.", a **"Last merged: …"** / **"Not merged yet"** line (from `settings.lastSyncAt`, updated after every sync and on `settings:changed`), and a **"Manage backups"** button that toggles an inline panel (`.backup-list`) below it.
 
-The panel calls `cloudSyncService.listBackups()` on open and renders one `.backup-row` per file, newest first: a primary line (the file's `description`, or "Backup from `<modifiedTime>`" for a knot-kind file with no description, or "Old-format backup (`<name>`)" for a non-knot file), a secondary badge ("On this device" / "Only in backup", by comparing `knotId` against `KnotStore.listAll()`, or "Old format"), and a Delete button (`confirm('Delete this backup from Google Drive? Copies on your devices are not deleted.')`, then `deleteBackup()`, removing the row and toasting "Backup deleted" on success). Empty state: "No backups in Google Drive yet."; loading state: "Loading backups…"; error state: "Could not load backups — check your connection".
+The panel calls `cloudSyncService.listBackups()` on open and renders one `.backup-row` per file, newest first: a primary line (the file's `description`, or "Backup from `<modifiedTime>`" for a knot-kind file with no description, or "Old-format backup (`<name>`)" for a non-knot file), a secondary badge ("On this device" / "Only in backup", by comparing `knotId` against `KnotStore.listAll()`, or "Old format"), a "Checked off" badge when `BackupEntry.checkedOffAt` is set (so the user can tell which backups are safe to delete), and a Delete button (`confirm('Delete this backup from Google Drive? Copies on your devices are not deleted.')`, then `deleteBackup()`, removing the row and toasting "Backup deleted" on success). Empty state: "No backups in Google Drive yet."; loading state: "Loading backups…"; error state: "Could not load backups — check your connection".
 
 **Merge with Cloud** and **Manage backups** are disabled, with the hint "Connect Google Drive and go online to merge or manage backups.", whenever Google Drive is disconnected or `navigator.onLine` is false; this reacts to `cloudSyncService.onStatusChange` and to `window`'s `online`/`offline` events, both unsubscribed on cleanup.
 
@@ -729,6 +893,11 @@ const ASSETS: string[] = [
   'src/cloudSyncService.js',
   'src/syncPlan.js',
   'src/knotSummary.js',
+  'src/knotDiff.js',
+  'src/checkOffActions.js',
+  'src/dayCutoff.js',
+  'src/mergeMessage.js',
+  'src/deviceLabel.js',
   'src/shareService.js',
   'src/remoteTranscribe.js',
   'src/dateFormat.js',
@@ -740,6 +909,7 @@ const ASSETS: string[] = [
   'src/screens/calendarScreen.js',
   'src/screens/knotDetailScreen.js',
   'src/screens/settingsScreen.js',
+  'src/screens/conflictScreen.js',
   // icons
   'icons/icon-192.png',
   'icons/icon-512.png',
@@ -761,6 +931,8 @@ const ASSETS: string[] = [
 
 **Sync handler:** Listens for `sync` events with tag `"cloud-sync"` only (the former `"email-sync"` tag was removed along with `EmailQueue`) and messages every client `{ type: "FLUSH_CLOUD" }`; `app.ts` handles that message by calling `cloudSyncService.syncAll()`. `CloudSyncService.uploadKnot()` registers this tag (best-effort, feature-detected) whenever it queues a retry job, so the SW can nudge a sync even if the tab that queued it has since closed.
 
+**Notification click:** `notificationclick` closes the notification and, for the `capture-shortcut` tag, focuses an already-open app window (posting it a `{ type: "NAVIGATE", to: "#/" }` message) or otherwise opens `new URL('./#/', sw.registration.scope)`. Resolving against the SW registration scope fixes the earlier bug where a bare `'/#/'` opened the origin root instead of the app's GitHub Pages subpath. After opening, the handler **re-posts** the notification (same title, body "Tap to tie a knot", `tag: "capture-shortcut"`, `silent: true`, `requireInteraction: true`), because a tap removes it and the notification should stay available. The same post is made by `notificationService.ensureShown()` at every app launch; the shared tag makes a repeat post replace rather than stack.
+
 **Update banner:** When a new SW installs while an old one is active, posts `{ type: "SW_WAITING" }` to all clients. `app.ts` listens for this message and renders a "New version available — tap to reload" banner. Tapping it posts `{ type: "SKIP_WAITING" }` back to the SW, which calls `self.skipWaiting()`; then `app.ts` calls `location.reload()`.
 
 `ASSETS` must be kept in sync manually with the compiled JS file list (a small maintenance cost that replaces Workbox's build-time manifest injection).
@@ -772,9 +944,10 @@ A DOM-based global toast system. Maintains a `<div id="toast-container">` append
 ```typescript
 function show(message: string, durationMs?: number): void
 function showPersistent(message: string, onDismiss?: () => void): () => void
+function showAction(message: string, actionLabel: string, onAction: () => void, durationMs?: number): () => void
 ```
 
-`show` creates a `<div class="toast">` with the message text set via `textContent`, appends it to the container, and removes it after `durationMs` (default 5 000 ms). `showPersistent` returns a dismiss function; the toast remains until the dismiss function is called or the user taps it (e.g. the "Backup failed… Tap to retry." toast, whose tap calls `cloudSyncService.retryFailed()`).
+`show` creates a `<div class="toast">` with the message text set via `textContent`, appends it to the container, and removes it after `durationMs` (default 5 000 ms). `showPersistent` returns a dismiss function; the toast remains until the dismiss function is called or the user taps it (e.g. the "Backup failed… Tap to retry." toast, whose tap calls `cloudSyncService.retryFailed()`). `showAction` creates a `<div class="toast toast--action">` holding a message `<span>` and one `<button class="toast-action-btn">` (both via `textContent`); it auto-dismisses after `durationMs` (default 5 000 ms), and clicking the button runs `onAction` at most once and removes the toast. It returns a dismiss function that removes the toast **without** running `onAction`. It backs the "Checked off · Undo" / "Unchecked · Undo" toasts.
 
 ---
 
@@ -789,6 +962,9 @@ Persists and retrieves `Knot` objects in IndexedDB using the helpers from `db.ts
 - `listAll` returns knots in non-increasing `createdAt` order (via the `createdAt` index, `"prev"` direction).
 - `delete` removes both the knot record and all associated media blobs, **and** writes a `{ id, deletedAt: Date.now() }` tombstone — centralized here so every delete call site gets one automatically.
 - `saveFromSync` performs the same write as `save` but is a distinct entry point that callers (only `CloudSyncService`, for a sync pull) use specifically so it is obvious at the call site that no `knot:saved` event should follow.
+- `delete` also drops any recorded conflict for the knot (a deleted knot can no longer be reviewed), but leaves its base version in `syncState`.
+- `getSyncState` / `putSyncState` / `listSyncStates` are plain reads/writes of the `syncState` store; the sync logic that decides *what* to record lives in `CloudSyncService`.
+- Check-off changes are ordinary `save()` calls that leave `updatedAt` untouched; callers emit `knot:checkedOff` rather than `knot:saved`.
 - All methods must work identically whether `navigator.onLine` is `true` or `false`.
 
 ---
@@ -847,21 +1023,23 @@ Pure text-building module with no DOM and no `settingsStore`/`db` imports, so it
 
 **Contracts:**
 - `collectTranscripts(knot)` prefers per-`AudioMediaItem` transcripts (in media order); if none exist, it falls back to the single legacy `knot.transcription`, for backward compatibility with knots saved before per-item transcripts existed.
-- `knotSummaryText(knot, formatTimestamp)` assembles, in order: the formatted timestamp; the place (a `📍` line with the resolved address or `lat, lng` to 5 decimal places, plus a Google Maps URL line, when `location` is set; otherwise a `📍` line with `manualLabel` if set; otherwise nothing); every text item's content (blank-line separated); every transcript from `collectTranscripts`, each prefixed `🎙 `; and a trailing `(N photo(s), N video(s), N voice recording(s) attached in e-Handkerchief)` line, omitting any zero count and pluralising correctly. Sections are joined with exactly one blank line each — the result never has a doubled blank line — and trailing whitespace is trimmed.
-- `mediaFileName(item, index)` maps the item's blob MIME type (stripped of any `;codecs=…` parameter) to a file extension via a fixed table (JPEG→jpg, PNG→png, GIF→gif, WEBP→webp, MP4 video→mp4, QuickTime→mov, WebM video or audio→webm, AAC/MP4 audio→m4a, MP3→mp3, OGG→ogg; anything else→bin), producing `knot-{type}-{index}.{ext}`. The caller decides how `index` is numbered — `ShareService` numbers 1-based, separately per media type.
+- `knotSummaryText(knot, formatTimestamp, opts?)` assembles, in order: the formatted timestamp; the place (a `📍` line with the resolved address or `lat, lng` to 5 decimal places, plus a Google Maps URL line, when `location` is set; otherwise a `📍` line with `manualLabel` if set; otherwise nothing); every text item's content (blank-line separated); every transcript from `collectTranscripts`, each prefixed `🎙 `; and a trailing `(N photo(s), N video(s), N voice recording(s) attached in e-Handkerchief)` line, omitting any zero count and pluralising correctly. Sections are joined with exactly one blank line each — the result never has a doubled blank line — and trailing whitespace is trimmed.
+- With `opts.attribution` set, `knotSummaryText` appends the footer as its own section, once, at the end: `— Shared from e-Handkerchief`, a newline, then `opts.attribution.appUrl`. Without it, the output is byte-for-byte what it was before attribution existed.
+- `knotsSummaryText(knots, formatTimestamp, opts?)` returns `""` for no knots and the same text as `knotSummaryText` for exactly one. For several it emits a header line (`N knots from e-Handkerchief` with attribution, plain `N knots` without), each knot's body (no footer) joined by a `———` line (with a blank line either side), and the footer **once** at the end when attribution is on. It too never produces a doubled blank line.
+- `mediaFileName(item, index, prefix = 'knot')` maps the item's blob MIME type (stripped of any `;codecs=…` parameter) to a file extension via a fixed table (JPEG→jpg, PNG→png, GIF→gif, WEBP→webp, MP4 video→mp4, QuickTime→mov, WebM video or audio→webm, AAC/MP4 audio→m4a, MP3→mp3, OGG→ogg; anything else→bin), producing `{prefix}-{type}-{index}.{ext}`. The caller decides how `index` is numbered — `ShareService` numbers 1-based, separately per media type — and passes a per-knot `prefix` (`knot1`, `knot2`, …) in a multi-knot share so two knots' files never collide.
 
 ---
 
 ### ShareService (`src/shareService.ts`)
 
-Wraps the Web Share API for a single knot, called directly from `KnotDetailScreen`'s Share button.
+Wraps the Web Share API for one or several knots. `shareKnots(knots)` is the implementation; `shareKnot(knot)` delegates to it with a one-element array. `KnotDetailScreen`'s Share button calls `shareKnot`, and the Knots list's Select mode calls `shareKnots(selected)`.
 
 **Contracts:**
-- Builds the summary text via `knotSummaryText(knot, formatKnotTimestamp)` and the title `'e-Handkerchief knot'`, and the candidate `File[]` (one per photo/video/audio item) **synchronously** before making any network- or permission-gated call.
-- Makes **at most one** `navigator.share()` call per invocation — never retries after a rejection — because a second call would run outside the original click's user-gesture / transient-activation window and some browsers reject that with `NotAllowedError`. The caller (`KnotDetailScreen`) is likewise required to call `shareKnot()` synchronously from the click handler with no `await` beforehand.
-- Includes the candidate files in the share only when there is at least one AND their combined size is ≤ 50 MB AND `navigator.canShare?.({ files })` returns true; otherwise shares `{ title, text }` only.
-- If `navigator.share` doesn't exist, copies the text to the clipboard and toasts "Knot copied to clipboard"; if the clipboard write also fails, toasts "Sharing isn't supported in this browser".
-- On a `navigator.share()` rejection: an `AbortError` (user cancelled) is silent — no toast. Any other error attempts a best-effort clipboard copy, toasting "Couldn't share — knot copied to clipboard" on success or "Couldn't share this knot" if that also fails.
+- Builds the summary text via `knotsSummaryText(knots, formatKnotTimestamp, opts)` — `opts` carries the attribution footer only when `settings.shareAttribution` is not `false`, with `appUrl = location.origin + location.pathname` (which respects a GitHub Pages subpath) — the title (`'e-Handkerchief knot'`, or `'e-Handkerchief knots'` for several), and the candidate `File[]` (one per photo/video/audio item of every knot) **synchronously** before making any network- or permission-gated call. In a multi-knot share, file names carry a per-knot prefix (`knot1-…`, `knot2-…`) so they never collide.
+- Makes **at most one** `navigator.share()` call per invocation — never retries after a rejection — because a second call would run outside the original click's user-gesture / transient-activation window and some browsers reject that with `NotAllowedError`. The caller is likewise required to call `shareKnot()` / `shareKnots()` synchronously from the click handler with no `await` beforehand.
+- Includes the candidate files in the share only when there is at least one AND their **combined** size across all selected knots is ≤ 50 MB AND `navigator.canShare?.({ files })` returns true; otherwise shares `{ title, text }` only.
+- If `navigator.share` doesn't exist, copies the text to the clipboard and toasts "Knot copied to clipboard" ("Knots copied to clipboard" for several); if the clipboard write also fails, toasts "Sharing isn't supported in this browser".
+- On a `navigator.share()` rejection: an `AbortError` (user cancelled) is silent — no toast. Any other error attempts a best-effort clipboard copy, toasting "Couldn't share — knot copied to clipboard" on success or "Couldn't share this knot" if that also fails (plural wording for several knots).
 
 ---
 
@@ -870,23 +1048,51 @@ Wraps the Web Share API for a single knot, called directly from `KnotDetailScree
 Pure decision logic for two-way sync — no DOM, no network, no clock reads (every timestamp is passed in). Fully covered by `syncPlan.chartest.ts`.
 
 ```typescript
-interface LocalEntry { id: string; updatedAt: number }
-interface RemoteEntry { fileId: string; knotId: string; updatedAt: number }
-interface SyncPlan { push: string[]; pull: RemoteEntry[]; deleteDupes: string[]; remoteById: Map<string, RemoteEntry> }
+interface LocalEntry {
+  id: string; updatedAt: number;
+  checkedOffAt?: number | null; checkOffChangedAt?: number;   // absent -> null / 0
+}
+interface RemoteEntry {
+  fileId: string; knotId: string; updatedAt: number;
+  checkedOffAt?: number | null; checkOffChangedAt?: number;   // from the file's appProperties
+}
+interface CheckOffPush { knotId: string; fileId: string; checkedOffAt: number | null; checkOffChangedAt: number }
+interface CheckOffPull { knotId: string; checkedOffAt: number | null; checkOffChangedAt: number }
+interface SyncPlan {
+  push: string[];                                         // knot ids
+  pull: RemoteEntry[];
+  deleteDupes: string[];                                  // fileIds
+  remoteById: Map<string, RemoteEntry>;
+  conflicts: RemoteEntry[];                               // both sides changed since base (or inconsistent)
+  baseUpdates: { knotId: string; updatedAt: number }[];   // both sides agree: record this as the base
+  checkOffPush: CheckOffPush[];
+  checkOffPull: CheckOffPull[];
+}
 
 function planSync(
   local: LocalEntry[],
   remote: RemoteEntry[],
   localTombstones: Set<string>,
-  cloudTombstones: Record<string, number>
+  cloudTombstones: Record<string, number>,
+  base: Map<string, number> = new Map(),                  // knotId -> base updatedAt (only knots that have one)
+  pendingJobKnotIds: Set<string> = new Set(),             // knots with a pending, in-flight or failed upload job
+  conflicted: Set<string> = new Set()                     // knots already recorded as in conflict
 ): SyncPlan
 ```
 
-**Rules:**
+**Content rules** (`l` = local `updatedAt`, `r` = the deduped remote entry's, `b` = the recorded base):
 - **De-duplicate** remote entries by `knotId`: keep the one with the greatest `updatedAt` (ties keep the first one seen); every entry that loses goes into `deleteDupes` by `fileId`. `remoteById` holds only the kept entries.
-- **Push** a local knot when it has no remote entry, or its `updatedAt` is greater than the (deduped) remote entry's — **unless** a cloud tombstone for that knot id is `>=` the local `updatedAt` (the backup was deliberately deleted via Manage backups and the knot hasn't been edited since; in that case the push is skipped).
-- **Pull** a remote entry when its knot id is not locally tombstoned, and there is no local entry or the remote `updatedAt` is greater. Cloud tombstones are **not** consulted for pulls — a cloud-tombstoned knot that is somehow still present remotely is pulled anyway.
-- Equal timestamps on either side are a no-op.
+- **Local only** (no remote entry): push — **unless** a cloud tombstone for that knot id is `>=` the local `updatedAt` (the backup was deliberately deleted via Manage backups and the knot hasn't been edited since; the push is skipped).
+- **Remote only**: pull, unless this device deleted the knot (local tombstone). Cloud tombstones are **not** consulted for pulls — a cloud-tombstoned knot that is somehow still present remotely is pulled anyway.
+- **On both sides**, not locally tombstoned (a locally tombstoned knot that somehow still exists is never pulled, and only pushed if strictly newer):
+  1. `l === r` → `baseUpdates` gets `{ knotId, updatedAt: l }`. This also resolves a previously recorded conflict, because setting a base clears it.
+  2. Already in `conflicted` (and still differing) → reported again in `conflicts`; **never pushed or pulled**.
+  3. A base is known: `l > b && r === b` → push (subject to the cloud-tombstone rule); `r > b && l === b` → pull; both `> b` → `conflicts`; anything else inconsistent (for example either side older than `b`) → `conflicts`.
+  4. **No base recorded** — knots that were on the device before base tracking existed: `r > l` **and** the knot is not in `pendingJobKnotIds` → pull; every other case → `conflicts`.
+
+**Why the no-base rule is what it is.** Before base tracking, every local edit either uploaded at once or left a queued upload job. So a newer remote copy with no job for that knot can only mean this device's copy is stale, and pulling is safe. If there is a job, or the local copy is the newer one, this device might hold an edit Drive has never seen, and pulling or pushing could silently lose one — so it is surfaced for review exactly once and the base is recorded when the user resolves it.
+
+**Check-off rule** (independent of content): for every knot present locally **and** remotely (after dedupe), compare `checkOffChangedAt` (absent = 0). Local greater → `checkOffPush { knotId, fileId, checkedOffAt, checkOffChangedAt }`; remote greater → `checkOffPull { knotId, checkedOffAt, checkOffChangedAt }`; equal → nothing. This never looks at `updatedAt`, tombstones, or conflicts, and never adds to `push`/`pull` — so a check-off can neither lift a cloud tombstone nor re-upload content, and a knot in a content conflict still reconciles its check-off state. Knots present on only one side produce no check-off operations.
 
 ---
 
@@ -900,7 +1106,12 @@ Authenticates with Google Drive via OAuth2 PKCE, upserts each knot's single back
 
 Each knot's backup is one Drive file `knot-{id}.json` in the app-data folder (`spaces=appDataFolder`, so the app can only see its own files):
 
-- **`appProperties`**: `{ knotId: string, updatedAt: string }` — Drive requires string values, so `updatedAt` is `String(knot.updatedAt)`. These drive de-duplication (`SyncPlan`) and the newest-wins comparison without downloading file content.
+- **`appProperties`** (Drive requires string values, so numbers are `String(...)`; these drive de-duplication and all `SyncPlan` decisions without downloading file content):
+  - `knotId` and `updatedAt` — the knot's id and content version. Written on every write.
+  - `editedOn` — a short label of the writing device from `deviceLabelFromUserAgent(navigator.userAgent)` ("Android", "iPhone", "iPad", "Windows", "Mac", "Linux", else "another device"). Written on **every content write** (POST and PATCH); the conflict review shows it as "Edited on Android". Older files simply lack it.
+  - `checkedOffAt` — Unix ms the knot was checked off; **absent** when unchecked (an uncheck clears the key with `null`, and `""` is read the same as missing).
+  - `checkOffChangedAt` — Unix ms of the last check or uncheck; missing = 0.
+  - **Content PATCHes send only `knotId`, `updatedAt` and `editedOn` — never the two check-off keys.** Google documents that `null` values are cleared on update and that the custom-properties PATCH example leaves other keys untouched; the design relies on `files.update` merging `appProperties` **per key**, so a key that is not sent stays as it is. A stale local check-off value can therefore never overwrite a newer one written by another device. Only creating a **new** file (POST) writes the check-off keys along with the content. *(See Known limitations: the per-key merge is inferred from documentation and still needs confirming on a real device.)*
 - **`description`**: a short preview built by `buildKnotDescription()` — the local date via `formatKnotTimestamp`, then the place (`resolvedAddress`, or `manualLabel`, or `lat, lng` to 5 dp, omitted if none), then the first 80 characters of the first text item's content or (failing that) the first per-audio `transcript`, all joined with `' · '`. Shown verbatim as a backup row's primary line in "Manage backups" when present.
 - **Body**: the serialized `Knot`, with every media item that has a `blob` also carrying `mimeType: blob.type` (and photo/video items also `thumbnailMimeType: thumbnailBlob.type`) alongside the base64-encoded blob data. `jsonToKnot()` uses these on restore, falling back to a per-type default MIME type (`audio/webm`, `image/jpeg`, `video/mp4`) for files serialized before this field existed.
 
@@ -908,34 +1119,63 @@ Each knot's backup is one Drive file `knot-{id}.json` in the app-data folder (`s
 
 `sendKnotToDrive(knot, existingFileId?)` performs a multipart upload: with `existingFileId`, it **PATCH**es `.../upload/drive/v3/files/{fileId}?uploadType=multipart` — critically, the metadata sent on a PATCH must **not** include `parents` (Drive rejects that on update); without one, it **POST**s a new file with `parents: ['appDataFolder']`.
 
-`upsertKnot(knot)` (internal) wraps this: it looks up existing files by exact name (`q=name='knot-{id}.json'`), picks the one with the greatest effective `updatedAt` (from `appProperties.updatedAt`, falling back to `modifiedTime` if that's missing or non-numeric) as the PATCH target (or POSTs if none exist), then best-effort DELETEs any other files that matched — a race between devices can otherwise leave more than one file for the same knot. `upsertKnot` never queues a retry job itself; it's a building block used by both `uploadKnot` and `uploadPending`/`syncAll`.
+`upsertKnot(knot)` (internal) wraps this: it looks up existing files by exact name (`q=name='knot-{id}.json'`), picks the one with the greatest effective `updatedAt` (from `appProperties.updatedAt`, falling back to `modifiedTime` if that's missing or non-numeric) as the PATCH target (or POSTs if none exist), then best-effort DELETEs any other files that matched — a race between devices can otherwise leave more than one file for the same knot. `upsertKnot` never queues a retry job itself; it's a building block used by both `uploadKnot` and `uploadPending`.
+
+**Conflict guard.** Before writing to an existing file, `upsertKnot` reads the file's effective `updatedAt` (`remoteU`) and this knot's recorded base (`syncState.baseUpdatedAt`, or `null`). If `remoteU !== knot.updatedAt` **and** (`base !== null ? remoteU > base : true`) — that is, another device changed the file since this device's base, or there is no base and the two differ — it writes **nothing**. Instead it records the conflict in `syncState` (`conflict: { fileId, remoteUpdatedAt: remoteU }`, keeping the base), emits `knots:conflicts` with the current total, and throws a typed `ConflictError`. A remote whose `updatedAt` already equals the knot's is never a conflict (there is nothing to overwrite). After a successful write it records `baseUpdatedAt = knot.updatedAt` (which also clears any conflict). See *Known limitations* for the residual race.
 
 #### uploadKnot / uploadPending / retryFailed
 
-- **`uploadKnot(knot)`** — the per-save path (called by `app.ts`'s `knot:saved` listener whenever Drive is connected). Calls `upsertKnot`; on any failure (HTTP error, offline, or the OAuth broker being unreachable during a token refresh) it queues a `CloudUploadJob` — but only if no `'pending'` job already exists for that knot id — and rethrows. When a job is newly queued, it best-effort registers the `cloud-sync` Background Sync tag (feature-detected, wrapped in try/catch, non-blocking) so the Service Worker can nudge a retry even after the tab closes.
-- **`uploadPending()`** — processes every `'pending'` job: marks it `'in-flight'`, looks up the knot (deleting the job as orphaned if it's gone locally), and calls `upsertKnot` directly (not `uploadKnot`, so a failed retry never enqueues a duplicate job). On success the job is deleted; on failure, attempts < 3 puts it back to `'pending'`, attempts ≥ 3 marks it `'failed'`. At most one toast is shown per `uploadPending` run, regardless of how many jobs newly failed: the exact knot id (first 8 chars) if exactly one failed, or a count if more than one — either way with a "Tap to retry" action wired to `retryFailed()`.
+- **`uploadKnot(knot)`** — the per-save path (called by `app.ts`'s `knot:saved` listener whenever Drive is connected). Calls `upsertKnot`; on a `ConflictError` it returns quietly without queueing anything (a retry would only hit the same guard, and the conflict — surfaced through `knots:conflicts` — now owns that edit); on any other failure (HTTP error, offline, or the OAuth broker being unreachable during a token refresh) it queues a `CloudUploadJob` — but only if no `'pending'` job already exists for that knot id — and rethrows. When a job is newly queued, it best-effort registers the `cloud-sync` Background Sync tag (feature-detected, wrapped in try/catch, non-blocking) so the Service Worker can nudge a retry even after the tab closes.
+- **`uploadPending()`** — processes every `'pending'` job: marks it `'in-flight'`, looks up the knot (deleting the job as orphaned if it's gone locally), and calls `upsertKnot` directly (not `uploadKnot`, so a failed retry never enqueues a duplicate job). On success the job is deleted and counted; on a `ConflictError` the job is deleted (the conflict owns it) and not counted; on any other failure, attempts < 3 puts it back to `'pending'`, attempts ≥ 3 marks it `'failed'`. The method **resolves with the number of jobs uploaded successfully in this run** (`Promise<number>`); `doSyncAll` adds it to `pushed`, and `retryFailed` ignores it. At most one toast is shown per `uploadPending` run, regardless of how many jobs newly failed: the exact knot id (first 8 chars) if exactly one failed, or a count if more than one — either way with a "Tap to retry" action wired to `retryFailed()`.
 - **`retryFailed()`** — resets every `'failed'` job to `'pending'` with `attempts: 0`, then calls `syncAll()`.
 
 #### syncAll (single-flight)
 
-`syncAll()` is a no-op (`{ pulled: 0, pushed: 0 }`) when not connected or `navigator.onLine` is `false`. While a sync is already running, a second call returns the **same promise** rather than starting a second pass. The pass itself (`doSyncAll`, never called directly):
+`syncAll()` is a no-op (`{ pulled: 0, pushed: 0, conflicts: 0 }`) when not connected or `navigator.onLine` is `false`. Otherwise it resolves with `{ pulled, pushed, conflicts }`, where `conflicts` is the number of knots in conflict after the pass. While a sync is already running, a second call returns the **same promise** rather than starting a second pass. The pass itself (`doSyncAll`, never called directly):
 
-1. `uploadPending()` first, so queued retries aren't racing the full sync.
+1. `uploadPending()` first, so queued retries aren't racing the full sync; the number it returns seeds `pushed`.
 2. Lists **every** file in the app-data folder, paginated (`pageSize=1000`, following `nextPageToken`).
-3. Filters to `knot-*.json` files that have both `appProperties.knotId` and `appProperties.updatedAt`; a knot file missing either is skipped with a `console.warn` (a non-numeric `updatedAt` is skipped the same way).
-4. Reads the cloud tombstones file, `KnotStore.listAll()`, and `KnotStore.listTombstones()`, then calls `planSync`.
+3. Filters to `knot-*.json` files that have both `appProperties.knotId` and `appProperties.updatedAt`; a knot file missing either is skipped with a `console.warn` (a non-numeric `updatedAt` is skipped the same way). Each `RemoteEntry` also carries `checkedOffAt` (`""`/missing → null) and `checkOffChangedAt` (missing → 0) parsed from `appProperties`.
+4. Reads the cloud tombstones file, `KnotStore.listAll()`, `KnotStore.listTombstones()`, and the sync bookkeeping. It builds the `base` map (only knots with a recorded base), the `conflicted` set, and `pendingJobKnotIds` (every knot with a pending, in-flight or failed upload job), then calls `planSync`.
 5. Deletes each `deleteDupes` file, best-effort — a failure here is logged and counted but does not abort the sync.
-6. Pushes each `plan.push` knot via the upsert path, onto its existing file id from `plan.remoteById` if any.
-7. Pulls each `plan.pull` entry: downloads with `alt=media`, runs `jsonToKnot`, and saves via `KnotStore.saveFromSync` — **not** `KnotStore.save`, so a pull never emits `knot:saved` and is never mistaken for a local edit.
-8. After pushes succeed, deletes any pending/failed `CloudUploadJob` for those knot ids (a knot pushed by the full sync no longer needs its queued retry).
-9. Saves `lastSyncAt: Date.now()`.
-10. If `pulled > 0`, emits `knots:synced` — this, not `knot:saved`, is how `KnotsScreen`, `CalendarScreen`, and `KnotDetailScreen` learn to reload.
+6. Pushes each `plan.push` knot via `sendKnotToDrive`, onto its existing file id from `plan.remoteById` if any, and records the base (`baseUpdatedAt = knot.updatedAt`).
+7. Pulls each `plan.pull` entry: downloads with `alt=media`, runs `jsonToKnot`, then sets the check-off fields from the file's `appProperties` **if the remote `checkOffChangedAt` is at least the local one, otherwise keeps the local values** — never trusting the JSON body's check-off fields, which can be stale. It saves via `KnotStore.saveFromSync` — **not** `KnotStore.save`, so a pull never emits `knot:saved` and is never mistaken for a local edit — and records the base (`baseUpdatedAt = remote updatedAt`).
+8. Applies `plan.baseUpdates` (a knot found equal on both sides gets that value as its base, which also clears a recorded conflict), records each `plan.conflicts` entry in `syncState`, and drops a recorded conflict whose knot no longer exists locally or in Drive.
+9. Executes `plan.checkOffPush` (a metadata-only `PATCH files/{fileId}` with only the two check-off `appProperties`, `null` clearing `checkedOffAt`) and `plan.checkOffPull` (re-reads the local knot, skips it if it already has an equal-or-newer `checkOffChangedAt`, otherwise updates **only** `checkedOffAt` and `checkOffChangedAt` via `saveFromSync`, with no event). Per-item failures are logged and skipped.
+10. After pushes succeed, deletes any pending/failed `CloudUploadJob` for those knot ids, and for knots now in conflict (a knot pushed by the full sync no longer needs its queued retry; a conflicted knot's edit is owned by the conflict).
+11. Saves `lastSyncAt: Date.now()`.
+12. If `pulled > 0` or any check-off was pulled, emits `knots:synced` — this, not `knot:saved`, is how `KnotsScreen`, `CalendarScreen`, and `KnotDetailScreen` learn to reload.
+13. Counts the knots in conflict, and emits `knots:conflicts { count }` when the count is above zero **or** this pass cleared some (so a badge or toast for them can go away). `knots:conflicts` can be emitted more than once per sync (also from the upsert guard), so listeners must treat it as *current state*, not as "show a new toast".
 
-A per-item failure anywhere in steps 5–7 is counted, `console.warn`'d, and the loop continues; a failure in the initial listing (step 2/3) or in an auth call underneath any of these throws and aborts the whole pass.
+A per-item failure anywhere in steps 5–9 is counted, `console.warn`'d, and the loop continues; a failure in the initial listing (step 2/3) or in an auth call underneath any of these throws and aborts the whole pass.
+
+#### Check-off sync
+
+`pushCheckOff(knot)` is the per-action path, called by `app.ts` when `knot:checkedOff` fires (fire-and-forget with `.catch`). If Drive is connected it finds the knot's newest existing backup file; if there is none, it does nothing (the first upload will carry the check-off keys). If the knot has a cloud tombstone at or after its `updatedAt`, it does nothing — a check-off never recreates or touches a deliberately deleted backup. (The tombstone comparison mirrors `planSync`'s push rule rather than treating any tombstone entry as blocking: `deleted-backups.json` is never pruned when a later edit re-creates the backup, so an unconditional rule would block that knot's check-offs forever.) Otherwise it sends the metadata-only PATCH described above and throws on a non-OK response. There is **no retry queue**: the next full sync reconciles a missed check-off through `planSync`'s check-off rule.
+
+#### Conflict resolution
+
+`listConflicts()` returns the recorded conflicts. `fetchRemoteKnot(id)` downloads the newest cloud copy (throwing if offline, not connected, or the backup is gone) and overlays the file's check-off `appProperties` on it, returning `{ knot, updatedAt, editedOn, fileId }`.
+
+`resolveConflict(id, choice, expectedRemoteUpdatedAt)`:
+
+1. Re-reads the newest remote file's `updatedAt`. **If it differs from `expectedRemoteUpdatedAt`** — another device pushed while the review was open — it records the new remote version in `syncState`, writes nothing, and returns `{ ok: false, reason: 'changed-again' }`.
+2. For `'remote'` and `'both'` it downloads the cloud copy **before any write**, so a failed download leaves everything untouched.
+3. **`'remote'`**: saves the cloud copy locally (applying the same check-off rule as a pull, keeping the local check-off state if it is newer) via `saveFromSync`, and sets the base to the remote `updatedAt`.
+4. **`'local'`**: sets the local `updatedAt` to **`max(Date.now(), remoteU + 1)`** — strictly newer than the cloud copy even under clock skew, so the resolved version is the newest content everywhere — saves it locally, and writes it straight to the existing Drive file with `sendKnotToDrive` (deliberately bypassing the upsert guard, since the user has just decided), then sets the base and best-effort deletes duplicate files.
+5. **`'both'`** protects the cloud version **before** overwriting it. In order: (a) the cloud copy is already downloaded (step 2); (b) build the copy as a **new knot** — `crypto.randomUUID()` id, `createdAt = updatedAt = now`, original `timestamp`/location/media preserved, check-off fields removed; (c) **save the copy locally**; (d) only then do the `'local'` half (step 4: save `kept`, `sendKnotToDrive(kept, target.id)`, set the base, delete duplicates); (e) POST the copy with `sendKnotToDrive(copy)` and set its base.
+6. Emits `knots:synced` (so screens reload) and `knots:conflicts` with the new count, and returns `{ ok: true }`.
+
+**"Keep both" failure modes.** The order in step 5 exists so that **the cloud version can never be lost**: it is safely stored on this device *before* Drive's copy is overwritten. The steps can fail independently, and the call then throws:
+- **Saving the copy locally fails** (step c, for example storage full): nothing has been overwritten — neither the Drive file nor the local knot — and the conflict is still recorded, so the user can simply try again.
+- **The `'local'` half fails** (step d, for example a network error while pushing): the copy is already safe locally and Drive has not yet been overwritten (or, at worst, the push did not complete). The conflict is still recorded. A retry builds a *second* copy of the cloud version, which the user can check off or delete.
+- **POSTing the copy fails** (step e): the `'local'` half has been applied and the conflict is cleared, but the copy exists locally as a local-only knot with no backup yet; the next sync pushes it (a local-only knot is always pushed unless cloud-tombstoned). If the user retries the review at that point, the cloud file already equals this device's version, so `resolveConflict` answers `changed-again` and the review re-opens showing identical content.
+
+In every case nothing has been deleted, so the review screen's error text ("Couldn't finish — please try again. Nothing was deleted.") is accurate.
 
 #### listBackups / deleteBackup / localDeleteConfirmText
 
-- **`listBackups()`** lists every app-data file except `deleted-backups.json` (paginated the same way as `syncAll`), classifying each as `kind: 'knot'` (a `knot-` prefixed name with `appProperties.knotId`) or `kind: 'old'` (anything else — e.g. a leftover pre-rename `note-*.json` test file), and sorts newest first by `updatedAt` (falling back to `modifiedTime`).
+- **`listBackups()`** lists every app-data file except `deleted-backups.json` (paginated the same way as `syncAll`), classifying each as `kind: 'knot'` (a `knot-` prefixed name with `appProperties.knotId`) or `kind: 'old'` (anything else — e.g. a leftover pre-rename `note-*.json` test file), and sorts newest first by `updatedAt` (falling back to `modifiedTime`). Each `BackupEntry` carries `checkedOffAt: number | null`, parsed from the file's `appProperties` (always `null` for an `'old'` file), which "Manage backups" shows as a "Checked off" badge.
 - **`deleteBackup(fileId, knotId)`** writes the cloud tombstone **before** deleting the Drive file (not after): if the tombstone write fails, the file is left alone and the error propagates so the UI can show it; only once the tombstone is durably written does it send the DELETE. Reversing that order would risk the file being gone with no tombstone recorded, so another device holding that knot would silently re-upload it on its next sync.
 - **`localDeleteConfirmText()`** returns the plain-language confirm() text for a *local* delete (Requirement 11.11): when connected, *"Delete this knot from this device? Its cloud backup is kept — you can remove it in Settings › Cloud Backup › Manage backups."*; otherwise, *"Delete this knot from this device? This cannot be undone."*
 
@@ -953,6 +1193,10 @@ A single JSON file in the app-data folder, `{ [knotId]: deletedAt }`. Its name d
 | User taps "Merge with Cloud" | `SettingsScreen`'s `onSyncClick` |
 | Background Sync `cloud-sync` tag fires | `sw.ts`'s `sync` handler → posts `FLUSH_CLOUD` → `app.ts`'s SW message listener calls `syncAll()` |
 
+(Not a full sync, but related: a check-off or uncheck fires `knot:checkedOff`, and `app.ts`'s listener calls `cloudSyncService.pushCheckOff(knot)` fire-and-forget with `.catch`.)
+
+**Conflict toast (`app.ts`).** `app.ts` keeps **one** persistent toast for conflicts, and because `knots:conflicts` fires several times per sync and carries current state, it only acts when the **count changes**. Count 0 dismisses the toast; a changed count dismisses the old toast and shows a new one ("1 knot also has edits from another device — tap to review" / "N knots …"); an unchanged count does nothing. Tapping it (a persistent toast dismisses on tap) navigates to `#/conflict/{id}` when `listConflicts()` returns exactly one conflict, and to `#/knots` otherwise; it is **not** re-shown after a tap while the count stays the same, and a programmatic dismiss is not mistaken for a tap. At startup `listConflicts()` seeds the toast, so conflicts recorded in an earlier session are surfaced. `app.ts` also calls `notificationService.ensureShown()` on every launch and registers the `knot:saved`, `knot:checkedOff` and `knots:conflicts` listeners before `initRouter`, so nothing is missed.
+
 Every fire-and-forget `syncAll()`/`retryFailed()` call (i.e. every one of the above except the directly-awaited "Merge with Cloud" click) is chained with `.catch(() => {})` so a rejected sync never surfaces as an unhandled promise rejection.
 
 #### OAuth broker, deploy-time injection, and token refresh
@@ -963,12 +1207,73 @@ Unchanged from the existing design — see *Security Considerations → OAuth2 P
 
 ### NotificationService (`src/notificationService.ts`)
 
-Requests permission once (on first post-install launch as an installed PWA) and registers a persistent notification.
+Owns the quick-capture notification ("Tap to tie a knot"). A web app **cannot** make an undismissable notification — `requireInteraction` is ignored on Android, and a PWA has no Quick Settings tile (that would need a native/TWA wrapper, which is out of scope) — so the design is to put it back: the app re-posts it at every launch and the Service Worker re-posts it after every tap.
 
 **Contracts:**
-- Permission is requested at most once; if denied, `notificationPermissionRequested` is set to `true` and the prompt never appears again.
-- The notification uses `tag: "capture-shortcut"`, `requireInteraction: true`, and body text "Tap to tie a knot".
-- `notificationclick` in `sw.ts` opens `/#/` via `clients.openWindow`.
+- `permission()` returns the current `Notification.permission`, or `'unsupported'` when the API is missing.
+- `ensureShown()` posts the notification (`tag: "capture-shortcut"`, body "Tap to tie a knot", `silent: true`, `requireInteraction: true`) through the service-worker registration. It does nothing unless the API exists, permission is `granted`, `settings.quickCaptureNotification` is on, and a service worker is available; it never throws. The shared tag makes a repeat post replace rather than stack. `app.ts` calls it on every launch.
+- `enable()` **must be called from a click handler**, because the browser's permission prompt needs a user gesture — this is why the request moved from startup to the Settings toggle. If permission is `default` it calls `Notification.requestPermission()`, then saves `quickCaptureNotification: true` and `notificationPermissionRequested: true`, then calls `ensureShown()` when permission is granted, and returns the resulting permission.
+- `disable()` saves `quickCaptureNotification: false` and closes any notification with that tag.
+- The stored setting defaults to on but only takes effect once permission is granted; a denied permission is never re-prompted and the Settings toggle shows "Blocked in browser settings".
+- `notificationclick` in `sw.ts` opens Capture under the SW scope and re-posts the notification — see *Service Worker*.
+
+---
+
+### CheckOffActions (`src/checkOffActions.ts`)
+
+The one place that changes a knot's check-off state, shared by `KnotsScreen` and `KnotDetailScreen`. It imports `knotStore`, `eventBus`, `toastService` and `dayCutoff`, so it is not a pure module and has no chartest.
+
+**Contracts:**
+- `setCheckedOff(knotId, checkedOff)` **re-reads the knot from the store first** (so it never writes over a fresher copy, for example one just pulled by a sync), sets `checkedOffAt` to now (or `null` when unchecking) and `checkOffChangedAt` to now, and saves with `knotStore.save`. `updatedAt` is deliberately left alone. It then emits `knot:checkedOff` — **not** `knot:saved` — and returns the updated knot, or `undefined` if the knot no longer exists. `app.ts`'s `knot:checkedOff` listener is what sends the metadata-only Drive update.
+- `toggleCheckOff(knotId)` flips the state via `setCheckedOff` and shows `toastService.showAction('Checked off' | 'Unchecked', 'Undo', …)`. Undo calls `setCheckedOff` with the previous state, and so carries a **fresh** `checkOffChangedAt`, which wins over the first change on every device. If Undo's save fails it toasts "Could not undo — please try again".
+- `withLatestCheckOff(knot)` copies the **stored** `checkedOffAt`/`checkOffChangedAt` onto `knot` in place (deleting a field the store doesn't have) and returns it; if the knot is no longer stored it is returned unchanged. The detail screen calls it right before every content save (transcript saves and the edit form's Save), because that screen may have held its in-memory copy for a long time — without it a content save could write an old check-off state back over a newer one made from the list, via Undo, or pulled by a sync. There is a tiny remaining race between that read and the save (see *Known Limitations*).
+
+---
+
+### DayCutoff (`src/dayCutoff.ts`)
+
+Pure module — no DOM, no `db`/`settingsStore` imports, importable under plain `node`. It decides when a checked-off knot leaves the Knots list. Wall-clock arithmetic uses `Intl.DateTimeFormat#formatToParts`, so it follows the IANA zone's real offsets (DST, half-hour zones) without a date library.
+
+**Contracts:**
+- `resolveTimeZone(setting)`: `"auto"` or empty resolves to the device's own zone; anything else is returned as-is. An unknown zone name degrades to UTC rather than throwing.
+- `isCheckedOff(knot)`: true only when `checkedOffAt` is a number.
+- `nextCutoffAfter(ms, cutoff, timeZone)`: the first instant **strictly after** `ms` at which the zone's wall clock reads `cutoff` (`"HH:MM"`; a malformed value falls back to `"03:00"`). With the default 03:00, a knot checked off at 01:00 leaves the list at 03:00 that morning, and one checked off at 23:00 leaves it at 03:00 the next day. A knot checked off *exactly at* the cutoff instant waits for the next day's.
+- **DST rules.** If the cutoff time does not exist that day (a spring-forward gap, e.g. 01:30 on the day clocks skip 01:00–02:00 in `Europe/London`), the cutoff is the **first instant after the gap**. If it occurs twice (a fall-back overlap), the **first occurrence** is used — so a knot checked off between the two occurrences waits for the next day's cutoff. Extreme zones (UTC+14, UTC−12) and a `00:00` cutoff are handled by the same arithmetic.
+- `isCheckedOffVisible(checkedOffAt, now, cutoff, timeZone)`: `null`/`undefined` → always visible; otherwise visible while `now < nextCutoffAfter(checkedOffAt, cutoff, timeZone)`.
+
+Nothing is stored for visibility: `KnotsScreen` derives it at render time and again on `visibilitychange`, so no background job is needed. Covered by `dayCutoff.chartest.ts`.
+
+---
+
+### KnotDiff (`src/knotDiff.ts`)
+
+Pure module — no DOM, no `db`/`settingsStore` imports. `diffKnots(local, remote)` compares **this device's** copy of a knot with the **cloud** copy for the conflict review screen, reported from the point of view of a user choosing between them.
+
+**Contracts:**
+- Text items are matched by media-item id: text present on only one side goes to `onlyOnThisDevice` / `onlyInCloud`; text present on both sides with different content goes to `changed`, with a line diff (`diffLines`, a longest-common-subsequence diff, local → remote, so a `del` line exists only on this device and an `add` line only in the cloud version).
+- Photos, videos, and voice recordings are compared by id only: each type has `onlyOnThisDevice` / `onlyInCloud` lists.
+- Transcripts are compared per audio item present on both sides (after trimming), plus the legacy knot-level `transcription`.
+- Location differs when the coordinates or `resolvedAddress` differ (accuracy alone is ignored); `manualLabel` is compared after trimming.
+- `identical` is true when none of the above differs.
+- **Deliberately ignored:** `checkedOffAt`/`checkOffChangedAt` (check-off merges on its own clock and is never part of a content conflict) and the bookkeeping timestamps `updatedAt`/`createdAt`.
+
+Covered by `knotDiff.chartest.ts`.
+
+---
+
+### DeviceLabel (`src/deviceLabel.ts`)
+
+Pure. `deviceLabelFromUserAgent(ua)` returns "Android", "iPhone", "iPad", "Windows", "Mac", "Linux", or "another device" (the exported `UNKNOWN_DEVICE_LABEL`). Android is tested before Linux (Android user agents contain "Linux") and iOS before Mac (iOS user agents contain "like Mac OS X"). iPadOS 13+ reports a Mac user agent and is therefore labelled "Mac" — it cannot be told apart by user agent alone. The result is stored as `appProperties.editedOn` on every content write; the conflict review shows "Edited on Android", and an old file without the label shows "another device". Covered by `deviceLabel.chartest.ts`.
+
+---
+
+### MergeMessage (`src/mergeMessage.ts`)
+
+Pure, no imports. `mergeResultMessage(pulled, pushed, conflicts)` produces the toast text for "Merge with Cloud":
+- all three zero → `Already up to date — nothing to merge`;
+- otherwise `Merged — ` followed by the non-zero parts joined by `, `, in this order: `N knot(s) brought in` (`1 knot brought in`, `2 knots brought in`), `N backed up`, `N need(s) review` (`1 needs review`, `2 need review`). Zero parts are omitted, so a merge that only found conflicts reads `Merged — 1 needs review`.
+
+`pushed` includes the queued uploads flushed at the start of the merge (`uploadPending`'s return value), which is what fixes a merge toast that always said zero when most saves had already uploaded on their own. Covered by `mergeMessage.chartest.ts`.
 
 ---
 
@@ -978,9 +1283,11 @@ Typed publish/subscribe module used to decouple service events from screen rende
 
 ```typescript
 type EventMap = {
-  "knot:saved": Knot;
+  "knot:saved": Knot;                  // a CONTENT save: triggers the Drive upsert
   "knot:deleted": string;              // the deleted knot's id
+  "knot:checkedOff": Knot;             // a knot was checked off or unchecked (NOT a content save): triggers pushCheckOff only
   "knots:synced": { pulled: number; pushed: number };
+  "knots:conflicts": { count: number };// number of knots currently awaiting conflict review
   "settings:changed": AppSettings;
   "sw:waiting": void;
 };
@@ -989,7 +1296,7 @@ function emit<K extends keyof EventMap>(event: K, data: EventMap[K]): void
 function on<K extends keyof EventMap>(event: K, cb: (data: EventMap[K]) => void): () => void
 ```
 
-All screen `render` functions that subscribe to events store the returned unsubscribe function and call it in their cleanup function. `knots:synced` is emitted only by `CloudSyncService.syncAll()`, and only when at least one knot was pulled.
+All screen `render` functions that subscribe to events store the returned unsubscribe function and call it in their cleanup function. `knots:synced` is emitted by `CloudSyncService.syncAll()` when at least one knot was pulled or a check-off state was pulled, and by `resolveConflict` so screens reload after a resolution. `knots:conflicts` is emitted by the upsert guard, by `syncAll`, and by `resolveConflict`; because it can fire more than once per sync, listeners treat `count` as current state (replace, don't stack). `knot:checkedOff` is emitted by the Knots list and the detail screen, never by sync.
 
 ---
 
@@ -1002,6 +1309,10 @@ tsc
 node src/router.chartest.js
 node src/syncPlan.chartest.js
 node src/knotSummary.chartest.js
+node src/dayCutoff.chartest.js
+node src/knotDiff.chartest.js
+node src/deviceLabel.chartest.js
+node src/mergeMessage.chartest.js
 node src/components/timezoneCombobox.proptest.js
 ```
 
@@ -1069,8 +1380,11 @@ For any subset of settings keys that are absent from IndexedDB, `SettingsStore.l
 | `timezone` | `'auto'` |
 | `dateFormat` | `'DD MMM YYYY'` |
 | `timeFormat` | `'24h'` |
+| `dayCutoff` | `'03:00'` |
+| `shareAttribution` | `true` |
+| `quickCaptureNotification` | `true` |
 
-**Validates: Requirements 12.14** — SettingsStore `load`. Verified by manual testing; not covered by an automated test.
+**Validates: Requirements 12.14, 12.15, 12.16, 12.17** — SettingsStore `load`. Verified by manual testing; not covered by an automated test.
 
 ---
 
@@ -1094,25 +1408,56 @@ For each known route hash, `parseHash` returns the matching `{ route, params }`;
 
 ---
 
-### Property 7: SyncPlan — push/pull/dedupe decisions (`syncPlan.chartest.ts`)
+### Property 7: SyncPlan — base-aware push/pull/conflict/check-off/dedupe decisions (`syncPlan.chartest.ts`)
 
-For any combination of local knots, remote Drive entries, local tombstones, and cloud tombstones, `planSync` must: push a local-only or locally-newer knot (unless blocked by an at-or-after cloud tombstone); pull a remote-only or remotely-newer knot (unless locally tombstoned); treat equal `updatedAt` as a no-op on both sides; and, for duplicate remote entries sharing a knot id, keep only the newest (ties keep the first seen) and queue the rest for deletion, with push/pull decided against the kept entry. Eleven scenarios, including an all-empty input producing an empty plan.
+For any combination of local knots, remote Drive entries, local and cloud tombstones, base versions, pending-job ids, and already-conflicted ids, `planSync` must:
+- push a local-only knot, and pull a remote-only knot unless locally tombstoned (a push is blocked by an at-or-after cloud tombstone);
+- on both sides: record a base update when `updatedAt` is equal (which also resolves a recorded conflict); push only when only the local side changed since base; pull only when only the remote side changed; report a **conflict** when both changed or the state is inconsistent (either side older than base); and never push or pull an already-conflicted knot that still differs;
+- with **no base**: pull when the remote is newer and the knot has no pending job, and report a conflict in every other case (including a newer local copy);
+- reconcile check-off independently of content: local `checkOffChangedAt` greater → `checkOffPush`, remote greater → `checkOffPull`, equal → nothing; a check-off change must never add to `push`/`pull`, never lift a cloud tombstone, work even for a knot in a content conflict, and produce nothing for a knot present on only one side;
+- for duplicate remote entries sharing a knot id, keep only the newest (ties keep the first seen) and queue the rest for deletion, with decisions made against the kept entry.
 
-**Validates: Requirement 11.5, 11.6, 11.7, 11.8, 11.10** — `syncPlan.ts` `planSync`. **Automated** — `node src/syncPlan.chartest.js`.
+Twenty-nine scenarios. Of the original eleven, one was **changed by design** on 2026-09-29 (the user rejected newest-wins): "local newer than remote → push" now supplies a base equal to the remote, because with no base a newer local copy is a conflict; and one keeps its expectations but now passes through the no-base pull rule. One gained extra assertions (an empty plan has no conflicts, base updates or check-off operations); the rest are untouched.
+
+**Validates: Requirement 11.5, 11.6, 11.7, 11.8, 11.10, 14.9, 17.1, 17.2** — `syncPlan.ts` `planSync`. **Automated** — `node src/syncPlan.chartest.js`.
 
 ---
 
 ### Property 8: KnotSummary — share text and filenames (`knotSummary.chartest.ts`)
 
-For representative knots, `knotSummaryText` must produce the address/Maps-URL lines when a GPS location is present, a manual-label line when only that is set, no pin line when neither is set, a `🎙`-prefixed transcript line (including the legacy `knot.transcription` fallback when no per-item transcript exists), a correctly-pluralised attachment-count line, and no doubled blank line in any case. `mediaFileName` must map each documented MIME type — including one with a `;codecs=…` parameter — to its extension, and fall back to `.bin` for an unrecognised type. Nine scenarios.
+For representative knots, `knotSummaryText` must produce the address/Maps-URL lines when a GPS location is present, a manual-label line when only that is set, no pin line when neither is set, a `🎙`-prefixed transcript line (including the legacy `knot.transcription` fallback when no per-item transcript exists), a correctly-pluralised attachment-count line, and no doubled blank line in any case. `mediaFileName` must map each documented MIME type — including one with a `;codecs=…` parameter — to its extension, fall back to `.bin` for an unrecognised type, and honour a custom prefix. `knotSummaryText`'s attribution footer must appear once at the end when on and not at all when off, and `knotsSummaryText` must produce nothing for no knots, the single-knot text for one, and for several a header, `———` separators, and one footer (or a plain `N knots` header without attribution). Fourteen scenarios.
 
-**Validates: Requirement 8.2, 8.3** — `knotSummary.ts` `knotSummaryText` / `mediaFileName`. **Automated** — `node src/knotSummary.chartest.js`.
+**Validates: Requirement 8.2, 8.3, 15.1, 15.2, 15.4, 16.2, 16.3** — `knotSummary.ts` `knotSummaryText` / `knotsSummaryText` / `mediaFileName`. **Automated** — `node src/knotSummary.chartest.js`.
+
+---
+
+### Property 9: DayCutoff — when a checked-off knot leaves the list (`dayCutoff.chartest.ts`)
+
+For a check-off time and a "New day starts at" time, `nextCutoffAfter` must return the first instant strictly after the check-off at which the zone's wall clock reads the cutoff: 01:00 → 03:00 the same day; 23:00 → 03:00 the next day; exactly at 03:00 → the next day's 03:00; a `00:00` cutoff → the next midnight. It must follow the zone's real offset, including a non-UTC zone, the `Europe/London` spring-forward **gap** (the first instant after the gap) and fall-back **overlap** (the first occurrence), and the extreme zones UTC+14 (`Pacific/Kiritimati`) and UTC−12 (`Etc/GMT+12`); a malformed cutoff falls back to 03:00. `isCheckedOffVisible` must treat `null`/`undefined` as always visible and otherwise be true before the cutoff and false at or after it. Fifteen scenarios.
+
+**Validates: Requirement 14.4, 14.5, 14.7** — `dayCutoff.ts`. **Automated** — `node src/dayCutoff.chartest.js`.
+
+---
+
+### Property 10: KnotDiff — what differs between two versions (`knotDiff.chartest.ts`)
+
+Identical knots report `identical` with nothing else; changed text is reported with a local → remote line diff; text, photos, and voice recordings present on one side only are reported as `onlyOnThisDevice` / `onlyInCloud` by media id; per-audio and legacy transcript changes, location changes (address or coordinates, but not accuracy alone), and `manualLabel` changes are reported; and differences in check-off state, `updatedAt`, or `createdAt` alone leave the knots `identical`. Nine scenarios.
+
+**Validates: Requirement 17.4** — `knotDiff.ts`. **Automated** — `node src/knotDiff.chartest.js`.
+
+---
+
+### Property 11: DeviceLabel and MergeMessage — pure wording (`deviceLabel.chartest.ts`, `mergeMessage.chartest.ts`)
+
+`deviceLabelFromUserAgent` must label Android before Linux, iPhone before Mac, and fall back to "another device" for an unrecognised or empty user agent (eight scenarios). `mergeResultMessage` must return the up-to-date text for 0/0/0 and otherwise join only the non-zero parts, with singular/plural wording (`1 knot brought in`, `1 needs review`, `2 need review`) (six scenarios, including a conflicts-only merge).
+
+**Validates: Requirement 11.2 (editedOn), 18.1, 18.2, 18.4** — `deviceLabel.ts`, `mergeMessage.ts`. **Automated** — `node src/deviceLabel.chartest.js`, `node src/mergeMessage.chartest.js`.
 
 ---
 
 ### Drive and Share behaviour: verified by hand
 
-Everything that requires a real Google account, a real Drive app-data folder, or a real platform share sheet — connecting, the full `syncAll` pass against live Drive data, `listBackups`/`deleteBackup` against live files, and `navigator.share`/`navigator.canShare` — is **verified manually** against a real deployment, not by an automated test. `syncPlan.ts` and `knotSummary.ts` are deliberately factored out as pure modules specifically so the *decision logic* each of those features depends on can still be tested automatically, even though the I/O around them cannot be.
+Everything that requires a real Google account, a real Drive app-data folder, a real platform share sheet, or a real notification drawer — connecting, the full `syncAll` pass against live Drive data, `pushCheckOff` and `resolveConflict` against live files, `listBackups`/`deleteBackup` against live files, `navigator.share`/`navigator.canShare`, and the quick-capture notification's permission, tap, and relaunch behaviour — is **verified manually** against a real deployment, not by an automated test. `syncPlan.ts`, `knotSummary.ts`, `dayCutoff.ts`, `knotDiff.ts`, `deviceLabel.ts`, and `mergeMessage.ts` are deliberately factored out as pure modules specifically so the *decision logic* each of those features depends on can still be tested automatically, even though the I/O around them cannot be. Pending real-device checks: a check-off syncs to a second device without a content re-upload and shows in Manage backups; a check-off on one device followed by a content edit on another keeps the check-off (this is also the check for the per-key `appProperties` merge); editing the same knot on two offline devices and then syncing gives a review prompt, and all three choices work; the Merge toast counts after an offline save; the notification survives a tap and a relaunch and opens Capture under the subpath; multi-share with media opens the native sheet.
 
 ---
 
@@ -1132,7 +1477,14 @@ Everything that requires a real Google account, a real Drive app-data folder, or
 | Share: `navigator.share` rejects (not a cancel) | Best-effort clipboard copy; toast "Couldn't share — knot copied to clipboard" (or "Couldn't share this knot" if that also fails). |
 | Share: user cancels the share sheet (`AbortError`) | Silent — no toast, no error. |
 | Cloud upload failure (per-save path) | Job queued in `cloudUploadJobs`, retried up to 3×; on the 3rd failure, a persistent "Backup failed… Tap to retry." toast (naming the knot, or a count if several failed in one retry pass). |
-| Cloud sync per-item failure (push, pull, or dedupe delete) | Counted and `console.warn`'d; the sync pass continues rather than aborting. |
+| Cloud sync per-item failure (push, pull, dedupe delete, or check-off push/pull) | Counted and `console.warn`'d; the sync pass continues rather than aborting. |
+| Save would overwrite a backup changed by another device | Nothing is written; a conflict is recorded, `knots:conflicts` emitted, and no retry job is queued (`ConflictError`). |
+| Both sides of a knot changed since base (during a full sync) | Neither side is pushed or pulled; the conflict is recorded and the user reviews it. |
+| Check-off metadata PATCH fails | `pushCheckOff` throws; the caller's `.catch` swallows it. No retry queue — the next full sync reconciles the state. |
+| Conflict review offline / cloud copy unavailable | "Connect to the internet to review this knot"; no choice offered. |
+| Cloud copy changed again during a conflict review | `resolveConflict` returns `{ ok:false, reason:'changed-again' }` and writes nothing; the newer cloud version is shown with "This knot changed again on another device — please review the latest version". |
+| "Keep both" fails part-way | The cloud version was saved locally as a new knot before Drive's copy was overwritten, so nothing is lost; the review screen toasts "Couldn't finish — please try again. Nothing was deleted." (see *Conflict resolution* for what each failing step leaves behind). |
+| Notification permission denied | No prompt again; the Settings toggle shows "Blocked in browser settings". |
 | Cloud sync listing or auth failure | Throws; the sync pass aborts (caught by the `.catch(() => {})` on every fire-and-forget trigger, or surfaced as the "Merge failed" toast on a manual "Merge with Cloud"). |
 | Google Drive auth failure (incl. OAuth broker unreachable or misconfigured) | Toast "Could not connect to Google Drive." Status remains disconnected. Google's `error`/`error_description` is logged via `console.warn` (never tokens). |
 | Google Drive refresh token refused (`invalid_grant`) | Toast "Google Drive session expired — please reconnect." Token cleared; status becomes disconnected. |
@@ -1141,6 +1493,18 @@ Everything that requires a real Google account, a real Drive app-data folder, or
 | SW update available | Non-blocking banner "New version available — tap to reload" appears; user taps to `location.reload()`. |
 
 All errors are surfaced through `ToastService` (`src/toastService.ts`), a DOM-managed singleton that components call directly. Blocking errors (save failure, validation) use inline messages; non-blocking errors use auto-dismissing or persistent toasts.
+
+---
+
+## Known Limitations
+
+- **Upsert race (two devices saving within seconds).** The conflict guard in `upsertKnot` checks the remote version and then writes as two separate steps. If two devices save the same knot within the same few seconds, both can pass the check. The device whose write lands first then pulls the other device's version at its next sync without asking, because its recorded base equals its own write — so one edit is pulled over **without a review**. Closing this fully would need Drive's ETag conditional writes (`If-Match`), which are out of scope. The window is a few seconds.
+- **Pre-upgrade knots (one-time conflicts).** A knot that existed before the v5 upgrade has no base version. If it is edited before the first sync after the upgrade (for example offline at launch), the guard's "no base and the two differ" rule turns it into a conflict. That is the intended one-time review — no data is lost — but the user may see a prompt for a knot they only edited on one device. Once a sync finds the two sides equal, or the user resolves the review, a base is recorded and it does not recur.
+- **`appProperties` per-key merge is inferred, not confirmed.** The design relies on Drive's `files.update` merging `appProperties` per key, so a content PATCH that omits the check-off keys leaves them unchanged. Google's reference documents that `null` values are cleared on update, and its custom-properties guide shows a PATCH of one key leaving the others intact — but the guide's example uses `properties`, not `appProperties`, and the reference does not state the merge in so many words. It still needs confirming on a real device (check off on device A, content-edit on device B, and confirm the check-off survives).
+- **Quick-capture notification cannot be pinned.** A web app cannot create an undismissable notification (`requireInteraction` is ignored on Android, and there is no Quick Settings tile for a PWA); on Android the user can swipe it away, and it returns at the next launch and after each tap. A native or TWA wrapper would be needed to change that.
+- **"Keep both" can leave a duplicate copy.** It is not atomic, but it cannot lose the cloud version (see *Conflict resolution*): if it fails part-way and the user retries, a second copy of the cloud version can be created. The extra knot can be checked off or deleted.
+- **Check-off read/save race.** `withLatestCheckOff` reads the stored check-off state and the caller then saves, as two separate steps; a check-off made in the tiny gap between them can still be overwritten by the content save.
+- **Centre "+" nav glyph (pre-existing UI quirk).** On `#/knot/...` and `#/conflict/...` the centre "+" navigation button renders without its "+" glyph. This was not introduced by this work.
 
 ---
 
@@ -1181,7 +1545,7 @@ worker-src 'self';
 - Email addresses (for the Daily Email Summary recipient) are validated against a standard RFC 5321 format regex before being stored.
 
 ### Service Worker Scope
-- The Service Worker is registered at the root scope (`/`). It intercepts only same-origin requests. Third-party scripts are not proxied through the SW.
+- The Service Worker is registered relative to the app's own base path: `sw.js` lives at `<base>/sw.js`, so its scope is `<base>/` — the origin root when hosted there, or the repository subpath (for example `/e-handkerchief/`) on GitHub Pages. `sw.ts` derives `<base>` from `self.location.pathname`, and the `notificationclick` handler opens `new URL('./#/', sw.registration.scope)` for the same reason. It intercepts only same-origin requests within that scope. Third-party scripts are not proxied through the SW.
 - SW update checks occur on every navigation; the SW itself is fetched with `Cache-Control: no-cache` to ensure prompt delivery of security patches.
 
 ---
@@ -1207,4 +1571,5 @@ worker-src 'self';
 
 - **"Knot" is the entity's name everywhere** — in the TypeScript types, in IndexedDB (the `knots` object store, `CloudUploadJob.knotId`, `KnotTombstone`), and on Google Drive (`knot-{id}.json`, `appProperties.knotId`). There is no lingering "note" naming in any of these; where "note" appears in code today it means something else (see below).
 - **The rename happened on 2026-09-24**, together with the Drive two-way sync and Share features, as a single decision while the app was still in testing. Because of that timing, **no data migration was written** — the IndexedDB upgrade from v1 to v2 (see *IndexedDB Schema*) simply drops the old `notes` store and any queued `cloudUploadJobs`, since only test data existed at the time.
+- **"Check off" / "checked off" / "uncheck"** is the vocabulary for marking a knot as dealt with, in user-facing copy and in code (`checkedOffAt`, `checkOffChangedAt`, `knot:checkedOff`, `.knot-entry--checked-off`). "Tie a knot" means *create* a knot and is never used for checking one off.
 - **"Record voice note"** — the `aria-label` on the microphone button in `mediaCapture.ts` — is kept on purpose. It's a plain-language, generic description of the action ("note" as in "a quick note to self"), not a reference to the old entity name, and changing it isn't part of the rename.

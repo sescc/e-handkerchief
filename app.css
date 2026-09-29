@@ -1422,3 +1422,283 @@ main {
   font-size: 13px;
   cursor: default;
 }
+
+/* ============================================================
+   Check-off, select mode, conflicts
+   ============================================================ */
+
+/* Knots list header: title + Select button */
+.knots-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-sm);
+}
+
+.knots-screen--select {
+  padding-bottom: 72px; /* clearance for the sticky select bar */
+}
+
+/* Checked-off knots: faded, text struck through. Also used in Calendar. */
+.knot-entry--checked-off,
+.calendar-day-detail-row--checked-off {
+  opacity: 0.55;
+}
+
+.knot-entry--checked-off .knot-text,
+.knot-entry--checked-off .transcription-block,
+.calendar-day-detail-row--checked-off .calendar-day-detail-preview {
+  text-decoration: line-through;
+}
+
+/* Quick actions in the entry header: check off + delete */
+.knot-entry-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  flex-shrink: 0;
+}
+
+.knot-check-btn {
+  flex-shrink: 0;
+  background: transparent;
+  border: none;
+  color: var(--color-text-muted);
+  font-size: 16px;
+  line-height: 1;
+  padding: var(--space-xs) var(--space-sm);
+  border-radius: var(--radius-sm);
+  opacity: 0.6;
+  transition: opacity var(--transition), color var(--transition), background var(--transition);
+}
+
+.knot-check-btn:hover, .knot-check-btn:focus {
+  opacity: 1;
+  color: var(--color-primary);
+  background: rgba(45, 122, 79, 0.12);
+  outline: none;
+}
+
+/* "Show N checked-off knots" toggle at the bottom of the list */
+.knots-checked-toggle {
+  margin-top: var(--space-sm);
+}
+
+/* Select mode */
+.knot-select-checkbox {
+  flex-shrink: 0;
+  width: 20px;
+  height: 20px;
+  margin-right: var(--space-sm);
+  accent-color: var(--color-primary);
+  cursor: pointer;
+}
+
+.knots-screen--select .knot-entry-header {
+  align-items: center;
+}
+
+.knots-screen--select .knot-timestamp {
+  flex: 1;
+  margin-bottom: 0;
+}
+
+.knot-entry--selected {
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 1px var(--color-primary);
+}
+
+.select-bar {
+  position: fixed;
+  bottom: 60px; /* sits just above the nav bar */
+  left: 50%;
+  transform: translateX(-50%);
+  width: 100%;
+  max-width: 600px;
+  z-index: 99;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm);
+  padding: var(--space-sm) var(--space-md);
+  background: var(--color-surface);
+  border-top: 1px solid var(--color-border);
+  box-shadow: 0 -2px 8px rgba(0, 0, 0, 0.1);
+}
+
+/* "Edited on two devices" badge (Knots list) and banner (detail page) */
+.conflict-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  margin-bottom: var(--space-sm);
+  padding: 2px var(--space-sm);
+  background: rgba(255, 193, 7, 0.18);
+  color: var(--color-text);
+  border: 1px solid var(--color-warning);
+  border-radius: var(--radius-full);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.conflict-badge:hover, .conflict-badge:focus {
+  background: rgba(255, 193, 7, 0.3);
+  outline: none;
+}
+
+.conflict-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm);
+  margin-bottom: var(--space-md);
+  padding: var(--space-sm) var(--space-md);
+  background: rgba(255, 193, 7, 0.18);
+  border: 1px solid var(--color-warning);
+  border-radius: var(--radius-md);
+  font-size: 14px;
+}
+
+/* Toast with an action button (e.g. "Checked off" + Undo) */
+.toast--action {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+}
+
+.toast-action-text {
+  flex: 1;
+}
+
+.toast-action-btn {
+  flex-shrink: 0;
+  background: transparent;
+  color: white;
+  border: 1px solid rgba(255, 255, 255, 0.6);
+  border-radius: var(--radius-sm);
+  padding: 2px var(--space-sm);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.toast-action-btn:hover, .toast-action-btn:focus {
+  background: rgba(255, 255, 255, 0.15);
+  outline: none;
+}
+
+/* Settings: notification control cell, blocked text, backup "Checked off" badge */
+.settings-row-control {
+  flex-shrink: 0;
+}
+
+.notif-blocked {
+  margin: 0;
+  text-align: right;
+}
+
+.backup-badge {
+  display: inline-block;
+  margin-top: 2px;
+  padding: 0 var(--space-sm);
+  background: rgba(45, 122, 79, 0.15);
+  color: var(--color-primary);
+  border-radius: var(--radius-full);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+/* ============================================================
+   Conflict review screen
+   ============================================================ */
+.conflict-meta {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  margin-bottom: var(--space-md);
+  padding: var(--space-sm) var(--space-md);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  font-size: 13px;
+}
+
+.diff-section {
+  margin-bottom: var(--space-md);
+}
+
+.diff-section-title {
+  font-size: 14px;
+  font-weight: 600;
+  margin-bottom: var(--space-xs);
+}
+
+.diff-lines {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  margin-bottom: var(--space-sm);
+  font-size: 14px;
+}
+
+.diff-line,
+.diff-block {
+  display: flex;
+  gap: var(--space-sm);
+  padding: 2px var(--space-sm);
+  border-left: 3px solid transparent;
+  word-break: break-word;
+}
+
+.diff-block {
+  margin-bottom: var(--space-xs);
+  padding: var(--space-xs) var(--space-sm);
+  border-radius: var(--radius-sm);
+  align-items: flex-start;
+}
+
+.diff-marker {
+  flex-shrink: 0;
+  width: 1ch;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-weight: 700;
+}
+
+.diff-text {
+  white-space: pre-wrap;
+  min-width: 0;
+}
+
+/* Only on this device = red, only in the cloud = green */
+.diff-line--del {
+  background: rgba(220, 53, 69, 0.15);
+  border-left-color: var(--color-error);
+}
+
+.diff-line--add {
+  background: rgba(40, 167, 69, 0.15);
+  border-left-color: var(--color-success);
+}
+
+.diff-line--same {
+  color: var(--color-text-muted);
+}
+
+.diff-thumbs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-sm);
+}
+
+.diff-thumb {
+  width: 80px;
+  height: 80px;
+  object-fit: cover;
+  border-radius: var(--radius-sm);
+}
+
+.conflict-actions {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  margin-top: var(--space-lg);
+}

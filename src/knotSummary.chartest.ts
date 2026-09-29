@@ -12,7 +12,7 @@
 // ============================================================
 
 // Note the `.js` extension per the project's ES2020 module setup.
-import { knotSummaryText, mediaFileName } from './knotSummary.js';
+import { knotSummaryText, knotsSummaryText, mediaFileName } from './knotSummary.js';
 import { googleMapsUrl } from './mapsLink.js';
 import type { Knot, TextMediaItem, AudioMediaItem, PhotoMediaItem, VideoMediaItem } from './types.js';
 
@@ -240,6 +240,83 @@ const SCENARIOS: Scenario[] = [
       const unknown = videoItem({ blobType: 'application/octet-stream' });
       const unknownName = mediaFileName(unknown, 3);
       assert(unknownName === 'knot-video-3.bin', `expected unknown type to fall back to .bin, got ${JSON.stringify(unknownName)}`);
+    },
+  },
+  {
+    label: 'attribution footer: appended once at the end when on, absent when off',
+    run: () => {
+      const knot = baseKnot({ mediaItems: [textItem('Hello')] });
+      const attribution = { appUrl: 'https://example.test/app/' };
+      const on = knotSummaryText(knot, stubFormat, { attribution });
+      const off = knotSummaryText(knot, stubFormat);
+      const offExplicit = knotSummaryText(knot, stubFormat, {});
+
+      assert(
+        on.endsWith('\n\n— Shared from e-Handkerchief\nhttps://example.test/app/'),
+        `expected the footer as the final section, got:\n${JSON.stringify(on)}`
+      );
+      assert(on.split('— Shared from e-Handkerchief').length === 2, 'footer appears exactly once');
+      assert(on.startsWith(off), 'the body before the footer is unchanged');
+      assert(!off.includes('Shared from'), 'no footer without attribution');
+      assert(offExplicit === off, 'empty opts behaves like no opts');
+      assertNoDoubledBlankLines(on, 'footer on');
+    },
+  },
+  {
+    label: 'knotsSummaryText: 0 knots -> empty string; 1 knot -> identical to knotSummaryText',
+    run: () => {
+      const attribution = { appUrl: 'https://example.test/' };
+      assert(knotsSummaryText([], stubFormat, { attribution }) === '', '0 knots -> ""');
+
+      const knot = baseKnot({ mediaItems: [textItem('solo')] });
+      assert(knotsSummaryText([knot], stubFormat) === knotSummaryText(knot, stubFormat), '1 knot, no attribution');
+      assert(
+        knotsSummaryText([knot], stubFormat, { attribution }) === knotSummaryText(knot, stubFormat, { attribution }),
+        '1 knot, with attribution (no "1 knots" header)'
+      );
+    },
+  },
+  {
+    label: 'knotsSummaryText: several knots with attribution -> header, separators, ONE footer',
+    run: () => {
+      const attribution = { appUrl: 'https://example.test/' };
+      const a = baseKnot({ mediaItems: [textItem('first')] });
+      const b = baseKnot({ mediaItems: [textItem('second'), photoItem()] });
+      const c = baseKnot({ manualLabel: 'Cafe', mediaItems: [textItem('third')] });
+      const text = knotsSummaryText([a, b, c], stubFormat, { attribution });
+
+      assert(text.startsWith('3 knots from e-Handkerchief\n\nTS('), `header wording, got:\n${JSON.stringify(text)}`);
+      assert(text.split('\n\n———\n\n').length === 3, 'two separators between three knots');
+      assert(text.split('— Shared from e-Handkerchief').length === 2, 'footer appears exactly once');
+      assert(text.endsWith('\n\n— Shared from e-Handkerchief\nhttps://example.test/'), 'footer is last');
+      assert(
+        text.indexOf('first') < text.indexOf('second') && text.indexOf('second') < text.indexOf('third'),
+        'knots keep their order'
+      );
+      assertNoDoubledBlankLines(text, 'multi-knot with attribution');
+    },
+  },
+  {
+    label: 'knotsSummaryText: several knots without attribution -> plain "N knots" header, no footer',
+    run: () => {
+      const a = baseKnot({ mediaItems: [textItem('first')] });
+      const b = baseKnot({ mediaItems: [textItem('second')] });
+      const text = knotsSummaryText([a, b], stubFormat);
+
+      assert(text.startsWith('2 knots\n\nTS('), `header wording, got:\n${JSON.stringify(text)}`);
+      assert(!text.includes('e-Handkerchief\n') && !text.includes('Shared from'), 'no attribution text at all');
+      assert(text.split('\n\n———\n\n').length === 2, 'one separator between two knots');
+      assert(text === text.trimEnd(), 'trailing whitespace trimmed');
+      assertNoDoubledBlankLines(text, 'multi-knot without attribution');
+    },
+  },
+  {
+    label: 'mediaFileName: custom prefix for multi-knot shares (knot2-photo-1.jpg)',
+    run: () => {
+      const photo = photoItem();
+      assert(mediaFileName(photo, 1, 'knot2') === 'knot2-photo-1.jpg', 'prefixed photo name');
+      assert(mediaFileName(audioItem(), 3, 'knot10') === 'knot10-audio-3.webm', 'prefixed audio name');
+      assert(mediaFileName(photo, 1) === 'knot-photo-1.jpg', 'default prefix is unchanged');
     },
   },
 ];

@@ -1,8 +1,15 @@
 // ============================================================
 // e-Handkerchief — CloudSyncService
-// Google Drive OAuth2 PKCE integration: automatic two-way sync (newest
-// updatedAt wins), a "Manage backups" API, and local/cloud delete
-// tombstones so a delete on one device never silently resurrects on another.
+// Google Drive OAuth2 PKCE integration: automatic two-way sync, a "Manage
+// backups" API, and local/cloud delete tombstones so a delete on one device
+// never silently resurrects on another.
+//
+// Content is synced against a per-knot BASE version (see syncPlan.ts): a
+// silent push/pull only happens when one side changed; an edit made on two
+// devices is recorded as a conflict for the user to review — it is never
+// resolved by last-write-wins. Check-off state is separate: it lives in the
+// backup file's appProperties and merges on its own clock without touching
+// the content version.
 // ============================================================
 
 import { settingsStore } from './settingsStore.js';
@@ -12,6 +19,7 @@ import { toastService } from './toastService.js';
 import { eventBus } from './eventBus.js';
 import { formatKnotTimestamp } from './dateFormat.js';
 import { planSync, type LocalEntry, type RemoteEntry } from './syncPlan.js';
+import { deviceLabelFromUserAgent } from './deviceLabel.js';
 import type { Knot, CloudUploadJob, OAuthToken, TextMediaItem, AudioMediaItem } from './types.js';
 
 // Both values are injected into config.js at deploy time (see deploy.yml).
@@ -153,9 +161,25 @@ function buildKnotDescription(knot: Knot): string {
 async function sendKnotToDrive(knot: Knot, existingFileId?: string): Promise<void> {
   const serialized = await knotToJSON(knot);
 
+  // Drive merges appProperties key by key on update: keys we don't send stay
+  // as they are. So a content PATCH sends ONLY knotId/updatedAt/editedOn and
+  // deliberately NEVER the check-off keys — a stale local check-off value can
+  // then never overwrite a newer one made on another device. Only creating a
+  // new file writes the check-off keys along with the content.
+  const appProperties: Record<string, string> = {
+    knotId: knot.id,
+    updatedAt: String(knot.updatedAt),
+    editedOn: deviceLabelFromUserAgent(navigator.userAgent),
+  };
+  if (!existingFileId) {
+    // An unchecked knot simply omits checkedOffAt (parsed as null).
+    if (knot.checkedOffAt != null) appProperties.checkedOffAt = String(knot.checkedOffAt);
+    appProperties.checkOffChangedAt = String(knot.checkOffChangedAt ?? 0);
+  }
+
   const metadata: Record<string, unknown> = {
     name: `${DRIVE_FILE_PREFIX}${knot.id}.json`,
-    appProperties: { knotId: knot.id, updatedAt: String(knot.updatedAt) },
+    appProperties,
     description: buildKnotDescription(knot),
   };
   if (!existingFileId) {
@@ -235,29 +259,107 @@ function fileUpdatedAt(f: DriveFile): number {
   return Number.isFinite(n) ? n : new Date(f.modifiedTime).getTime();
 }
 
-/**
- * Upsert a knot's backup: find any existing file(s) for it, PATCH the newest
- * (or POST if none exist), and best-effort delete any other duplicates.
- * Internal — does NOT queue a retry job on failure; callers decide that.
- */
-async function upsertKnot(knot: Knot): Promise<void> {
-  const existing = await findExistingFiles(`${DRIVE_FILE_PREFIX}${knot.id}.json`);
+/** Parse an appProperties `checkedOffAt` value: "" / missing / non-numeric -> null. */
+function parseCheckedOffAt(raw: string | undefined): number | null {
+  if (raw === undefined || raw === '') return null;
+  const n = Number(raw);
+  return Number.isFinite(n) ? n : null;
+}
 
+/** Parse an appProperties `checkOffChangedAt` value: missing / non-numeric -> 0. */
+function parseCheckOffChangedAt(raw: string | undefined): number {
+  if (raw === undefined || raw === '') return 0;
+  const n = Number(raw);
+  return Number.isFinite(n) ? n : 0;
+}
+
+/**
+ * Thrown by `upsertKnot` when the remote copy was edited on another device
+ * since this device's base version, so writing would silently overwrite that
+ * edit. The conflict has been recorded; the caller must NOT queue a retry.
+ */
+class ConflictError extends Error {
+  constructor(readonly knotId: string) {
+    super(`Knot ${knotId} was edited on another device`);
+    this.name = 'ConflictError';
+  }
+}
+
+/** The newest of a set of Drive files for one knot (by effective updatedAt). */
+function newestFile(files: DriveFile[]): DriveFile | undefined {
   let target: DriveFile | undefined;
-  for (const f of existing) {
+  for (const f of files) {
     if (!target || fileUpdatedAt(f) > fileUpdatedAt(target)) target = f;
   }
+  return target;
+}
 
-  await sendKnotToDrive(knot, target?.id);
-
-  const dupes = existing.filter((f) => f.id !== target?.id);
-  for (const dupe of dupes) {
+/** Best-effort delete of duplicate backup files for a knot. */
+async function deleteDuplicateFiles(files: DriveFile[], keepId: string | undefined): Promise<void> {
+  for (const dupe of files.filter((f) => f.id !== keepId)) {
     try {
       await driveFetch(`https://www.googleapis.com/drive/v3/files/${dupe.id}`, { method: 'DELETE' });
     } catch {
       // Best effort — a leftover duplicate will be cleaned up by the next sync.
     }
   }
+}
+
+/**
+ * Record `updatedAt` as the version this device and Drive agree on for a
+ * knot, and clear any recorded conflict (agreement resolves it).
+ */
+async function setBase(knotId: string, updatedAt: number): Promise<void> {
+  await knotStore.putSyncState({ knotId, baseUpdatedAt: updatedAt });
+}
+
+/** Number of knots currently awaiting conflict review. */
+async function countConflicts(): Promise<number> {
+  const states = await knotStore.listSyncStates();
+  return states.filter((s) => s.conflict).length;
+}
+
+/** Record a conflict for a knot (keeping its base) and tell the app. */
+async function recordConflict(knotId: string, fileId: string, remoteUpdatedAt: number): Promise<void> {
+  const existing = await knotStore.getSyncState(knotId);
+  await knotStore.putSyncState({
+    knotId,
+    baseUpdatedAt: existing?.baseUpdatedAt ?? null,
+    conflict: { fileId, remoteUpdatedAt },
+  });
+  eventBus.emit('knots:conflicts', { count: await countConflicts() });
+}
+
+/**
+ * Upsert a knot's backup: find any existing file(s) for it, PATCH the newest
+ * (or POST if none exist), and best-effort delete any other duplicates.
+ * Internal — does NOT queue a retry job on failure; callers decide that.
+ *
+ * Conflict guard: if a remote file exists and it was changed by someone else
+ * since this device's base version (or there is no base and it differs from
+ * this knot), nothing is written; the conflict is recorded and a
+ * `ConflictError` thrown. A remote whose updatedAt already equals this knot's
+ * is never a conflict. (Known leftover race: the check and the write are
+ * separate steps, so two devices saving within seconds can both pass.)
+ */
+async function upsertKnot(knot: Knot): Promise<void> {
+  const existing = await findExistingFiles(`${DRIVE_FILE_PREFIX}${knot.id}.json`);
+  const target = newestFile(existing);
+
+  if (target) {
+    const remoteU = fileUpdatedAt(target);
+    const state = await knotStore.getSyncState(knot.id);
+    const base = state?.baseUpdatedAt ?? null;
+    const remoteChanged = base !== null ? remoteU > base : remoteU !== knot.updatedAt;
+    if (remoteU !== knot.updatedAt && remoteChanged) {
+      await recordConflict(knot.id, target.id, remoteU);
+      throw new ConflictError(knot.id);
+    }
+  }
+
+  await sendKnotToDrive(knot, target?.id);
+  await setBase(knot.id, knot.updatedAt);
+  await deleteDuplicateFiles(existing, target?.id);
 }
 
 /** Find the single `deleted-backups.json` file, if it exists. */
@@ -346,6 +448,8 @@ export interface BackupEntry {
   modifiedTime: string;
   description: string | null;
   kind: 'knot' | 'old';
+  /** Unix ms the knot was checked off (from the file's appProperties), or null if not checked off. */
+  checkedOffAt: number | null;
 }
 
 export interface CloudSyncServiceAPI {
@@ -364,10 +468,47 @@ export interface CloudSyncServiceAPI {
   getAccountEmail(): string | null;
   /** Per-save upload path: upsert now, or queue a retry job on any failure. */
   uploadKnot(knot: Knot): Promise<void>;
-  /** Retry queued upload jobs (upsert path; does not create new jobs). */
-  uploadPending(): Promise<void>;
-  /** Full two-way sync: push local changes, pull remote changes, reconcile duplicates. */
-  syncAll(): Promise<{ pulled: number; pushed: number }>;
+  /**
+   * Retry queued upload jobs (upsert path; does not create new jobs).
+   * Resolves with the number of jobs uploaded successfully this run.
+   */
+  uploadPending(): Promise<number>;
+  /**
+   * Full two-way sync: push local changes, pull remote changes, reconcile
+   * duplicates and check-off state. `conflicts` is the number of knots
+   * currently awaiting conflict review after the pass (0 if the sync didn't run).
+   */
+  syncAll(): Promise<SyncResult>;
+  /**
+   * Write a knot's check-off state to its Drive backup as a METADATA-ONLY
+   * appProperties PATCH. Does nothing if not connected, if the knot has no
+   * backup file yet, or if the backup is cloud-tombstoned (a check-off never
+   * recreates a deleted backup). Throws on a failed request — callers fire and
+   * forget with `.catch`; there is no retry queue, the next full sync reconciles it.
+   */
+  pushCheckOff(knot: Knot): Promise<void>;
+  /** Knots currently awaiting conflict review. */
+  listConflicts(): Promise<Array<{ knotId: string; fileId: string; remoteUpdatedAt: number }>>;
+  /**
+   * Download the newest cloud copy of a knot, for the conflict review screen.
+   * Throws if offline, not connected, or the backup no longer exists.
+   */
+  fetchRemoteKnot(
+    knotId: string
+  ): Promise<{ knot: Knot; updatedAt: number; editedOn: string | null; fileId: string }>;
+  /**
+   * Resolve a conflict. Re-reads the cloud copy's updatedAt first; if it
+   * differs from `expectedRemoteUpdatedAt` (another device pushed again while
+   * the review was open) nothing is written and `{ ok:false, reason:'changed-again' }`
+   * is returned. 'local' keeps this device's version (pushed with a fresh
+   * updatedAt); 'remote' replaces the local copy with the cloud one; 'both'
+   * keeps local AND saves the cloud copy as a NEW knot.
+   */
+  resolveConflict(
+    knotId: string,
+    choice: 'local' | 'remote' | 'both',
+    expectedRemoteUpdatedAt: number
+  ): Promise<{ ok: true } | { ok: false; reason: 'changed-again' }>;
   /** Reset every 'failed' upload job to 'pending' and run a full sync. */
   retryFailed(): Promise<void>;
   /** List every backup file in the Drive appDataFolder (for "Manage backups"). */
@@ -378,7 +519,17 @@ export interface CloudSyncServiceAPI {
   localDeleteConfirmText(): string;
 }
 
-let _syncPromise: Promise<{ pulled: number; pushed: number }> | null = null;
+/** What a `syncAll()` pass did. */
+export interface SyncResult {
+  /** Knots brought in from Drive (content pulls). */
+  pulled: number;
+  /** Knots backed up to Drive (queued uploads flushed + content pushes). */
+  pushed: number;
+  /** Knots currently awaiting conflict review after the pass. */
+  conflicts: number;
+}
+
+let _syncPromise: Promise<SyncResult> | null = null;
 
 export const cloudSyncService: CloudSyncServiceAPI = {
   getConnectionStatus(): ConnectionStatus {
@@ -509,6 +660,9 @@ export const cloudSyncService: CloudSyncServiceAPI = {
     try {
       await upsertKnot(knot);
     } catch (err) {
+      // An edit conflict is owned by the review flow now: no retry job (a
+      // retry would just hit the same guard), and it isn't an upload failure.
+      if (err instanceof ConflictError) return;
       // Queue for retry on any failure — HTTP error, offline, or the OAuth
       // broker being unreachable during a token refresh. Avoid creating a
       // second pending job for the same knot.
@@ -537,7 +691,7 @@ export const cloudSyncService: CloudSyncServiceAPI = {
     }
   },
 
-  async uploadPending(): Promise<void> {
+  async uploadPending(): Promise<number> {
     const db = await openDB();
     const jobs = await dbGetAllByIndex<CloudUploadJob>(
       db,
@@ -547,6 +701,7 @@ export const cloudSyncService: CloudSyncServiceAPI = {
     );
 
     const newlyFailed: CloudUploadJob[] = [];
+    let uploaded = 0;
 
     for (const job of jobs) {
       const inFlight: CloudUploadJob = {
@@ -569,7 +724,13 @@ export const cloudSyncService: CloudSyncServiceAPI = {
         // enqueue a duplicate job alongside this one.
         await upsertKnot(knot);
         await dbDelete(db, 'cloudUploadJobs', job.id);
-      } catch {
+        uploaded++;
+      } catch (err) {
+        if (err instanceof ConflictError) {
+          // The conflict now owns this edit; the job would only re-hit the guard.
+          await dbDelete(db, 'cloudUploadJobs', job.id);
+          continue;
+        }
         if (inFlight.attempts >= 3) {
           const failed: CloudUploadJob = { ...inFlight, status: 'failed' };
           await dbPut(db, 'cloudUploadJobs', failed);
@@ -594,6 +755,8 @@ export const cloudSyncService: CloudSyncServiceAPI = {
         () => void cloudSyncService.retryFailed().catch(() => {})
       );
     }
+
+    return uploaded;
   },
 
   async retryFailed(): Promise<void> {
@@ -611,12 +774,12 @@ export const cloudSyncService: CloudSyncServiceAPI = {
     await cloudSyncService.syncAll();
   },
 
-  async syncAll(): Promise<{ pulled: number; pushed: number }> {
+  async syncAll(): Promise<SyncResult> {
     if (_syncPromise) return _syncPromise;
 
     const token = settingsStore.getCurrent().cloudBackupToken;
     if (!token || !navigator.onLine) {
-      return { pulled: 0, pushed: 0 };
+      return { pulled: 0, pushed: 0, conflicts: 0 };
     }
 
     const promise = doSyncAll().finally(() => {
@@ -624,6 +787,133 @@ export const cloudSyncService: CloudSyncServiceAPI = {
     });
     _syncPromise = promise;
     return promise;
+  },
+
+  async pushCheckOff(knot: Knot): Promise<void> {
+    if (!settingsStore.getCurrent().cloudBackupToken) return;
+
+    const existing = await findExistingFiles(`${DRIVE_FILE_PREFIX}${knot.id}.json`);
+    const target = newestFile(existing);
+    if (!target) return; // no backup yet — the first upload carries the check-off keys
+
+    // A deleted (tombstoned) backup is never recreated or touched by a check-off.
+    const tombstones = await readCloudTombstones();
+    const tombstonedAt = tombstones[knot.id];
+    if (tombstonedAt !== undefined && tombstonedAt >= knot.updatedAt) return;
+
+    // Metadata-only PATCH. Drive merges appProperties per key, so only the two
+    // check-off keys change; null clears a key ("unchecked" -> no checkedOffAt).
+    const res = await driveFetch(`https://www.googleapis.com/drive/v3/files/${target.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        appProperties: {
+          checkedOffAt: knot.checkedOffAt != null ? String(knot.checkedOffAt) : null,
+          checkOffChangedAt: String(knot.checkOffChangedAt ?? 0),
+        },
+      }),
+    });
+    if (!res.ok) throw new Error(`Drive check-off update failed: ${res.status}`);
+  },
+
+  async listConflicts(): Promise<Array<{ knotId: string; fileId: string; remoteUpdatedAt: number }>> {
+    const states = await knotStore.listSyncStates();
+    const out: Array<{ knotId: string; fileId: string; remoteUpdatedAt: number }> = [];
+    for (const s of states) {
+      if (s.conflict) {
+        out.push({ knotId: s.knotId, fileId: s.conflict.fileId, remoteUpdatedAt: s.conflict.remoteUpdatedAt });
+      }
+    }
+    return out;
+  },
+
+  async fetchRemoteKnot(
+    knotId: string
+  ): Promise<{ knot: Knot; updatedAt: number; editedOn: string | null; fileId: string }> {
+    if (!settingsStore.getCurrent().cloudBackupToken) throw new Error('Google Drive not connected');
+    if (!navigator.onLine) throw new Error('Offline');
+
+    const files = await findExistingFiles(`${DRIVE_FILE_PREFIX}${knotId}.json`);
+    const target = newestFile(files);
+    if (!target) throw new Error('Cloud backup not found');
+    const knot = await downloadKnot(target);
+    return {
+      knot,
+      updatedAt: fileUpdatedAt(target),
+      editedOn: target.appProperties?.editedOn ?? null,
+      fileId: target.id,
+    };
+  },
+
+  async resolveConflict(
+    knotId: string,
+    choice: 'local' | 'remote' | 'both',
+    expectedRemoteUpdatedAt: number
+  ): Promise<{ ok: true } | { ok: false; reason: 'changed-again' }> {
+    if (!settingsStore.getCurrent().cloudBackupToken) throw new Error('Google Drive not connected');
+
+    const files = await findExistingFiles(`${DRIVE_FILE_PREFIX}${knotId}.json`);
+    const target = newestFile(files);
+    if (!target) throw new Error('Cloud backup not found');
+
+    // Another device pushed again while the review was open: don't overwrite
+    // anything. Record the new remote version so the review can be re-opened.
+    const remoteU = fileUpdatedAt(target);
+    if (remoteU !== expectedRemoteUpdatedAt) {
+      await recordConflict(knotId, target.id, remoteU);
+      return { ok: false, reason: 'changed-again' };
+    }
+
+    const local = await knotStore.get(knotId);
+    if (!local) throw new Error('Knot not found on this device');
+
+    // Download BEFORE any write so a failed download leaves everything untouched.
+    const remoteKnot = choice === 'local' ? null : await downloadKnot(target);
+
+    if (choice === 'remote') {
+      await knotStore.saveFromSync(withCheckOffRule(remoteKnot!, local));
+      await setBase(knotId, remoteU);
+    } else {
+      // 'both' protects the cloud version BEFORE overwriting it. Order:
+      //   1. (above) the cloud version is already downloaded;
+      //   2. build the copy of it as a brand-new knot: new id, created now,
+      //      original timestamp/location/media preserved, check-off state cleared;
+      //   3. save the copy LOCALLY. If this fails, nothing has been overwritten
+      //      (neither Drive nor the local knot) and the conflict is still recorded;
+      //   4. the 'local' half: overwrite the Drive file with this device's version;
+      //   5. POST the copy and record its base. If this fails, the copy is
+      //      already safe locally as a local-only knot and the next sync pushes it.
+      let copy: Knot | null = null;
+      if (choice === 'both') {
+        const now = Date.now();
+        copy = { ...remoteKnot!, id: crypto.randomUUID(), createdAt: now, updatedAt: now };
+        delete copy.checkedOffAt;
+        delete copy.checkOffChangedAt;
+        await knotStore.save(copy); // step 3
+      }
+
+      // 'local' half (also the whole of choice 'local'): keep this device's
+      // version. A fresh updatedAt (strictly above the cloud's, even under clock
+      // skew) makes it the newest content everywhere. Written straight to the
+      // existing file with sendKnotToDrive, deliberately bypassing the conflict guard.
+      const kept: Knot = { ...local, updatedAt: Math.max(Date.now(), remoteU + 1) };
+      await knotStore.save(kept);
+      await sendKnotToDrive(kept, target.id);
+      await setBase(knotId, kept.updatedAt);
+      await deleteDuplicateFiles(files, target.id);
+
+      if (copy) {
+        await sendKnotToDrive(copy); // step 5
+        await setBase(copy.id, copy.updatedAt);
+      }
+    }
+
+    eventBus.emit('knots:synced', {
+      pulled: choice === 'local' ? 0 : 1,
+      pushed: choice === 'remote' ? 0 : choice === 'both' ? 2 : 1,
+    });
+    eventBus.emit('knots:conflicts', { count: await countConflicts() });
+    return { ok: true };
   },
 
   async listBackups(): Promise<BackupEntry[]> {
@@ -647,6 +937,7 @@ export const cloudSyncService: CloudSyncServiceAPI = {
           modifiedTime: f.modifiedTime,
           description: f.description ?? null,
           kind: (isKnot ? 'knot' : 'old') as 'knot' | 'old',
+          checkedOffAt: isKnot ? parseCheckedOffAt(f.appProperties?.checkedOffAt) : null,
         };
       });
 
@@ -710,9 +1001,10 @@ async function listAllAppDataFiles(): Promise<DriveFile[]> {
  * The full two-way sync pass. Only ever run through `syncAll()`'s
  * single-flight + preconditions wrapper — never called directly.
  */
-async function doSyncAll(): Promise<{ pulled: number; pushed: number }> {
+async function doSyncAll(): Promise<SyncResult> {
   // 1. Flush any queued retries first so they don't race with the full sync.
-  await cloudSyncService.uploadPending();
+  //    Their successes count toward `pushed`.
+  const flushed = await cloudSyncService.uploadPending();
 
   // 2. List ALL appDataFolder files, paginated.
   const files = await listAllAppDataFiles();
@@ -732,22 +1024,49 @@ async function doSyncAll(): Promise<{ pulled: number; pushed: number }> {
       console.warn(`cloudSyncService: skipping ${f.name} — non-numeric updatedAt`);
       continue;
     }
-    remote.push({ fileId: f.id, knotId, updatedAt });
+    remote.push({
+      fileId: f.id,
+      knotId,
+      updatedAt,
+      checkedOffAt: parseCheckedOffAt(f.appProperties?.checkedOffAt),
+      checkOffChangedAt: parseCheckOffChangedAt(f.appProperties?.checkOffChangedAt),
+    });
   }
 
-  // 4. Local knots + local tombstones + cloud tombstones.
-  const [localKnots, localTombstoneRecords, cloudTombstones] = await Promise.all([
+  // 4. Local knots + local tombstones + cloud tombstones + sync bookkeeping
+  //    (read AFTER uploadPending, which may have set bases or recorded conflicts).
+  const [localKnots, localTombstoneRecords, cloudTombstones, syncStates, jobs] = await Promise.all([
     knotStore.listAll(),
     knotStore.listTombstones(),
     readCloudTombstones(),
+    knotStore.listSyncStates(),
+    listUnfinishedJobs(),
   ]);
-  const local: LocalEntry[] = localKnots.map((k) => ({ id: k.id, updatedAt: k.updatedAt }));
+  const local: LocalEntry[] = localKnots.map((k) => ({
+    id: k.id,
+    updatedAt: k.updatedAt,
+    checkedOffAt: k.checkedOffAt ?? null,
+    checkOffChangedAt: k.checkOffChangedAt ?? 0,
+  }));
   const localTombstones = new Set(localTombstoneRecords.map((t) => t.id));
 
-  const plan = planSync(local, remote, localTombstones, cloudTombstones);
+  const base = new Map<string, number>();
+  const conflicted = new Set<string>();
+  const stateById = new Map(syncStates.map((s) => [s.knotId, s]));
+  for (const s of syncStates) {
+    if (s.baseUpdatedAt !== null) base.set(s.knotId, s.baseUpdatedAt);
+    if (s.conflict) conflicted.add(s.knotId);
+  }
+  // Knots with a pending, in-flight or failed upload job hold a local edit
+  // that never reached Drive.
+  const pendingJobKnotIds = new Set(jobs.map((j) => j.knotId));
+
+  const plan = planSync(local, remote, localTombstones, cloudTombstones, base, pendingJobKnotIds, conflicted);
 
   let pulled = 0;
-  let pushed = 0;
+  let pushed = flushed;
+  let checkOffPulled = 0;
+  let conflictsCleared = 0;
 
   // 5. Delete duplicate remote files, best effort — a per-item failure is
   // counted and logged but never aborts the sync.
@@ -767,6 +1086,8 @@ async function doSyncAll(): Promise<{ pulled: number; pushed: number }> {
     try {
       const existingFileId = plan.remoteById.get(knotId)?.fileId;
       await sendKnotToDrive(knot, existingFileId);
+      await setBase(knotId, knot.updatedAt);
+      if (conflicted.has(knotId)) conflictsCleared++;
       pushed++;
       pushedIds.push(knotId);
     } catch (err) {
@@ -777,29 +1098,106 @@ async function doSyncAll(): Promise<{ pulled: number; pushed: number }> {
   // 7. Pull each remote entry that needs it.
   for (const entry of plan.pull) {
     try {
-      const res = await driveFetch(`https://www.googleapis.com/drive/v3/files/${entry.fileId}?alt=media`);
-      if (!res.ok) throw new Error(`Drive download failed: ${res.status}`);
-      const json = await res.text();
-      const knot = jsonToKnot(json);
-      if (!knot) throw new Error('Could not parse downloaded knot');
+      const remoteKnot = await downloadKnot({ id: entry.fileId, appProperties: propsFromEntry(entry) });
+      // Check-off comes from the file's appProperties (already overlaid by
+      // downloadKnot), or the local values if those are newer — never from
+      // the possibly stale JSON body.
+      const knot = withCheckOffRule(remoteKnot, await knotStore.get(entry.knotId));
       // saveFromSync deliberately does not emit knot:saved — a pull is not a
       // local edit. knots:synced (below) is how screens learn to reload.
       await knotStore.saveFromSync(knot);
+      await setBase(entry.knotId, entry.updatedAt);
+      if (conflicted.has(entry.knotId)) conflictsCleared++;
       pulled++;
     } catch (err) {
       console.warn('cloudSyncService: failed to pull knot', entry.knotId, err);
     }
   }
 
-  // 8. Clear any queued upload jobs for knots that were just pushed successfully.
-  if (pushedIds.length > 0) {
+  // 7b. Record agreed versions (also resolves conflicts that became equal).
+  for (const u of plan.baseUpdates) {
+    try {
+      if (conflicted.has(u.knotId)) conflictsCleared++;
+      await setBase(u.knotId, u.updatedAt);
+    } catch (err) {
+      console.warn('cloudSyncService: failed to record base for knot', u.knotId, err);
+    }
+  }
+
+  // 7c. Record new/continuing conflicts. Neither side was touched.
+  const conflictIds = new Set<string>();
+  for (const entry of plan.conflicts) {
+    conflictIds.add(entry.knotId);
+    try {
+      await knotStore.putSyncState({
+        knotId: entry.knotId,
+        baseUpdatedAt: stateById.get(entry.knotId)?.baseUpdatedAt ?? null,
+        conflict: { fileId: entry.fileId, remoteUpdatedAt: entry.updatedAt },
+      });
+    } catch (err) {
+      console.warn('cloudSyncService: failed to record conflict for knot', entry.knotId, err);
+    }
+  }
+
+  // 7d. A recorded conflict whose knot is gone locally or remotely can no
+  // longer be reviewed — drop it (a local delete already clears it; this
+  // covers a backup deleted in Manage backups). Ones the pass just cleared
+  // through push/pull/equality had their record replaced by setBase above.
+  const localIds = new Set(localKnots.map((k) => k.id));
+  for (const id of conflicted) {
+    if (conflictIds.has(id)) continue;
+    const stillRecorded = (await knotStore.getSyncState(id))?.conflict;
+    if (!stillRecorded) continue;
+    if (!localIds.has(id) || !plan.remoteById.has(id)) {
+      conflictsCleared++;
+      await knotStore.putSyncState({ knotId: id, baseUpdatedAt: stateById.get(id)?.baseUpdatedAt ?? null });
+    }
+  }
+
+  // 7e. Check-off: independent of content. Pushes are metadata-only PATCHes;
+  // pulls touch only the two check-off fields, via saveFromSync (no event).
+  for (const op of plan.checkOffPush) {
+    try {
+      const res = await driveFetch(`https://www.googleapis.com/drive/v3/files/${op.fileId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          appProperties: {
+            checkedOffAt: op.checkedOffAt !== null ? String(op.checkedOffAt) : null,
+            checkOffChangedAt: String(op.checkOffChangedAt),
+          },
+        }),
+      });
+      if (!res.ok) throw new Error(`Drive check-off update failed: ${res.status}`);
+    } catch (err) {
+      console.warn('cloudSyncService: failed to push check-off for knot', op.knotId, err);
+    }
+  }
+  for (const op of plan.checkOffPull) {
+    try {
+      // Re-read: the list above may be stale, and a content pull may already
+      // have applied this state.
+      const current = await knotStore.get(op.knotId);
+      if (!current) continue;
+      if ((current.checkOffChangedAt ?? 0) >= op.checkOffChangedAt) continue;
+      await knotStore.saveFromSync({
+        ...current,
+        checkedOffAt: op.checkedOffAt,
+        checkOffChangedAt: op.checkOffChangedAt,
+      });
+      checkOffPulled++;
+    } catch (err) {
+      console.warn('cloudSyncService: failed to apply check-off for knot', op.knotId, err);
+    }
+  }
+
+  // 8. Clear queued upload jobs for knots that were just pushed successfully,
+  // and for knots now in conflict (the conflict owns that local edit).
+  const clearJobsFor = new Set<string>([...pushedIds, ...conflictIds]);
+  if (clearJobsFor.size > 0) {
     const db = await openDB();
-    const [pendingJobs, failedJobs] = await Promise.all([
-      dbGetAllByIndex<CloudUploadJob>(db, 'cloudUploadJobs', 'status', IDBKeyRange.only('pending')),
-      dbGetAllByIndex<CloudUploadJob>(db, 'cloudUploadJobs', 'status', IDBKeyRange.only('failed')),
-    ]);
-    for (const job of [...pendingJobs, ...failedJobs]) {
-      if (pushedIds.includes(job.knotId)) {
+    for (const job of await listUnfinishedJobs()) {
+      if (job.status !== 'in-flight' && clearJobsFor.has(job.knotId)) {
         await dbDelete(db, 'cloudUploadJobs', job.id);
       }
     }
@@ -808,12 +1206,66 @@ async function doSyncAll(): Promise<{ pulled: number; pushed: number }> {
   // 9. Record sync time.
   await settingsStore.save({ lastSyncAt: Date.now() });
 
-  // 10. Notify screens so they can reload pulled knots.
-  if (pulled > 0) {
+  // 10. Notify screens so they can reload pulled knots / check-off changes.
+  if (pulled > 0 || checkOffPulled > 0) {
     eventBus.emit('knots:synced', { pulled, pushed });
   }
 
-  return { pulled, pushed };
+  // 11. Conflicts: emit the current count when there are any, or when this
+  // pass cleared some (so a badge/toast for them can go away).
+  const conflicts = await countConflicts();
+  if (conflicts > 0 || conflictsCleared > 0) {
+    eventBus.emit('knots:conflicts', { count: conflicts });
+  }
+
+  return { pulled, pushed, conflicts };
+}
+
+/** Upload jobs that hold an edit not yet on Drive: pending, in-flight or failed. */
+async function listUnfinishedJobs(): Promise<CloudUploadJob[]> {
+  const db = await openDB();
+  const groups = await Promise.all(
+    (['pending', 'in-flight', 'failed'] as const).map((status) =>
+      dbGetAllByIndex<CloudUploadJob>(db, 'cloudUploadJobs', 'status', IDBKeyRange.only(status))
+    )
+  );
+  return groups.flat();
+}
+
+/** The subset of appProperties `downloadKnot` needs, rebuilt from a planned RemoteEntry. */
+function propsFromEntry(entry: RemoteEntry): Record<string, string> {
+  const props: Record<string, string> = {
+    knotId: entry.knotId,
+    updatedAt: String(entry.updatedAt),
+    checkOffChangedAt: String(entry.checkOffChangedAt ?? 0),
+  };
+  if (entry.checkedOffAt != null) props.checkedOffAt = String(entry.checkedOffAt);
+  return props;
+}
+
+/**
+ * Download and parse one backup file. The check-off fields are then taken from
+ * the file's appProperties (authoritative) — never from the JSON body, which
+ * can be stale because content writes leave the check-off keys alone.
+ */
+async function downloadKnot(file: Pick<DriveFile, 'id' | 'appProperties'>): Promise<Knot> {
+  const res = await driveFetch(`https://www.googleapis.com/drive/v3/files/${file.id}?alt=media`);
+  if (!res.ok) throw new Error(`Drive download failed: ${res.status}`);
+  const knot = jsonToKnot(await res.text());
+  if (!knot) throw new Error('Could not parse downloaded knot');
+  knot.checkedOffAt = parseCheckedOffAt(file.appProperties?.checkedOffAt);
+  knot.checkOffChangedAt = parseCheckOffChangedAt(file.appProperties?.checkOffChangedAt);
+  return knot;
+}
+
+/**
+ * Check-off merge rule for a knot coming from Drive: take the remote check-off
+ * state if its clock is at least as new as the local one, else keep the local.
+ */
+function withCheckOffRule(remote: Knot, local: Knot | undefined): Knot {
+  const localClock = local?.checkOffChangedAt ?? 0;
+  if ((remote.checkOffChangedAt ?? 0) >= localClock) return remote;
+  return { ...remote, checkedOffAt: local?.checkedOffAt ?? null, checkOffChangedAt: localClock };
 }
 
 // ---------------------------------------------------------------------------

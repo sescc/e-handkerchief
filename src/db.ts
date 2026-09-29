@@ -3,7 +3,7 @@
 // ============================================================
 
 const DB_NAME = 'e-handkerchief-db';
-const DB_VERSION = 4;
+const DB_VERSION = 5;
 
 /** Object store name for Knots. Used here and by knotStore.ts instead of a string literal. */
 export const KNOT_OBJECT_STORE = 'knots';
@@ -14,6 +14,13 @@ export const KNOT_OBJECT_STORE = 'knots';
  * `{ id: string; deletedAt: number }` — see the KnotTombstone type.
  */
 export const KNOT_TOMBSTONE_STORE = 'knotTombstones';
+
+/**
+ * Object store name for per-knot sync state (conflict detection). Used here
+ * and by knotStore.ts. Records are `SyncStateRecord` — see types.ts:
+ * `{ knotId, baseUpdatedAt, conflict? }`, keyed by `knotId`.
+ */
+export const SYNC_STATE_STORE = 'syncState';
 
 let _db: IDBDatabase | null = null;
 
@@ -32,8 +39,8 @@ export function openDB(): Promise<IDBDatabase> {
       const oldVersion = event.oldVersion;
 
       if (oldVersion < 1) {
-        // Fresh database — create the full current (v4) schema directly:
-        // knots, cloudUploadJobs, settings, knotTombstones. (No emailJobs —
+        // Fresh database — create the full current (v5) schema directly:
+        // knots, cloudUploadJobs, settings, knotTombstones, syncState. (No emailJobs —
         // save-and-send email was retired in favor of a per-knot Share
         // button; see the v3 -> v4 block below.)
         const knots = db.createObjectStore(KNOT_OBJECT_STORE, { keyPath: 'id' });
@@ -46,6 +53,8 @@ export function openDB(): Promise<IDBDatabase> {
         db.createObjectStore('settings');
 
         db.createObjectStore(KNOT_TOMBSTONE_STORE, { keyPath: 'id' });
+
+        db.createObjectStore(SYNC_STATE_STORE, { keyPath: 'knotId' });
       }
 
       if (oldVersion >= 1 && oldVersion < 2) {
@@ -83,7 +92,17 @@ export function openDB(): Promise<IDBDatabase> {
         }
       }
 
-      // if (oldVersion < 5) { ... }  <- future migrations append a block here
+      if (oldVersion >= 1 && oldVersion < 5) {
+        // v4 -> v5: per-knot sync state (base version + recorded conflict) for
+        // edit-conflict detection. Existing knots simply have no base yet;
+        // the sync planner handles that case without losing data.
+        // (A fresh database, oldVersion 0, already got it in the block above.)
+        if (!db.objectStoreNames.contains(SYNC_STATE_STORE)) {
+          db.createObjectStore(SYNC_STATE_STORE, { keyPath: 'knotId' });
+        }
+      }
+
+      // if (oldVersion < 6) { ... }  <- future migrations append a block here
     };
 
     req.onblocked = () => {

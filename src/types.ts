@@ -75,7 +75,24 @@ export interface Knot {
   transcriptionStatus?: 'none' | 'live' | 'pending' | 'done' | 'failed';
   /** Unix ms — used for Knots sort order */
   createdAt: number;
+  /**
+   * Unix ms of the last CONTENT edit. Drives sync/conflict detection.
+   * Checking a knot off or unchecking it deliberately does NOT bump this.
+   */
   updatedAt: number;
+  /**
+   * Unix ms when the knot was checked off; null/absent = not checked off.
+   * Deliberately does NOT bump `updatedAt` (check-off is not a content edit,
+   * so it never causes a conflict, never lifts a cloud tombstone and never
+   * re-uploads media). It merges across devices on `checkOffChangedAt`.
+   */
+  checkedOffAt?: number | null;
+  /**
+   * Unix ms of the last check or uncheck — the check-off state's own
+   * last-write-wins clock. Absent = 0. Also deliberately does NOT bump
+   * `updatedAt`.
+   */
+  checkOffChangedAt?: number;
 }
 
 export interface OAuthToken {
@@ -104,6 +121,12 @@ export interface AppSettings {
   dateFormat: 'DD MMM YYYY' | 'MMM DD, YYYY' | 'YYYY-MM-DD' | 'DD/MM/YYYY' | 'MM/DD/YYYY';
   /** Time format. Default "24h". */
   timeFormat: '24h' | '12h';
+  /** "HH:MM" local time at which a new day starts; checked-off knots leave the Knots list then. Default "03:00". */
+  dayCutoff: string;
+  /** Append the "Shared from e-Handkerchief" footer to shared knots. Default true. */
+  shareAttribution: boolean;
+  /** Keep a quick-capture notification in the notification drawer (once permission is granted). Default true. */
+  quickCaptureNotification: boolean;
 }
 
 export type UploadJobStatus = 'pending' | 'in-flight' | 'failed';
@@ -128,4 +151,24 @@ export interface CloudUploadJob {
 export interface KnotTombstone {
   id: string;
   deletedAt: number;
+}
+
+/**
+ * Per-knot sync bookkeeping, stored locally (IndexedDB `syncState`, keyed by
+ * `knotId`). `baseUpdatedAt` is the content version (`updatedAt`) this device
+ * and Drive last agreed on — the "base" of the three-way comparison that
+ * detects edit conflicts. `conflict` is set while the knot was edited on two
+ * devices and is waiting for the user to review it.
+ */
+export interface SyncStateRecord {
+  knotId: string;
+  /** Content `updatedAt` last agreed with Drive; null if none recorded yet. */
+  baseUpdatedAt: number | null;
+  /** Present while this knot awaits conflict review. */
+  conflict?: {
+    /** Drive file id of the newest remote copy when the conflict was recorded. */
+    fileId: string;
+    /** That remote copy's content `updatedAt`. */
+    remoteUpdatedAt: number;
+  };
 }

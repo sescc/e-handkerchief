@@ -1,6 +1,6 @@
 # e-Handkerchief
 
-A mobile-first PWA for tying location-aware knots — quick reminders you capture with voice, photo/video, or text — with automatic GPS tagging and timestamp. Browse them in the Knots list or on a monthly Calendar, and share any single knot through your device's own share sheet. All data is stored locally in IndexedDB and works fully offline after first load; connect Google Drive for automatic two-way backup across devices.
+A mobile-first PWA for tying location-aware knots — quick reminders you capture with voice, photo/video, or text — with automatic GPS tagging and timestamp. Browse them in the Knots list or on a monthly Calendar, check off the ones you've dealt with, and share one knot or several through your device's own share sheet. All data is stored locally in IndexedDB and works fully offline after first load; connect Google Drive for automatic two-way backup across devices.
 
 ## Build
 
@@ -21,6 +21,10 @@ npx tsc
 node src/router.chartest.js
 node src/syncPlan.chartest.js
 node src/knotSummary.chartest.js
+node src/dayCutoff.chartest.js
+node src/knotDiff.chartest.js
+node src/deviceLabel.chartest.js
+node src/mergeMessage.chartest.js
 node src/components/timezoneCombobox.proptest.js
 ```
 
@@ -108,6 +112,28 @@ The `transcribe-worker/` folder lives in this SAME repository (a monorepo) and i
 - The GitHub Pages workflow only publishes the PWA's own files (`index.html`, `app.css`, `manifest.webmanifest`, `sw.js`, `config.js`, `src/`, `icons/`); the `transcribe-worker/` folder is not part of the deployed site.
 - The repo contains NO secrets (the Groq key is a Cloudflare secret set via `wrangler secret put`), so the whole repo — worker subfolder included — is safe to push publicly.
 
+## Checking off a knot
+
+When you've dealt with a knot, **check it off** — it's not the same as deleting it. There's a
+check-off button (✓, or ↩ once a knot is checked off) on each entry in the Knots list, and a
+**Check off** / **Uncheck** button on the knot's detail page. You get a **Checked off · Undo** (or **Unchecked · Undo**) toast, so a
+slip of the thumb is easy to reverse.
+
+- A checked-off knot stays in the Knots list, **faded and struck through**, until the next
+  **New day starts at** time — 03:00 by default, changeable in Settings, and evaluated in the
+  timezone you've chosen in Settings. A knot checked off at 01:00 leaves the list at 03:00 that
+  morning; one checked off at 23:00 leaves it at 03:00 the next day.
+- After that it's **hidden from the Knots list only**. It stays in the Calendar (faded) and on
+  its detail page, where you can uncheck it. A **Show N checked-off knots** toggle in
+  the list brings the hidden ones back into view (and **Hide checked-off knots**
+  tucks them away again). The list updates by itself when a cutoff passes while it's open; if
+  every knot is checked off you'll see "All your knots are checked off."
+- Checking off is **not an edit**: it doesn't change the knot's content, so it never causes an
+  "edited on two devices" prompt and never re-uploads the knot's photos or recordings. It
+  syncs to your other devices on its own, and a check-off never restores a backup you deleted.
+- In **Manage backups**, a checked-off knot's backup carries a **Checked off** badge, so you can
+  see which backups are safe to delete.
+
 ## Sharing a knot
 
 Every knot has a **📤 Share** button on its detail page (`#/knot/{id}`), next to Edit and
@@ -124,11 +150,42 @@ messaging apps, Bluetooth, AirDrop, "Copy", and so on.
 - If the browser has no share sheet at all (`navigator.share` unsupported), the text is
   copied to the clipboard instead, with a toast confirming the copy.
 - Cancelling the share sheet does nothing — no error, no toast.
+- By default the text ends with **— Shared from e-Handkerchief** and a link to the app, so
+  the people you share with can find it. Turn this off in **Settings → Sharing** ("Add
+  'Shared from e-Handkerchief' to shared knots").
+
+### Sharing several knots at once
+
+In the Knots list, tap **Select** to turn the entries into tick-boxes, pick the knots you want,
+and tap **Share (N)**. Tap **Cancel** to leave selection mode. Everything goes out as **one
+message**: a header line ("3 knots from e-Handkerchief"), each knot's text with a `———` line
+between knots, and the "Shared from e-Handkerchief" footer once at the end. Attached files are
+named so they never clash (`knot1-photo-1.jpg`, `knot2-photo-1.jpg`, …), and the 50 MB limit
+applies to all of them together — over that, just the text is shared.
 
 A **daily email summary** (an automatic digest of the day's knots, emailed to a recipient
 you configure) is planned but not built yet. Settings → Daily Email Summary still has the
 enable toggle and recipient field, saved for when it ships, but until then Share is how you
 get a knot out of the app.
+
+## Quick-capture notification and shortcut
+
+Two ways to open the Capture screen in one tap:
+
+- **Home-icon shortcut:** once the app is installed, long-press its home-screen icon and choose
+  **Tie a Knot**.
+- **Quick-capture notification:** a "Tap to tie a knot" notification in your notification
+  drawer. In **Settings → Notifications**, tap **Allow notifications**; your browser asks for
+  permission at that moment (and only then). Once allowed, **Quick-capture notification** is a
+  simple on/off toggle. If you've blocked notifications for the site, Settings says "Blocked in
+  browser settings" — change it in your browser's site settings. If your browser has no
+  notification support, that section isn't shown.
+
+**A limit worth knowing about:** web apps can't pin a notification. On Android you can still
+**swipe it away**. The app puts it back **every time you open it** and **after each tap**, but
+it can't keep it there permanently — that would need a native app, which this isn't. Tapping
+it opens the Capture screen (under the app's own address, including a GitHub Pages
+sub-path).
 
 ## Cloud Backup & Sync (Google Drive)
 
@@ -157,8 +214,9 @@ Once connected, sync is **automatic and two-way** — you don't have to do anyth
 knot tied on one device to show up on another signed into the same Google account. A sync
 runs: on app startup (if already connected and online), whenever the device comes back
 online, immediately after you connect, and whenever you tap **Merge with Cloud** in
-Settings. For each knot, whichever side was edited most recently — this device or Drive —
-wins; the older copy is replaced.
+Settings. For each knot, if only one side changed since the two last agreed — this device or
+Drive — the other side is updated to match. If **both** were edited, nothing is overwritten:
+you're asked to review it (see *When the same knot is edited on two devices* below).
 
 **Multiple devices, one account:** because every device connected to the same Google
 account shares one Drive app-data folder, a knot created on your phone appears on your
@@ -186,9 +244,36 @@ file on your account from a desktop.
 
 **Merge with Cloud / Last merged:** Settings → Cloud Backup has a **Merge with Cloud**
 button (greyed out, with a hint, when disconnected or offline) that runs a sync on demand
-and reports how many knots were pulled and pushed. Data is never deleted during a merge.
-Below it, **Last merged** shows the time of the most recent successful sync, or "Not merged
-yet".
+and reports what happened: how many knots were brought in, how many were backed up (including
+any that were waiting to upload), and how many need your review — or "Already up to date —
+nothing to merge". Data is never deleted during a merge. If a knot was edited on two devices,
+you'll be asked which version to keep. Below it, **Last merged** shows the time of the most recent
+successful sync, or "Not merged yet".
+
+### When the same knot is edited on two devices
+
+If you edit a knot on your phone and, before the two devices have synced, edit the same knot on
+your tablet, the app can't tell which version you want — so it **never picks one for you**.
+Instead you'll see a message ("1 knot also has edits from another device — tap to review"), a
+**⚠ Also edited on another device** badge on the knot in the Knots list, and a **Review**
+banner on its detail page.
+
+The **Review changes** screen tells you which version is which — **On this device** and
+**Latest in the cloud**, with which device the cloud version came from and when — and then
+lists what's different: changed text (lines marked − exist only on this device, lines marked +
+only in the cloud version), photos, videos or voice recordings that are only in one of them,
+transcripts, and location. You choose:
+
+- **Keep this device's version** — this device's copy replaces the cloud one.
+- **Keep the cloud version** — the cloud copy replaces this device's.
+- **Keep both** — this device's version stays, and the cloud version is saved as a **new knot**,
+  which you can check off or delete later.
+
+Reviewing needs an internet connection. If the cloud version changes again while you're
+looking at it, nothing is overwritten — you're shown the newer version to review. With three or
+more devices, a review is always between the device you're holding and the newest version in the
+cloud, and only the device that has the unsynced edit is asked. (Checking a knot off never
+counts as an edit.)
 
 ### Setting up cloud backup (site owner)
 
@@ -305,9 +390,18 @@ e-Handkerchief/
 │   ├── transcriptionService.ts
 │   ├── knotSummary.ts      # Pure: share summary text + media filenames
 │   ├── knotSummary.chartest.ts # Test: knotSummaryText / mediaFileName
-│   ├── shareService.ts     # Web Share API wrapper + clipboard fallback
-│   ├── syncPlan.ts         # Pure: two-way sync push/pull/dedupe decisions
+│   ├── shareService.ts     # Web Share API wrapper (one or several knots) + clipboard fallback
+│   ├── syncPlan.ts         # Pure: base-aware push/pull/conflict/check-off/dedupe decisions
 │   ├── syncPlan.chartest.ts    # Test: planSync
+│   ├── checkOffActions.ts  # Check off / uncheck / Undo, shared by the Knots list and detail screen
+│   ├── dayCutoff.ts        # Pure: when a checked-off knot leaves the Knots list
+│   ├── dayCutoff.chartest.ts   # Test: dayCutoff
+│   ├── knotDiff.ts         # Pure: diff of two versions of a knot (conflict review)
+│   ├── knotDiff.chartest.ts    # Test: knotDiff
+│   ├── deviceLabel.ts      # Pure: user agent -> "Android" / "Windows" / ...
+│   ├── deviceLabel.chartest.ts # Test: deviceLabel
+│   ├── mergeMessage.ts     # Pure: "Merge with Cloud" result wording
+│   ├── mergeMessage.chartest.ts # Test: mergeMessage
 │   ├── notificationService.ts
 │   ├── cloudSyncService.ts # Google Drive backup: OAuth2 PKCE, upsert, two-way sync, backups
 │   ├── toastService.ts
@@ -320,6 +414,7 @@ e-Handkerchief/
 │       ├── knotsScreen.ts
 │       ├── calendarScreen.ts
 │       ├── knotDetailScreen.ts
+│       ├── conflictScreen.ts
 │       └── settingsScreen.ts
 ├── icons/                  # PWA icon assets
 ├── oauth-worker/           # Cloudflare Worker: Google OAuth token broker, owner-operated (deploys separately via wrangler)

@@ -31,7 +31,58 @@ export function collectTranscripts(knot: Knot): string[] {
  * @param formatTimestamp Injected so this module stays DOM/settings-free —
  *   pass `formatKnotTimestamp` from dateFormat.ts in real use.
  */
-export function knotSummaryText(knot: Knot, formatTimestamp: (iso: string) => string): string {
+export function knotSummaryText(
+  knot: Knot,
+  formatTimestamp: (iso: string) => string,
+  opts?: SummaryOptions
+): string {
+  const sections: string[] = [knotBodyText(knot, formatTimestamp)];
+  if (opts?.attribution) sections.push(attributionFooter(opts.attribution.appUrl));
+  return sections.join('\n\n').trimEnd();
+}
+
+/** Options for the summary builders. */
+export interface SummaryOptions {
+  /** When set, a "Shared from e-Handkerchief" footer with a link is appended once, at the end. */
+  attribution?: { appUrl: string };
+}
+
+/** The footer section: attribution line, then the app link on its own line. */
+function attributionFooter(appUrl: string): string {
+  return `— Shared from e-Handkerchief\n${appUrl}`;
+}
+
+/** Separator placed between knots in a multi-knot summary. */
+const KNOT_SEPARATOR = '\n\n———\n\n';
+
+/**
+ * Build the plain-text summary for several knots at once.
+ * - 0 knots -> "".
+ * - 1 knot  -> identical to `knotSummaryText`.
+ * - More    -> a header line ("N knots from e-Handkerchief" with attribution,
+ *   plain "N knots" without), each knot's summary joined by a `———` line, then
+ *   the attribution footer ONCE when attribution is on.
+ * Like `knotSummaryText`, the result never contains a doubled blank line.
+ */
+export function knotsSummaryText(
+  knots: Knot[],
+  formatTimestamp: (iso: string) => string,
+  opts?: SummaryOptions
+): string {
+  if (knots.length === 0) return '';
+  if (knots.length === 1) return knotSummaryText(knots[0], formatTimestamp, opts);
+
+  const header = opts?.attribution
+    ? `${knots.length} knots from e-Handkerchief`
+    : `${knots.length} knots`;
+  const bodies = knots.map((k) => knotBodyText(k, formatTimestamp)).join(KNOT_SEPARATOR);
+  const sections = [header, bodies];
+  if (opts?.attribution) sections.push(attributionFooter(opts.attribution.appUrl));
+  return sections.join('\n\n').trimEnd();
+}
+
+/** One knot's summary WITHOUT any footer: the building block for both builders. */
+function knotBodyText(knot: Knot, formatTimestamp: (iso: string) => string): string {
   const sections: string[] = [];
 
   // --- Header: timestamp + optional place (address/coords + Maps link, or
@@ -105,11 +156,14 @@ function extensionForMimeType(mimeType: string): string {
  * Build a share-friendly filename for a media item, e.g. `knot-photo-1.jpg`.
  * The extension comes from the item's blob MIME type; `index` is embedded
  * verbatim, so callers decide the numbering (e.g. 1-based, per media type).
+ * `prefix` (default `knot`) lets a multi-knot share keep filenames unique,
+ * e.g. `knot2-photo-1.jpg`.
  */
 export function mediaFileName(
   item: PhotoMediaItem | VideoMediaItem | AudioMediaItem,
-  index: number
+  index: number,
+  prefix = 'knot'
 ): string {
   const ext = extensionForMimeType(item.blob.type);
-  return `knot-${item.type}-${index}.${ext}`;
+  return `${prefix}-${item.type}-${index}.${ext}`;
 }

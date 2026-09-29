@@ -14,6 +14,8 @@ import { remoteTranscribe } from '../remoteTranscribe.js';
 import { settingsStore } from '../settingsStore.js';
 import { cloudSyncService } from '../cloudSyncService.js';
 import { shareKnot } from '../shareService.js';
+import { toggleCheckOff, withLatestCheckOff } from '../checkOffActions.js';
+import { isCheckedOff } from '../dayCutoff.js';
 import { renderMediaCapture } from '../components/mediaCapture.js';
 import type {
   Knot,
@@ -85,6 +87,35 @@ export function renderKnotDetail(
   // True while the edit form is open. Gates the 'knots:synced' handler below
   // so an in-progress edit is never clobbered by a pulled update.
   let isEditing = false;
+  // Placeholder (first child of contentEl) that shows the "edited on another
+  // device" banner; null while editing or on the not-found view.
+  let conflictBannerEl: HTMLElement | null = null;
+
+  /** Show or hide the conflict banner for this knot from the recorded conflict state. */
+  async function updateConflictBanner(): Promise<void> {
+    const el = conflictBannerEl;
+    if (!el || !knotId) return;
+    let hasConflict = false;
+    try {
+      const conflicts = await cloudSyncService.listConflicts();
+      hasConflict = conflicts.some((c) => c.knotId === knotId);
+    } catch {
+      /* no conflict info — leave the banner hidden */
+    }
+    el.textContent = '';
+    el.style.display = hasConflict ? '' : 'none';
+    if (!hasConflict) return;
+
+    const msg = document.createElement('span');
+    msg.textContent = 'This knot also has edits from another device.';
+    el.appendChild(msg);
+
+    const reviewBtn = document.createElement('button');
+    reviewBtn.className = 'btn btn-primary btn-sm';
+    reviewBtn.textContent = 'Review';
+    reviewBtn.addEventListener('click', () => navigate(`#/conflict/${knotId}`));
+    el.appendChild(reviewBtn);
+  }
 
   function clearContentUrls(): void {
     for (const url of objUrls.splice(0)) {
@@ -129,6 +160,19 @@ export function renderKnotDetail(
     });
     actionsEl.appendChild(shareBtn);
 
+    const checkBtn = document.createElement('button');
+    checkBtn.className = 'btn btn-ghost';
+    checkBtn.textContent = isCheckedOff(knot) ? 'Uncheck' : 'Check off';
+    checkBtn.addEventListener('click', () => {
+      // The screen re-renders from the 'knot:checkedOff' event below.
+      void toggleCheckOff(knot.id)
+        .catch((err) => {
+          console.warn('Check-off failed:', err);
+          toastService.show('Could not save — please try again');
+        });
+    });
+    actionsEl.appendChild(checkBtn);
+
     const editBtn = document.createElement('button');
     editBtn.className = 'btn btn-ghost';
     editBtn.textContent = '✏️ Edit';
@@ -158,6 +202,13 @@ export function renderKnotDetail(
     clearContentUrls();
     contentEl.innerHTML = '';
     renderActions(knot);
+
+    // Conflict banner (filled asynchronously; hidden unless a conflict exists)
+    conflictBannerEl = document.createElement('div');
+    conflictBannerEl.className = 'conflict-banner';
+    conflictBannerEl.style.display = 'none';
+    contentEl.appendChild(conflictBannerEl);
+    void updateConflictBanner();
 
     // Timestamp
     const tsEl = document.createElement('div');
@@ -296,6 +347,7 @@ export function renderKnotDetail(
           audioItem.transcript = (result.text ?? '').trim();
           audioItem.transcriptionStatus = 'done';
           knot.updatedAt = Date.now();
+          await withLatestCheckOff(knot);
           await knotStore.save(knot);
           eventBus.emit('knot:saved', knot);
           toastService.show(isRetry ? 'Re-transcribed' : 'Transcription added');
@@ -303,6 +355,7 @@ export function renderKnotDetail(
         } else {
           audioItem.transcriptionStatus = 'failed';
           knot.updatedAt = Date.now();
+          await withLatestCheckOff(knot);
           await knotStore.save(knot);
           eventBus.emit('knot:saved', knot);
           toastService.show(result.error ?? 'Transcription failed');
@@ -331,6 +384,7 @@ export function renderKnotDetail(
           audioItem.transcript = textarea.value.trim();
           audioItem.transcriptionStatus = 'done';
           knot.updatedAt = Date.now();
+          await withLatestCheckOff(knot);
           await knotStore.save(knot);
           eventBus.emit('knot:saved', knot);
           toastService.show('Transcript saved');
@@ -379,6 +433,7 @@ export function renderKnotDetail(
     clearContentUrls();
     contentEl.innerHTML = '';
     actionsEl.innerHTML = ''; // hide view-mode actions while editing
+    conflictBannerEl = null;
 
     // Timestamp (read-only)
     const tsEl = document.createElement('div');
@@ -633,6 +688,9 @@ export function renderKnotDetail(
 
         mediaCapture.destroy();
 
+        // The edit form was built from a possibly stale copy: take the latest
+        // stored check-off state so this content save can't revert it.
+        await withLatestCheckOff(updatedKnot);
         await knotStore.save(updatedKnot);
         eventBus.emit('knot:saved', updatedKnot);
         toastService.show('Knot updated');
@@ -648,7 +706,8 @@ export function renderKnotDetail(
       // Tear down the media capture component (stops recording/recognition,
       // revokes object URLs) before leaving edit mode.
       mediaCapture.destroy();
-      renderKnot(knot);
+      // Re-read the knot: its check-off state may have changed while editing.
+      knotStore.get(knot.id).then((latest) => renderKnot(latest ?? knot)).catch(() => renderKnot(knot));
     });
     editActions.appendChild(cancelBtn);
 
@@ -659,6 +718,7 @@ export function renderKnotDetail(
     clearContentUrls();
     contentEl.innerHTML = '';
     actionsEl.innerHTML = '';
+    conflictBannerEl = null;
 
     const heading = document.createElement('h2');
     heading.textContent = 'Knot not found';
@@ -704,9 +764,31 @@ export function renderKnotDetail(
     });
   });
 
+  // A check-off / uncheck of THIS knot (Undo from the toast, the Knots list…):
+  // re-render so the button label and faded state are current. While editing,
+  // the edit save merges the latest check-off state itself
+  // (withLatestCheckOff), so nothing is lost and the form isn't disturbed.
+  const unsubscribeCheckedOff = eventBus.on('knot:checkedOff', (changed) => {
+    if (!knotId || changed.id !== knotId || isEditing) return;
+    knotStore.get(knotId).then((knot) => {
+      if (isEditing || !knot) return;
+      renderKnot(knot);
+    }).catch(() => {
+      /* ignore — keep showing the current view */
+    });
+  });
+
+  // 'knots:conflicts' is current state (may fire several times per sync):
+  // just refresh the banner.
+  const unsubscribeConflicts = eventBus.on('knots:conflicts', () => {
+    void updateConflictBanner();
+  });
+
   // Cleanup
   return () => {
     unsubscribeSynced();
+    unsubscribeCheckedOff();
+    unsubscribeConflicts();
     for (const url of objUrls) {
       URL.revokeObjectURL(url);
     }
