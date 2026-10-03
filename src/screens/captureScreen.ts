@@ -44,8 +44,11 @@ export function renderCapture(container: HTMLElement): () => void {
   // ---- State ----
   const timestamp = makeTimestamp();
   let location: KnotLocation | null = null;
-  let locationStatus: 'loading' | 'ok' | 'denied' | 'unavailable' = 'loading';
   let isSaving = false;
+  // Location request bookkeeping: only the latest request may render / set `location`.
+  let locationRequestId = 0;
+  let locationLoading = false;
+  let disposed = false;
 
   // Cleanup registry
   const listenerCleanups: Array<() => void> = [];
@@ -70,10 +73,6 @@ export function renderCapture(container: HTMLElement): () => void {
 
   const metaLocation = document.createElement('div');
   metaLocation.className = 'capture-meta';
-  const locSpinner = document.createElement('span');
-  locSpinner.className = 'location-loading';
-  locSpinner.innerHTML = '<span class="spinner spinner--sm"></span> Getting location…';
-  metaLocation.appendChild(locSpinner);
   header.appendChild(metaLocation);
 
   root.appendChild(header);
@@ -138,37 +137,63 @@ export function renderCapture(container: HTMLElement): () => void {
   }
 
   // ---- Geo location ----
-  geoService.getCurrentPosition().then((loc) => {
-    location = loc;
-    if (loc) {
-      locationStatus = 'ok';
-      locSpinner.remove();
+  function renderLocationLoading(): void {
+    const spinner = document.createElement('span');
+    spinner.className = 'location-loading';
+    spinner.innerHTML = '<span class="spinner spinner--sm"></span> Getting location…';
+    metaLocation.replaceChildren(spinner);
+  }
+
+  function renderLocationFailure(reason: 'denied' | 'unavailable'): void {
+    const retryBtn = document.createElement('button');
+    retryBtn.type = 'button';
+    retryBtn.className = 'location-retry';
+    retryBtn.textContent =
+      reason === 'denied'
+        ? 'Location blocked for this site — allow it in browser settings, then tap to retry'
+        : 'Location unavailable — tap to retry';
+    retryBtn.addEventListener('click', onLocationRetryClick);
+    metaLocation.replaceChildren(retryBtn);
+  }
+
+  function fetchLocation(): void {
+    const requestId = ++locationRequestId;
+    locationLoading = true;
+    renderLocationLoading();
+
+    void geoService.locate().then((result) => {
+      if (disposed || requestId !== locationRequestId) return;
+      locationLoading = false;
+
+      if (!result.ok) {
+        renderLocationFailure(result.reason);
+        return;
+      }
+
+      const loc = result.coords;
+      location = loc;
       const locText = document.createElement('span');
       locText.className = 'knot-location';
-      if (loc.resolvedAddress) {
-        locText.textContent = loc.resolvedAddress;
-      } else {
-        locText.textContent = `${loc.latitude.toFixed(5)}, ${loc.longitude.toFixed(5)}`;
-      }
-      metaLocation.appendChild(locText);
+      locText.textContent = `${loc.latitude.toFixed(5)}, ${loc.longitude.toFixed(5)}`;
+      metaLocation.replaceChildren(locText);
 
       // Attempt reverse geocoding in the background
-      geoService.reverseGeocode(loc.latitude, loc.longitude).then((addr) => {
+      void geoService.reverseGeocode(loc.latitude, loc.longitude).then((addr) => {
+        if (disposed || requestId !== locationRequestId) return;
         if (addr && location) {
           location = { ...location, resolvedAddress: addr };
           locText.textContent = addr;
         }
       });
-    } else {
-      locationStatus = 'unavailable';
-      locSpinner.remove();
-      const locMsg = document.createElement('span');
-      locMsg.className = 'text-muted';
-      locMsg.style.fontSize = '12px';
-      locMsg.textContent = 'Location unavailable — enable in device settings';
-      metaLocation.appendChild(locMsg);
-    }
-  });
+    });
+  }
+
+  function onLocationRetryClick(): void {
+    if (locationLoading) return;
+    fetchLocation();
+  }
+
+  fetchLocation();
 
   // ---- Save ----
   const onSaveClick = async (): Promise<void> => {
@@ -258,7 +283,7 @@ export function renderCapture(container: HTMLElement): () => void {
         deferredMsg =
           'Saved. Voice transcription was unavailable — you can transcribe later from the knot.';
       }
-      toastService.show(deferredMsg, 6000);
+      toastService.show(deferredMsg);
     }
 
     // Cloud backup upload is triggered by the app-level knot:saved listener
@@ -267,11 +292,14 @@ export function renderCapture(container: HTMLElement): () => void {
     navigate('#/knots');
   };
 
-  saveBtn.addEventListener('click', () => void onSaveClick());
-  listenerCleanups.push(() => saveBtn.removeEventListener('click', () => void onSaveClick()));
+  const onSaveClickEvent = (): void => { void onSaveClick(); };
+  saveBtn.addEventListener('click', onSaveClickEvent);
+  listenerCleanups.push(() => saveBtn.removeEventListener('click', onSaveClickEvent));
 
   // ---- Cleanup ----
   return () => {
+    disposed = true;
+
     // Tear down the media capture component (stops recording/recognition,
     // revokes object URLs, removes its listeners).
     mediaCapture.destroy();

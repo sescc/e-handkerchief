@@ -67,6 +67,9 @@ interface SpeechRecognitionLike {
   abort(): void;
 }
 
+/** After stop(), force-finish if the engine never fires onend (it would otherwise hang the save). */
+const STOP_SAFETY_MS = 3000;
+
 // Detect SpeechRecognition availability (standard + webkit-prefixed)
 const SpeechRecognitionCtor: (new () => SpeechRecognitionLike) | undefined =
   (
@@ -187,6 +190,7 @@ export const transcriptionService: TranscriptionServiceAPI = {
     let currentRecognition: SpeechRecognitionLike | null = null;
     let lastError: string | null = null;
     let resolved = false;
+    let stopSafetyTimer: ReturnType<typeof setTimeout> | null = null;
     let resolveResult!: (value: string | null) => void;
     const textListeners: Array<(liveText: string) => void> = [];
     const errorListeners: Array<(code: string) => void> = [];
@@ -200,6 +204,10 @@ export const transcriptionService: TranscriptionServiceAPI = {
     const finish = (): void => {
       if (resolved) return;
       resolved = true;
+      if (stopSafetyTimer !== null) {
+        clearTimeout(stopSafetyTimer);
+        stopSafetyTimer = null;
+      }
       // Apply the same "don't double-append" guard as folding so the SAVED
       // text has no trailing duplication when committed already ends with the
       // current instance's finalized text.
@@ -281,6 +289,9 @@ export const transcriptionService: TranscriptionServiceAPI = {
       // onend finishes rather than auto-restarts. Other errors leave
       // stopped as-is so onend's auto-restart continues the session.
       recognition.onerror = (event: SpeechRecognitionErrorEventLike): void => {
+        // Late events after the session finished (e.g. 'aborted' dispatched
+        // after the stop safety cap's abort()) are ignored.
+        if (resolved) return;
         lastError = event.error;
         if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
           stopped = true;
@@ -339,6 +350,23 @@ export const transcriptionService: TranscriptionServiceAPI = {
           currentRecognition?.stop();
         } catch {
           finish();
+          return;
+        }
+        // Some engines never fire onend after stop(), which would leave
+        // `result` pending forever and block saving the recording. Force-finish
+        // with whatever text was collected. `stopped` is already true, so no
+        // restart can happen; finish() is idempotent against a late onend.
+        if (!resolved && stopSafetyTimer === null) {
+          stopSafetyTimer = setTimeout(() => {
+            stopSafetyTimer = null;
+            if (resolved) return;
+            try {
+              currentRecognition?.abort();
+            } catch {
+              /* already stopped */
+            }
+            finish();
+          }, STOP_SAFETY_MS);
         }
       },
     };

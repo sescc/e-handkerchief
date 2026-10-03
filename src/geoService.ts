@@ -15,6 +15,12 @@ export interface GeoServiceAPI {
   getCurrentPosition(): Promise<KnotLocation | null>;
 
   /**
+   * Like getCurrentPosition(), but reports whether a failure was a permission
+   * denial or anything else. Never rejects.
+   */
+  locate(): Promise<LocateResult>;
+
+  /**
    * Reverse-geocode a coordinate to a human-readable address via Nominatim.
    * Returns the address (≤ 100 characters) or null on any failure.
    * Never throws.
@@ -22,35 +28,61 @@ export interface GeoServiceAPI {
   reverseGeocode(lat: number, lng: number): Promise<string | null>;
 }
 
-export const geoService: GeoServiceAPI = {
-  getCurrentPosition(): Promise<KnotLocation | null> {
-    return new Promise((resolve) => {
-      if (!navigator.geolocation) {
-        resolve(null);
-        return;
-      }
+/** Outcome of a location request, distinguishing a permission block from other failures. */
+export type LocateResult =
+  | { ok: true; coords: KnotLocation }
+  | { ok: false; reason: 'denied' | 'unavailable' };
 
-      // Belt-and-suspenders: our own timeout in case the API doesn't respect its timeout option
-      const guard = setTimeout(() => resolve(null), 10000);
+/**
+ * Request the current GPS position, reporting why it failed.
+ * Always resolves within 10 seconds — never rejects.
+ * PERMISSION_DENIED (code 1) -> 'denied'; POSITION_UNAVAILABLE, TIMEOUT, the
+ * guard timeout, or no geolocation support -> 'unavailable'.
+ */
+export function locate(): Promise<LocateResult> {
+  return new Promise((resolve) => {
+    if (!navigator.geolocation) {
+      resolve({ ok: false, reason: 'unavailable' });
+      return;
+    }
 
+    // Belt-and-suspenders: our own timeout in case the API doesn't respect its timeout option
+    const guard = setTimeout(() => resolve({ ok: false, reason: 'unavailable' }), 10000);
+
+    try {
       navigator.geolocation.getCurrentPosition(
         (pos) => {
           clearTimeout(guard);
           resolve({
-            latitude: pos.coords.latitude,
-            longitude: pos.coords.longitude,
-            accuracyMeters: pos.coords.accuracy ?? null,
+            ok: true,
+            coords: {
+              latitude: pos.coords.latitude,
+              longitude: pos.coords.longitude,
+              accuracyMeters: pos.coords.accuracy ?? null,
+            },
           });
         },
-        () => {
-          // PERMISSION_DENIED, POSITION_UNAVAILABLE, or TIMEOUT
+        (err) => {
           clearTimeout(guard);
-          resolve(null);
+          // PERMISSION_DENIED = 1; POSITION_UNAVAILABLE = 2; TIMEOUT = 3
+          resolve({ ok: false, reason: err && err.code === 1 ? 'denied' : 'unavailable' });
         },
         { timeout: 10000, maximumAge: 0, enableHighAccuracy: true }
       );
-    });
+    } catch {
+      clearTimeout(guard);
+      resolve({ ok: false, reason: 'unavailable' });
+    }
+  });
+}
+
+export const geoService: GeoServiceAPI = {
+  async getCurrentPosition(): Promise<KnotLocation | null> {
+    const r = await locate();
+    return r.ok ? r.coords : null;
   },
+
+  locate,
 
   async reverseGeocode(lat: number, lng: number): Promise<string | null> {
     try {

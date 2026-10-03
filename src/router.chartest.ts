@@ -14,7 +14,7 @@
 // ============================================================
 
 // Note the `.js` extension per the project's ES2020 module setup.
-import { parseHash, type RouteMatch } from './router.js';
+import { parseHash, navTabForRoute, type Route, type RouteMatch } from './router.js';
 
 // ------------------------------------------------------------
 // Assertion helper
@@ -124,10 +124,53 @@ function finish(): void {
   }
 }
 
+// navTabForRoute: which bottom-nav tab is current for each Route value.
+const NAV_TAB_CASES: Array<{ label: string; actual: () => string; expected: string }> = [
+  ...(
+    [
+      ['capture', 'capture'],
+      ['knots', 'knots'],
+      ['calendar', 'calendar'],
+      ['settings', 'settings'],
+      ['knot', 'knots'],
+      ['conflict', 'knots'],
+    ] as Array<[Route, string]>
+  ).map(([route, tab]) => ({
+    label: `navTabForRoute('${route}') -> '${tab}'`,
+    actual: () => navTabForRoute(route),
+    expected: tab,
+  })),
+  {
+    label: "navTabForRoute(parseHash('#/unknown').route) -> 'capture'",
+    actual: () => navTabForRoute(parseHash('#/unknown').route),
+    expected: 'capture',
+  },
+  {
+    label: "navTabForRoute(parseHash('#/knot/abc').route) -> 'knots'",
+    actual: () => navTabForRoute(parseHash('#/knot/abc').route),
+    expected: 'knots',
+  },
+];
+
+function runNavTabCase(c: (typeof NAV_TAB_CASES)[number]): void {
+  try {
+    const actual = c.actual();
+    assert(actual === c.expected, `expected '${c.expected}', got '${actual}'`);
+    console.log(`PASS  ${c.label}`);
+  } catch (err) {
+    failureCount++;
+    const detail = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
+    console.error(`FAIL  ${c.label}  -> ${detail}`);
+  }
+}
+
 function main(): void {
   console.log('Characterization test: router.parseHash');
   for (const c of CASES) {
     runCase(c);
+  }
+  for (const c of NAV_TAB_CASES) {
+    runNavTabCase(c);
   }
   finish();
 }

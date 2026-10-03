@@ -47,6 +47,22 @@ export function parseHash(hash: string): RouteMatch {
   return { route: 'capture', params: {} };
 }
 
+export type NavTab = 'capture' | 'knots' | 'calendar' | 'settings';
+
+/**
+ * Which bottom-nav tab is "current" for a route. The knot detail and conflict
+ * review screens belong to the Knots tab.
+ */
+export function navTabForRoute(route: Route): NavTab {
+  switch (route) {
+    case 'knot':
+    case 'conflict':
+      return 'knots';
+    default:
+      return route;
+  }
+}
+
 /**
  * Navigate to a hash-based path.
  * e.g. navigate('#/knots') or navigate('#/knot/some-uuid')

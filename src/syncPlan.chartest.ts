@@ -11,7 +11,7 @@
 // ============================================================
 
 // Note the `.js` extension per the project's ES2020 module setup.
-import { planSync, type LocalEntry, type RemoteEntry, type SyncPlan } from './syncPlan.js';
+import { planSync, remoteChangedSinceBase, type LocalEntry, type RemoteEntry, type SyncPlan } from './syncPlan.js';
 
 // ------------------------------------------------------------
 // Assertion helper
@@ -425,6 +425,50 @@ const SCENARIOS: Scenario[] = [
       const plan = planSync(local, remote, new Set(), {}, new Map([['k6', 100]]));
       assertSameSet(conflictKnotIds(plan.conflicts), ['k6'], 'conflicts');
       assert(plan.checkOffPush.length === 1 && plan.checkOffPush[0]?.knotId === 'k6', 'check-off pushed despite content conflict');
+    },
+  },
+  {
+    label: 'remoteChangedSinceBase: no remote file -> never a conflict',
+    run: () => {
+      assert(remoteChangedSinceBase(null, null, 100) === false, 'no remote, no base');
+      assert(remoteChangedSinceBase(null, 50, 100) === false, 'no remote, with base');
+    },
+  },
+  {
+    label: 'remoteChangedSinceBase: no base, remote equals local -> no conflict',
+    run: () => {
+      assert(remoteChangedSinceBase(100, null, 100) === false, 'equal versions');
+    },
+  },
+  {
+    label: 'remoteChangedSinceBase: no base, remote differs from local -> conflict',
+    run: () => {
+      assert(remoteChangedSinceBase(200, null, 100) === true, 'remote newer');
+      assert(remoteChangedSinceBase(50, null, 100) === true, 'remote older');
+    },
+  },
+  {
+    label: 'remoteChangedSinceBase: base set, remote == base -> no conflict (only local changed)',
+    run: () => {
+      assert(remoteChangedSinceBase(100, 100, 200) === false, 'remote still at base');
+    },
+  },
+  {
+    label: 'remoteChangedSinceBase: base set, remote > base -> conflict',
+    run: () => {
+      assert(remoteChangedSinceBase(300, 100, 200) === true, 'remote moved past base');
+    },
+  },
+  {
+    label: 'remoteChangedSinceBase: base set, remote < base -> no conflict (remote not "changed"; push proceeds)',
+    run: () => {
+      assert(remoteChangedSinceBase(50, 100, 200) === false, 'remote older than base');
+    },
+  },
+  {
+    label: 'remoteChangedSinceBase: remote == local is never a conflict, even with an older base',
+    run: () => {
+      assert(remoteChangedSinceBase(200, 100, 200) === false, 'equal to local, base older');
     },
   },
 ];

@@ -61,6 +61,29 @@ export interface SyncPlan {
 }
 
 /**
+ * Push guard: true when writing this device's copy of a knot must be REFUSED
+ * (recorded as a conflict) because someone else changed the remote file since
+ * the version this device last agreed on.
+ *
+ * - No remote file (`null`): nothing to overwrite -> false.
+ * - Remote already equals the local version: nothing would be lost -> false.
+ * - With a base: conflict only if the remote moved past it (`remote > base`).
+ *   A remote OLDER than base is treated as not changed (-> false, push goes ahead).
+ * - Without a base: any differing remote is a conflict.
+ *
+ * All values are unix ms of the last CONTENT edit.
+ */
+export function remoteChangedSinceBase(
+  remoteUpdatedAt: number | null,
+  baseUpdatedAt: number | null,
+  localUpdatedAt: number
+): boolean {
+  if (remoteUpdatedAt === null) return false;
+  if (remoteUpdatedAt === localUpdatedAt) return false;
+  return baseUpdatedAt !== null ? remoteUpdatedAt > baseUpdatedAt : true;
+}
+
+/**
  * Decide what a sync pass should do, given the current local and remote
  * state. Pure and deterministic — no network, no DOM, no clock reads (every
  * timestamp is passed in by the caller).

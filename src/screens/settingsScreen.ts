@@ -93,9 +93,10 @@ export function renderSettings(container: HTMLElement): () => void {
       toastService.show('Could not save setting');
     }
   };
-  serverUrlInput.addEventListener('blur', () => void onServerUrlBlur());
+  const onServerUrlBlurEvent = (): void => { void onServerUrlBlur(); };
+  serverUrlInput.addEventListener('blur', onServerUrlBlurEvent);
   listenerCleanups.push(() =>
-    serverUrlInput.removeEventListener('blur', () => void onServerUrlBlur())
+    serverUrlInput.removeEventListener('blur', onServerUrlBlurEvent)
   );
 
   const onTranscriptionChange = async (): Promise<void> => {
@@ -108,9 +109,10 @@ export function renderSettings(container: HTMLElement): () => void {
       toastService.show('Could not save setting');
     }
   };
-  transcriptionToggle.input.addEventListener('change', () => void onTranscriptionChange());
+  const onTranscriptionChangeEvent = (): void => { void onTranscriptionChange(); };
+  transcriptionToggle.input.addEventListener('change', onTranscriptionChangeEvent);
   listenerCleanups.push(() =>
-    transcriptionToggle.input.removeEventListener('change', () => void onTranscriptionChange())
+    transcriptionToggle.input.removeEventListener('change', onTranscriptionChangeEvent)
   );
 
   // =========================================================
@@ -183,9 +185,10 @@ export function renderSettings(container: HTMLElement): () => void {
       toastService.show('Could not save setting');
     }
   };
-  emailToggle.input.addEventListener('change', () => void onEmailToggleChange());
+  const onEmailToggleChangeEvent = (): void => { void onEmailToggleChange(); };
+  emailToggle.input.addEventListener('change', onEmailToggleChangeEvent);
   listenerCleanups.push(() =>
-    emailToggle.input.removeEventListener('change', () => void onEmailToggleChange())
+    emailToggle.input.removeEventListener('change', onEmailToggleChangeEvent)
   );
 
   const onRecipientBlur = async (): Promise<void> => {
@@ -217,9 +220,10 @@ export function renderSettings(container: HTMLElement): () => void {
       toastService.show('Could not save setting');
     }
   };
-  recipientInput.addEventListener('blur', () => void onRecipientBlur());
+  const onRecipientBlurEvent = (): void => { void onRecipientBlur(); };
+  recipientInput.addEventListener('blur', onRecipientBlurEvent);
   listenerCleanups.push(() =>
-    recipientInput.removeEventListener('blur', () => void onRecipientBlur())
+    recipientInput.removeEventListener('blur', onRecipientBlurEvent)
   );
 
   // =========================================================
@@ -345,9 +349,10 @@ export function renderSettings(container: HTMLElement): () => void {
       toastService.show('Could not save setting');
     }
   };
-  dateFormatControl.select.addEventListener('change', () => void onDateFormatChange());
+  const onDateFormatChangeEvent = (): void => { void onDateFormatChange(); };
+  dateFormatControl.select.addEventListener('change', onDateFormatChangeEvent);
   listenerCleanups.push(() =>
-    dateFormatControl.select.removeEventListener('change', () => void onDateFormatChange())
+    dateFormatControl.select.removeEventListener('change', onDateFormatChangeEvent)
   );
 
   const onTimeFormatChange = async (): Promise<void> => {
@@ -361,9 +366,10 @@ export function renderSettings(container: HTMLElement): () => void {
       toastService.show('Could not save setting');
     }
   };
-  timeFormatControl.select.addEventListener('change', () => void onTimeFormatChange());
+  const onTimeFormatChangeEvent = (): void => { void onTimeFormatChange(); };
+  timeFormatControl.select.addEventListener('change', onTimeFormatChangeEvent);
   listenerCleanups.push(() =>
-    timeFormatControl.select.removeEventListener('change', () => void onTimeFormatChange())
+    timeFormatControl.select.removeEventListener('change', onTimeFormatChangeEvent)
   );
 
   const onCutoffChange = async (): Promise<void> => {
@@ -646,8 +652,9 @@ export function renderSettings(container: HTMLElement): () => void {
       if (backupPanelOpen) void loadBackups();
     }
   };
-  syncBtn.addEventListener('click', () => void onSyncClick());
-  listenerCleanups.push(() => syncBtn.removeEventListener('click', () => void onSyncClick()));
+  const onSyncClickEvent = (): void => { void onSyncClick(); };
+  syncBtn.addEventListener('click', onSyncClickEvent);
+  listenerCleanups.push(() => syncBtn.removeEventListener('click', onSyncClickEvent));
 
   function renderBackupRow(b: BackupEntry, localIds: Set<string>): HTMLElement {
     const row = document.createElement('div');
@@ -770,9 +777,10 @@ export function renderSettings(container: HTMLElement): () => void {
       await cloudSyncService.connect();
     }
   };
-  connectBtn.addEventListener('click', () => void onConnectClick());
+  const onConnectClickEvent = (): void => { void onConnectClick(); };
+  connectBtn.addEventListener('click', onConnectClickEvent);
   listenerCleanups.push(() =>
-    connectBtn.removeEventListener('click', () => void onConnectClick())
+    connectBtn.removeEventListener('click', onConnectClickEvent)
   );
 
   // Subscribe to connection status changes

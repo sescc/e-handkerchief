@@ -18,7 +18,7 @@ import { openDB, dbPut, dbDelete, dbGetAllByIndex } from './db.js';
 import { toastService } from './toastService.js';
 import { eventBus } from './eventBus.js';
 import { formatKnotTimestamp } from './dateFormat.js';
-import { planSync, type LocalEntry, type RemoteEntry } from './syncPlan.js';
+import { planSync, remoteChangedSinceBase, type LocalEntry, type RemoteEntry } from './syncPlan.js';
 import { deviceLabelFromUserAgent } from './deviceLabel.js';
 import type { Knot, CloudUploadJob, OAuthToken, TextMediaItem, AudioMediaItem } from './types.js';
 
@@ -339,8 +339,14 @@ async function recordConflict(knotId: string, fileId: string, remoteUpdatedAt: n
  * since this device's base version (or there is no base and it differs from
  * this knot), nothing is written; the conflict is recorded and a
  * `ConflictError` thrown. A remote whose updatedAt already equals this knot's
- * is never a conflict. (Known leftover race: the check and the write are
- * separate steps, so two devices saving within seconds can both pass.)
+ * is never a conflict (see `remoteChangedSinceBase`).
+ *
+ * Known leftover race: Drive API v3 has no conditional writes (no
+ * ETag/If-Match), so the check and the write cannot be made atomic. Merge
+ * (`doSyncAll` step 6) re-runs the same check right before each push, so the
+ * only remaining window is the gap between the list call and the write —
+ * two devices saving within that gap can both pass. Do NOT use the Drive
+ * `version` field as a guard: check-off metadata PATCHes bump it too.
  */
 async function upsertKnot(knot: Knot): Promise<void> {
   const existing = await findExistingFiles(`${DRIVE_FILE_PREFIX}${knot.id}.json`);
@@ -349,9 +355,7 @@ async function upsertKnot(knot: Knot): Promise<void> {
   if (target) {
     const remoteU = fileUpdatedAt(target);
     const state = await knotStore.getSyncState(knot.id);
-    const base = state?.baseUpdatedAt ?? null;
-    const remoteChanged = base !== null ? remoteU > base : remoteU !== knot.updatedAt;
-    if (remoteU !== knot.updatedAt && remoteChanged) {
+    if (remoteChangedSinceBase(remoteU, state?.baseUpdatedAt ?? null, knot.updatedAt)) {
       await recordConflict(knot.id, target.id, remoteU);
       throw new ConflictError(knot.id);
     }
@@ -457,6 +461,12 @@ export interface CloudSyncServiceAPI {
   onStatusChange(cb: (s: ConnectionStatus) => void): () => void;
   connect(): Promise<void>;
   handleOAuthCallback(code: string): Promise<void>;
+  /**
+   * Handle Google redirecting back with `?error=...` (e.g. `access_denied`
+   * when consent is cancelled): clears the PKCE verifier and the URL params
+   * and shows a toast. Never changes the connection status or tokens.
+   */
+  handleOAuthError(error: string): Promise<void>;
   disconnect(): Promise<void>;
   /**
    * Fetch the connected Google account's email via Drive `about.get` (no
@@ -603,6 +613,20 @@ export const cloudSyncService: CloudSyncServiceAPI = {
       // Kick off a full sync now that we're connected.
       void cloudSyncService.syncAll().catch(() => {});
     } catch {
+      toastService.show('Could not connect to Google Drive');
+    }
+  },
+
+  async handleOAuthError(error: string): Promise<void> {
+    // Google redirected back with ?error=... (e.g. the user cancelled consent).
+    // Drop the now-useless verifier and the dirty URL; connection state and
+    // tokens are deliberately left untouched.
+    sessionStorage.removeItem('pkce_verifier');
+    stripOAuthParams();
+    if (error === 'access_denied') {
+      toastService.show('Google Drive connection cancelled');
+    } else {
+      console.warn('Google OAuth returned an error:', error);
       toastService.show('Could not connect to Google Drive');
     }
   },
@@ -1079,13 +1103,27 @@ async function doSyncAll(): Promise<SyncResult> {
   }
 
   // 6. Push each knot that needs it, upserting onto its existing file (if any).
+  //    The plan was built from a listing taken earlier in this merge, so right
+  //    before each write we re-list that knot's files and re-run the same
+  //    guard as upsertKnot: another device may have pushed in the meantime.
+  //    A detected conflict is recorded (and counted via countConflicts()), not
+  //    pushed and not a failure.
   const pushedIds: string[] = [];
+  const raceConflictIds = new Set<string>();
   for (const knotId of plan.push) {
     const knot = localKnots.find((k) => k.id === knotId);
     if (!knot) continue;
     try {
-      const existingFileId = plan.remoteById.get(knotId)?.fileId;
-      await sendKnotToDrive(knot, existingFileId);
+      const fresh = await findExistingFiles(`${DRIVE_FILE_PREFIX}${knotId}.json`);
+      const target = newestFile(fresh);
+      const remoteU = target ? fileUpdatedAt(target) : null;
+      const baseNow = (await knotStore.getSyncState(knotId))?.baseUpdatedAt ?? null;
+      if (target && remoteU !== null && remoteChangedSinceBase(remoteU, baseNow, knot.updatedAt)) {
+        await recordConflict(knotId, target.id, remoteU);
+        raceConflictIds.add(knotId);
+        continue;
+      }
+      await sendKnotToDrive(knot, target?.id);
       await setBase(knotId, knot.updatedAt);
       if (conflicted.has(knotId)) conflictsCleared++;
       pushed++;
@@ -1193,7 +1231,7 @@ async function doSyncAll(): Promise<SyncResult> {
 
   // 8. Clear queued upload jobs for knots that were just pushed successfully,
   // and for knots now in conflict (the conflict owns that local edit).
-  const clearJobsFor = new Set<string>([...pushedIds, ...conflictIds]);
+  const clearJobsFor = new Set<string>([...pushedIds, ...conflictIds, ...raceConflictIds]);
   if (clearJobsFor.size > 0) {
     const db = await openDB();
     for (const job of await listUnfinishedJobs()) {
