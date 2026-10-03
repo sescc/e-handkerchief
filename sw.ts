@@ -52,6 +52,7 @@ const ASSETS: string[] = [
   'src/mapsLink.js',
   'src/types.js',
   'src/components/mediaCapture.js',
+  'src/components/timezoneCombobox.js',
   'src/screens/captureScreen.js',
   'src/screens/knotsScreen.js',
   'src/screens/calendarScreen.js',

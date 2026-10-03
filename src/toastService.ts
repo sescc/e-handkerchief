@@ -25,8 +25,14 @@ export const toastService = {
     const el = document.createElement('div');
     el.className = 'toast';
     el.textContent = message; // never innerHTML
+    // Tap/click dismisses immediately; clear the timer so it can't fire later.
+    const dismiss = () => {
+      clearTimeout(timer);
+      el.remove();
+    };
+    const timer = setTimeout(dismiss, durationMs);
+    el.addEventListener('click', dismiss);
     getContainer().appendChild(el);
-    setTimeout(() => el.remove(), durationMs);
   },
 
   /**

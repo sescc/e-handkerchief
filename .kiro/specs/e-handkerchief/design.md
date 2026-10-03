@@ -356,6 +356,13 @@ interface GeoServiceAPI {
    */
   getCurrentPosition(): Promise<KnotLocation | null>;
 
+  /**
+   * Like getCurrentPosition(), but says why a failure happened. Never rejects.
+   * `denied` = the user/browser blocked location for this site (PERMISSION_DENIED);
+   * `unavailable` = anything else (no fix, timeout, the 10 s guard, no geolocation support).
+   */
+  locate(): Promise<{ ok: true; coords: KnotLocation } | { ok: false; reason: 'denied' | 'unavailable' }>;
+
   /** Attempt reverse geocoding. Returns address string (≤ 100 chars) or null. */
   reverseGeocode(lat: number, lng: number): Promise<string | null>;
 }
@@ -413,6 +420,12 @@ interface CloudSyncServiceAPI {
   onStatusChange(cb: (status: "connected" | "disconnected") => void): () => void;
   connect(): Promise<void>;
   handleOAuthCallback(code: string): Promise<void>;
+  /**
+   * Google redirected back with `?error=...` (e.g. `access_denied` when the user
+   * cancels consent): clears `pkce_verifier`, strips the URL params and shows a
+   * toast. Never changes the connection status or the stored tokens.
+   */
+  handleOAuthError(error: string): Promise<void>;
   disconnect(): Promise<void>;
 
   /**
@@ -546,7 +559,7 @@ e-Handkerchief/
 │   ├── knotStore.ts            # Knot CRUD + local tombstones + sync bookkeeping (syncState)
 │   ├── settingsStore.ts        # Settings load/save/cache
 │   ├── router.ts                 # Hash-based router
-│   ├── router.chartest.ts        # Characterization test for parseHash
+│   ├── router.chartest.ts        # Characterization test for parseHash / navTabForRoute
 │   ├── eventBus.ts             # Lightweight pub/sub
 │   ├── geoService.ts           # Geolocation + reverse geocoding
 │   ├── mediaService.ts         # Audio/photo/video capture
@@ -580,7 +593,7 @@ e-Handkerchief/
 │       ├── captureScreen.ts    # Capture screen render + logic
 │       ├── knotsScreen.ts      # Knots list screen render + logic
 │       ├── calendarScreen.ts   # Calendar screen render + logic
-│       ├── knotDetailScreen.ts # Knot detail screen render + logic (Share/Check off/Edit/Delete, conflict banner)
+│       ├── knotDetailScreen.ts # Knot detail screen render + logic (Share/Edit/Delete, check-off tick, conflict banner)
 │       ├── conflictScreen.ts   # Conflict review screen (#/conflict/{id})
 │       └── settingsScreen.ts   # Settings screen render + logic
 ├── sw.ts                       # Service Worker source
@@ -614,6 +627,7 @@ tsc -p tsconfig.sw.json
 - Google Drive backup is a required feature: **CI fails** if either secret is empty.
 - Placeholder tokens must be distinct from the global names. When they were identical, `sed` also rewrote the assignment target and produced a syntax error.
 - After injection, CI runs `node --check _site/config.js` so a malformed config fails the build instead of deploying silently.
+- Test files are not deployed: the workflow deletes `*.chartest.js` and `*.proptest.js` from `_site/src` after copying.
 - The Google **client secret** is never injected here. Everything in `config.js` is publicly readable, so the secret lives only in `oauth-worker` as a Wrangler secret.
 
 ### tsconfig.json
@@ -744,12 +758,15 @@ function initRouter(container: HTMLElement): void
 
 `parseHash` is pure (no `window` access at import time), so it is exercised directly by `router.chartest.ts` under plain `node` — see *Correctness Properties and Testing*.
 
+**Bottom navigation.** `app.ts` builds a fixed nav bar (Knots, Calendar, a centre "+" for Capture, Settings). Which tab is current comes from the pure `navTabForRoute(route)` in `router.ts`: the `knot` and `conflict` routes map to `'knots'`, and every other route maps to itself (an unknown hash parses to `capture`). `updateActive()` in `app.ts` sets `aria-current="page"` on exactly that tab, so `#/knot/…` and `#/conflict/…` highlight **Knots** (they previously marked "+" as current, which also hid its glyph). When Capture is current, the "+" button is darker (`--color-primary-dark`) with a ring (a 3 px surface-coloured gap, then a 2 px primary ring); otherwise it is the normal green — a subtle signal that you are on Capture. `navTabForRoute` is covered by `router.chartest.ts`.
+
 ### CaptureScreen (`src/screens/captureScreen.ts`)
 
 Default landing view rendered at route `#/`. Title "Tie a Knot"; Save button "Tie Knot"; textarea placeholder "What do you want to remember?".
 
 **Lifecycle:**
-1. On `render`, record a `KnotTimestamp` immediately (local ISO string + UTC offset) and call `GeoService.getCurrentPosition()` with a 10-second deadline; a spinner shows while location resolves.
+1. On `render`, record a `KnotTimestamp` immediately (local ISO string + UTC offset) and call `GeoService.locate()` with a 10-second deadline; a spinner and "Getting location…" show while location resolves.
+   - **Location retry.** On failure the location line becomes a link-styled `button.location-retry` reading exactly "Location unavailable — tap to retry" (`unavailable`) or "Location blocked for this site — allow it in browser settings, then tap to retry" (`denied`). Tapping it shows "Getting location…" with the spinner and asks again; taps while a request is loading are ignored. A request counter (`locationRequestId`) guarantees only the **latest** request can set `location` or render, and a `disposed` flag stops anything rendering after the user leaves the screen. The knot saves with whatever location is known at save time (`null` if none yet).
 2. The shared `mediaCapture` component (mic/photo/video/library, live transcript, previews, errors) is mounted between the textarea and the Save button; it owns the draft media items.
 3. On Save: validate at least one media item is present; build the `Knot` and call `KnotStore.save()`; on success, emit `knot:saved` via `eventBus` — the app-level listener in `app.ts` (not this screen) triggers the cloud upload; navigate to `#/knots`.
 
@@ -804,8 +821,13 @@ Route `#/calendar`. A scrollable, reverse-chronological month grid.
 
 Route `#/knot/:id`. Loads a single `Knot` from `KnotStore` by UUID on mount.
 
-**View-mode header actions**, in order: **Share**, **Check off** / **Uncheck**, **Edit**, **Delete** (all `btn btn-ghost` except Delete, which is `btn btn-danger`).
-- **Check off / Uncheck** calls `toggleCheckOff(knot.id)` — the same change as the Knots list (no `updatedAt` bump, `knot:checkedOff` event, "Checked off · Undo" / "Unchecked · Undo" toast). The screen does not update itself directly: it re-renders from the `knot:checkedOff` event. A checked-off knot stays viewable here after it leaves the Knots list, and this is where it can be unchecked.
+**Header (view mode)** is two rows, so it fits a phone without overflowing (the old single row of four buttons plus the back button did not):
+- Row 1 (`.knot-detail-header`): **← Back to Knots**.
+- Row 2 (`.knot-detail-actions`): **Share**, **Edit**, **Delete** as smaller buttons that wrap if needed (`btn btn-ghost` except Delete, which is `btn btn-danger`).
+
+**Check-off tick.** There is no text "Check off" / "Uncheck" button. Check-off is the same ✓ / ↩ tick button as in the Knots list (`.knot-check-btn`, accessible names "Check off knot" / "Uncheck knot"), placed in the knot card beside the timestamp (`.knot-detail-meta`), and hidden in edit mode.
+- **Checked-off pill.** While the knot is checked off, a green pill `span.knot-checked-off-pill` reads "✓ Checked off · {`formatKnotTimestamp(checkedOffAt)`}" (so it follows the user's time zone and date/time format). It sits on its own line under the timestamp + tick row. The tick is unchanged, and the detail page deliberately does **not** fade or strike through a checked-off knot (that is the Knots list's job). The pill's background is the `--color-primary-soft` token (light `rgba(45,122,79,0.15)`, dark `rgba(76,175,118,0.18)`), which `.knot-check-btn` hover/focus and `.backup-badge` also use.
+- It calls `toggleCheckOff(knot.id)` — the same change as the Knots list (no `updatedAt` bump, `knot:checkedOff` event, "Checked off · Undo" / "Unchecked · Undo" toast). The screen does not update itself directly: it re-renders from the `knot:checkedOff` event. A checked-off knot stays viewable here after it leaves the Knots list, and this is where it can be unchecked.
 - **Conflict banner:** a `.conflict-banner` at the top of the content, filled asynchronously from `cloudSyncService.listConflicts()` and refreshed on `knots:conflicts`. While the knot is in conflict it reads "This knot also has edits from another device." and offers a **Review** button that navigates to `#/conflict/{id}`; otherwise it is hidden.
 - **Share** calls `shareKnot(knot)` directly and synchronously from the click handler (see *ShareService* — this preserves the click's user-gesture window).
 - **Edit** switches to an inline edit form (location label, one textarea per existing text item plus an "add text" box, existing non-text media with per-item Remove, and the shared media-capture component for adding more). Saving rebuilds the knot's `mediaItems`, bumps `updatedAt`, calls `withLatestCheckOff` (the form was built from a possibly stale copy, so the latest stored check-off state is taken rather than written back over), calls `KnotStore.save`, and emits `knot:saved`. **Cancel** tears down the media-capture component and **re-reads the knot from the store** before leaving edit mode, because its check-off state may have changed while editing. Transcript saves also call `withLatestCheckOff` before saving.
@@ -815,7 +837,7 @@ Route `#/knot/:id`. Loads a single `Knot` from `KnotStore` by UUID on mount.
 
 **Not-found state:** heading "Knot not found", body "This knot isn't on this device.", and a "Go to Knots" button.
 
-**Reactivity:** subscribes to `knots:synced`, `knot:checkedOff`, and `knots:conflicts`. While **not** editing, `knots:synced` re-fetches and re-renders the current knot so a pulled update from another device appears, and `knot:checkedOff` for **this** knot re-renders it so the button label and faded state are current (for example after Undo from the toast, or a change made in the Knots list). While editing, both handlers are no-ops, so an in-progress edit is never clobbered; the edit's Save then merges the latest check-off state via `withLatestCheckOff`, so nothing is lost. `knots:conflicts` just refreshes the banner.
+**Reactivity:** subscribes to `knots:synced`, `knot:checkedOff`, and `knots:conflicts`. While **not** editing, `knots:synced` re-fetches and re-renders the current knot so a pulled update from another device appears, and `knot:checkedOff` for **this** knot re-renders it so the tick's glyph and the faded state are current (for example after Undo from the toast, or a change made in the Knots list). While editing, both handlers are no-ops, so an in-progress edit is never clobbered; the edit's Save then merges the latest check-off state via `withLatestCheckOff`, so nothing is lost. `knots:conflicts` just refreshes the banner.
 
 **Navigation:** "← Back to Knots" button calls `navigate('#/knots')`.
 
@@ -839,7 +861,7 @@ Route `#/settings`. All controls read from and write to `SettingsStore`, in thes
 
 **Voice Transcription** — enable toggle; a "Transcription server URL (optional)" field for deferred transcription, validated only by being a URL-shaped string.
 
-**Daily Email Summary** — "Enable daily email summary" toggle (bound to `emailSummaryEnabled`) and a "Recipient Email" field (`emailSummaryRecipient`, `<input type="email" maxlength="254">`, disabled when the toggle is off, validated on `blur` with an RFC-5321-style regex). A `settings-row-desc` hint beneath the toggle row reads: *"Coming soon — your recipient address is saved for when it's available. To send a single knot now, open it and tap Share."* The feature is not implemented; nothing reads these values to send mail today.
+**Daily Email Summary** — "Enable daily email summary" toggle (bound to `emailSummaryEnabled`) and a "Recipient Email" field (`emailSummaryRecipient`, `<input type="email" maxlength="254">`, disabled when the toggle is off, validated on `blur` with an RFC-5321-style regex). A `settings-row-desc` hint beneath the toggle row reads: *"Coming soon — your recipient address is saved for when it's available. To send a single knot now, open it and tap Share."* The feature is not implemented; nothing reads these values to send mail today. The options for building it are written up in *Daily Email Summary — options (deferred)*, before *Known Limitations*.
 
 **Date & Time** — Timezone (searchable combobox, see `timezoneCombobox.ts`), Date Format, Time Format, a live preview line, all via `formatKnotTimestamp`, and — placed **after** the preview line so the preview isn't read as belonging to it — a **"New day starts at"** `<input type="time">` bound to `dayCutoff` (default `03:00`) with the hint "Checked-off knots stay visible (faded) until this time, then leave the Knots list. They stay in Calendar." A change that isn't a valid `HH:MM` (a cleared input) reverts to the previous value; a failed save reverts and toasts "Could not save setting".
 
@@ -904,6 +926,7 @@ const ASSETS: string[] = [
   'src/mapsLink.js',
   'src/types.js',
   'src/components/mediaCapture.js',
+  'src/components/timezoneCombobox.js',
   'src/screens/captureScreen.js',
   'src/screens/knotsScreen.js',
   'src/screens/calendarScreen.js',
@@ -947,7 +970,7 @@ function showPersistent(message: string, onDismiss?: () => void): () => void
 function showAction(message: string, actionLabel: string, onAction: () => void, durationMs?: number): () => void
 ```
 
-`show` creates a `<div class="toast">` with the message text set via `textContent`, appends it to the container, and removes it after `durationMs` (default 5 000 ms). `showPersistent` returns a dismiss function; the toast remains until the dismiss function is called or the user taps it (e.g. the "Backup failed… Tap to retry." toast, whose tap calls `cloudSyncService.retryFailed()`). `showAction` creates a `<div class="toast toast--action">` holding a message `<span>` and one `<button class="toast-action-btn">` (both via `textContent`); it auto-dismisses after `durationMs` (default 5 000 ms), and clicking the button runs `onAction` at most once and removes the toast. It returns a dismiss function that removes the toast **without** running `onAction`. It backs the "Checked off · Undo" / "Unchecked · Undo" toasts.
+`show` creates a `<div class="toast">` with the message text set via `textContent`, appends it to the container, and removes it after `durationMs` (default 5 000 ms) **or as soon as the user taps/clicks it** (the click clears the timer and removes the toast; plain `show` toasts have `cursor: pointer`). This applies to every plain `show` toast, so the "Saved. …" transcription notice (Requirement 7.3) dismisses "after 5 seconds or on user interaction". `showAction` and `showPersistent` are unchanged by this. `showPersistent` returns a dismiss function; the toast remains until the dismiss function is called or the user taps it (e.g. the "Backup failed… Tap to retry." toast, whose tap calls `cloudSyncService.retryFailed()`). `showAction` creates a `<div class="toast toast--action">` holding a message `<span>` and one `<button class="toast-action-btn">` (both via `textContent`); it auto-dismisses after `durationMs` (default 5 000 ms), and clicking the button runs `onAction` at most once and removes the toast. It returns a dismiss function that removes the toast **without** running `onAction`. It backs the "Checked off · Undo" / "Unchecked · Undo" toasts.
 
 ---
 
@@ -1000,6 +1023,7 @@ Wraps `navigator.geolocation.getCurrentPosition` with a 10-second deadline. Opti
 **Contracts:**
 - Must resolve (not reject) within 10 seconds regardless of GPS availability.
 - Returns `null` on permission denial, timeout, or unavailability — never throws to callers.
+- `locate()` is the underlying call and `getCurrentPosition()` is a thin wrapper over it (`ok ? coords : null`). `PERMISSION_DENIED` maps to `{ ok: false, reason: 'denied' }`; position unavailable, timeout, the 10 s guard, an exception, or a missing `navigator.geolocation` all map to `'unavailable'`. `CaptureScreen` uses `locate()` so it can word its retry prompt accordingly.
 - `resolvedAddress` is capped at 100 characters.
 - No background location tracking.
 
@@ -1012,6 +1036,8 @@ Wraps `SpeechRecognition` / `webkitSpeechRecognition` for **live** transcription
 **Contracts:**
 - `startLive()` returns a no-op "unsupported"/"start-failed" handle rather than throwing when the API is missing or fails to start.
 - Handles auto-restart transparently on mobile browsers that end recognition after a short silence, folding finalized text into a running `committed` buffer so restarts don't duplicate text.
+- **Stop safety cap.** `stop()` relies on the engine firing `onend` to resolve the handle's `result` promise, and some engines never do. So `stop()` also starts a `STOP_SAFETY_MS` (3000 ms) timer. If `result` is still unresolved when it fires, the service calls `recognition.abort()` (in a try/catch) and resolves `result` with the text collected so far (`null` if none) — the same shape as a normal resolve. `stopped` is already set, so no auto-restart can begin; a normal `onend` clears the timer; `result` never resolves twice. Without the cap, `MediaCapture`'s `await liveTranscription.result` would hang and block finishing the recording. An empty result flows into the existing deferred path (`transcriptionStatus: 'pending'`).
+- **Late events are ignored.** Once the session has finished, `recognition.onerror` returns immediately — for example the `aborted` error that engines dispatch asynchronously after the cap's `abort()` — so it can't overwrite the live transcript box or `getError()` after the recording was finalized.
 - Only invoked when `transcriptionEnabled` is `true` in settings and the device is online.
 - Deferred transcription of an already-saved recording is a **separate** pure function, `remoteTranscribe()` in `remoteTranscribe.ts` — it POSTs the blob to the user's configured Worker and returns `{ ok, text?, error? }`; it does not go through `TranscriptionService`.
 
@@ -1121,7 +1147,7 @@ Each knot's backup is one Drive file `knot-{id}.json` in the app-data folder (`s
 
 `upsertKnot(knot)` (internal) wraps this: it looks up existing files by exact name (`q=name='knot-{id}.json'`), picks the one with the greatest effective `updatedAt` (from `appProperties.updatedAt`, falling back to `modifiedTime` if that's missing or non-numeric) as the PATCH target (or POSTs if none exist), then best-effort DELETEs any other files that matched — a race between devices can otherwise leave more than one file for the same knot. `upsertKnot` never queues a retry job itself; it's a building block used by both `uploadKnot` and `uploadPending`.
 
-**Conflict guard.** Before writing to an existing file, `upsertKnot` reads the file's effective `updatedAt` (`remoteU`) and this knot's recorded base (`syncState.baseUpdatedAt`, or `null`). If `remoteU !== knot.updatedAt` **and** (`base !== null ? remoteU > base : true`) — that is, another device changed the file since this device's base, or there is no base and the two differ — it writes **nothing**. Instead it records the conflict in `syncState` (`conflict: { fileId, remoteUpdatedAt: remoteU }`, keeping the base), emits `knots:conflicts` with the current total, and throws a typed `ConflictError`. A remote whose `updatedAt` already equals the knot's is never a conflict (there is nothing to overwrite). After a successful write it records `baseUpdatedAt = knot.updatedAt` (which also clears any conflict). See *Known limitations* for the residual race.
+**Conflict guard.** Before writing to an existing file, `upsertKnot` reads the file's effective `updatedAt` (`remoteU`) and this knot's recorded base (`syncState.baseUpdatedAt`, or `null`). If the pure helper `remoteChangedSinceBase(remoteU, base, knot.updatedAt)` (in `syncPlan.ts`) returns true — i.e. `remoteU !== knot.updatedAt` **and** (`base !== null ? remoteU > base : true`; no remote file is never a conflict) — that is, another device changed the file since this device's base, or there is no base and the two differ — it writes **nothing**. Instead it records the conflict in `syncState` (`conflict: { fileId, remoteUpdatedAt: remoteU }`, keeping the base), emits `knots:conflicts` with the current total, and throws a typed `ConflictError`. A remote whose `updatedAt` already equals the knot's is never a conflict (there is nothing to overwrite). After a successful write it records `baseUpdatedAt = knot.updatedAt` (which also clears any conflict). See *Known limitations* for the residual race.
 
 #### uploadKnot / uploadPending / retryFailed
 
@@ -1138,11 +1164,11 @@ Each knot's backup is one Drive file `knot-{id}.json` in the app-data folder (`s
 3. Filters to `knot-*.json` files that have both `appProperties.knotId` and `appProperties.updatedAt`; a knot file missing either is skipped with a `console.warn` (a non-numeric `updatedAt` is skipped the same way). Each `RemoteEntry` also carries `checkedOffAt` (`""`/missing → null) and `checkOffChangedAt` (missing → 0) parsed from `appProperties`.
 4. Reads the cloud tombstones file, `KnotStore.listAll()`, `KnotStore.listTombstones()`, and the sync bookkeeping. It builds the `base` map (only knots with a recorded base), the `conflicted` set, and `pendingJobKnotIds` (every knot with a pending, in-flight or failed upload job), then calls `planSync`.
 5. Deletes each `deleteDupes` file, best-effort — a failure here is logged and counted but does not abort the sync.
-6. Pushes each `plan.push` knot via `sendKnotToDrive`, onto its existing file id from `plan.remoteById` if any, and records the base (`baseUpdatedAt = knot.updatedAt`).
+6. Pushes each `plan.push` knot. The plan was built from a listing taken earlier in the pass, so **immediately before each write** it re-lists that knot's files, takes the newest, re-reads the knot's base, and evaluates the same `remoteChangedSinceBase` guard as `upsertKnot`. If the cloud copy changed in the meantime it writes **nothing**: it records a conflict (as `upsertKnot` does), which is counted in the returned `conflicts` / the merge's "need review" count, and its queued upload job is cleared in step 10 (the conflict owns that edit). It is neither counted as pushed nor treated as a failure. Otherwise it pushes via `sendKnotToDrive` onto the **freshly found** file id (not the plan's), and records the base (`baseUpdatedAt = knot.updatedAt`).
 7. Pulls each `plan.pull` entry: downloads with `alt=media`, runs `jsonToKnot`, then sets the check-off fields from the file's `appProperties` **if the remote `checkOffChangedAt` is at least the local one, otherwise keeps the local values** — never trusting the JSON body's check-off fields, which can be stale. It saves via `KnotStore.saveFromSync` — **not** `KnotStore.save`, so a pull never emits `knot:saved` and is never mistaken for a local edit — and records the base (`baseUpdatedAt = remote updatedAt`).
 8. Applies `plan.baseUpdates` (a knot found equal on both sides gets that value as its base, which also clears a recorded conflict), records each `plan.conflicts` entry in `syncState`, and drops a recorded conflict whose knot no longer exists locally or in Drive.
 9. Executes `plan.checkOffPush` (a metadata-only `PATCH files/{fileId}` with only the two check-off `appProperties`, `null` clearing `checkedOffAt`) and `plan.checkOffPull` (re-reads the local knot, skips it if it already has an equal-or-newer `checkOffChangedAt`, otherwise updates **only** `checkedOffAt` and `checkOffChangedAt` via `saveFromSync`, with no event). Per-item failures are logged and skipped.
-10. After pushes succeed, deletes any pending/failed `CloudUploadJob` for those knot ids, and for knots now in conflict (a knot pushed by the full sync no longer needs its queued retry; a conflicted knot's edit is owned by the conflict).
+10. After pushes succeed, deletes any pending/failed `CloudUploadJob` for those knot ids, and for knots now in conflict, including those the step-6 re-check just found conflicted (a knot pushed by the full sync no longer needs its queued retry; a conflicted knot's edit is owned by the conflict).
 11. Saves `lastSyncAt: Date.now()`.
 12. If `pulled > 0` or any check-off was pulled, emits `knots:synced` — this, not `knot:saved`, is how `KnotsScreen`, `CalendarScreen`, and `KnotDetailScreen` learn to reload.
 13. Counts the knots in conflict, and emits `knots:conflicts { count }` when the count is above zero **or** this pass cleared some (so a badge or toast for them can go away). `knots:conflicts` can be emitted more than once per sync (also from the upsert guard), so listeners must treat it as *current state*, not as "show a new toast".
@@ -1201,7 +1227,7 @@ Every fire-and-forget `syncAll()`/`retryFailed()` call (i.e. every one of the ab
 
 #### OAuth broker, deploy-time injection, and token refresh
 
-Unchanged from the existing design — see *Security Considerations → OAuth2 PKCE Flow* and *Build System → Deploy-time injection* below/above. In summary: `connect()` uses PKCE with `access_type=offline&prompt=consent`; `handleOAuthCallback` exchanges the code via `oauth-worker` `POST /token` (never directly with Google) and strips `?code=` from the URL before exchanging; `driveFetch()` refreshes the access token via `oauth-worker` `POST /refresh` when under 60 s remain, and retries once on a `401`; a refused refresh (`invalid_grant`) clears the token, flips status to disconnected, and toasts "Google Drive session expired — please reconnect"; `disconnect()` revokes the refresh token; tokens are never logged.
+Unchanged from the existing design — see *Security Considerations → OAuth2 PKCE Flow* and *Build System → Deploy-time injection* below/above. In summary: `connect()` uses PKCE with `access_type=offline&prompt=consent`; `handleOAuthCallback` exchanges the code via `oauth-worker` `POST /token` (never directly with Google) and strips `?code=` from the URL before exchanging; if Google instead redirects back with `?error=...` (for example the user cancels consent), `app.ts` calls `handleOAuthError(error)`, which removes `pkce_verifier` from `sessionStorage`, strips the URL params, and toasts "Google Drive connection cancelled" for `access_denied` or "Could not connect to Google Drive" (plus a `console.warn` of the code) for anything else — the connection status and tokens are never changed, so an already-connected user stays connected; `driveFetch()` refreshes the access token via `oauth-worker` `POST /refresh` when under 60 s remain, and retries once on a `401`; a refused refresh (`invalid_grant`) clears the token, flips status to disconnected, and toasts "Google Drive session expired — please reconnect"; `disconnect()` revokes the refresh token; tokens are never logged.
 
 ---
 
@@ -1402,9 +1428,9 @@ For any string input supplied as the `content` of a `TextMediaItem`, the stored 
 
 ### Property 6: Router — hash parsing (`router.chartest.ts`)
 
-For each known route hash, `parseHash` returns the matching `{ route, params }`; for any unrecognised hash it falls back to `capture`. Eight labelled cases, run directly under `node`.
+For each known route hash, `parseHash` returns the matching `{ route, params }`; for any unrecognised hash it falls back to `capture`. The pure `navTabForRoute` is covered too: `knot` and `conflict` map to `knots`, every other route maps to itself, and an unknown hash resolves to `capture`. Twenty labelled cases in all (the `parseHash` cases plus eight for `navTabForRoute`), run directly under `node`.
 
-**Validates: Requirement 13.1** — `router.ts` `parseHash`. **Automated** — `node src/router.chartest.js`.
+**Validates: Requirement 13.1, 13.11** — `router.ts` `parseHash` and `navTabForRoute`. **Automated** — `node src/router.chartest.js`.
 
 ---
 
@@ -1417,7 +1443,9 @@ For any combination of local knots, remote Drive entries, local and cloud tombst
 - reconcile check-off independently of content: local `checkOffChangedAt` greater → `checkOffPush`, remote greater → `checkOffPull`, equal → nothing; a check-off change must never add to `push`/`pull`, never lift a cloud tombstone, work even for a knot in a content conflict, and produce nothing for a knot present on only one side;
 - for duplicate remote entries sharing a knot id, keep only the newest (ties keep the first seen) and queue the rest for deletion, with decisions made against the kept entry.
 
-Twenty-nine scenarios. Of the original eleven, one was **changed by design** on 2026-09-29 (the user rejected newest-wins): "local newer than remote → push" now supplies a base equal to the remote, because with no base a newer local copy is a conflict; and one keeps its expectations but now passes through the no-base pull rule. One gained extra assertions (an empty plan has no conflicts, base updates or check-off operations); the rest are untouched.
+The same file also covers `remoteChangedSinceBase` (the push guard shared by `upsertKnot` and Merge step 6): no remote file → false; remote equal to local → false even with an older base; no base and a differing remote → true; with a base, remote equal to base → false, remote greater → true, remote older than base → false.
+
+Thirty-six scenarios (twenty-nine for `planSync`, seven for `remoteChangedSinceBase`). Of the original eleven `planSync` ones, one was **changed by design** on 2026-09-29 (the user rejected newest-wins): "local newer than remote → push" now supplies a base equal to the remote, because with no base a newer local copy is a conflict; and one keeps its expectations but now passes through the no-base pull rule. One gained extra assertions (an empty plan has no conflicts, base updates or check-off operations); the rest are untouched.
 
 **Validates: Requirement 11.5, 11.6, 11.7, 11.8, 11.10, 14.9, 17.1, 17.2** — `syncPlan.ts` `planSync`. **Automated** — `node src/syncPlan.chartest.js`.
 
@@ -1465,14 +1493,14 @@ Everything that requires a real Google account, a real Drive app-data folder, a 
 
 | Failure Scenario | Handling |
 |---|---|
-| Geolocation denied | Show "Location access required — enable in device settings." Knot saves without location. |
+| Geolocation denied | The location line becomes a retry button: "Location blocked for this site — allow it in browser settings, then tap to retry". Knot saves without location (or with the fix, if a retry succeeds before saving). |
 | Geolocation timeout (10 s) | Save best-available fix; if none, location field marked unavailable. |
 | Microphone denied | Error toast; mic button disabled for remainder of session. |
 | Camera / MediaRecorder unsupported | Error toast; camera/mic button hidden. |
 | File > 100 MB or wrong format | Inline error under the control; file not attached; existing content preserved. |
 | IndexedDB save failure | Error message "Could not save knot — storage may be full." Knot content not discarded. |
 | IndexedDB settings save failure | Toast; control reverts to previous value. |
-| Transcription timeout / failure | Non-blocking 5-second auto-dismissing toast "Transcription unavailable." Audio saved normally. |
+| No live transcript produced (failure, no speech, unsupported, offline) | After saving, a non-blocking toast (`toastService.show`, 5 seconds, or dismissed on tap) that starts "Saved." and gives the reason where known (for example "Live transcription was blocked (mic permission)…"). Audio saved normally and marked `transcriptionStatus: 'pending'` so it can be transcribed later from the knot. |
 | Share: Web Share unsupported | Text copied to clipboard; toast "Knot copied to clipboard" (or "Sharing isn't supported in this browser" if the clipboard write also fails). |
 | Share: `navigator.share` rejects (not a cancel) | Best-effort clipboard copy; toast "Couldn't share — knot copied to clipboard" (or "Couldn't share this knot" if that also fails). |
 | Share: user cancels the share sheet (`AbortError`) | Silent — no toast, no error. |
@@ -1492,19 +1520,39 @@ Everything that requires a real Google account, a real Drive app-data folder, a 
 | Service Worker asset not cached | SW returns a synthetic `503` response; app shows its own offline banner, not the browser error page. |
 | SW update available | Non-blocking banner "New version available — tap to reload" appears; user taps to `location.reload()`. |
 
-All errors are surfaced through `ToastService` (`src/toastService.ts`), a DOM-managed singleton that components call directly. Blocking errors (save failure, validation) use inline messages; non-blocking errors use auto-dismissing or persistent toasts.
+All errors are surfaced through `ToastService` (`src/toastService.ts`), a DOM-managed singleton that components call directly. Blocking errors (save failure, validation) use inline messages; non-blocking errors use auto-dismissing (also tap-to-dismiss) or persistent toasts.
+
+---
+
+## Daily Email Summary — options (deferred)
+
+**Status:** deferred by the user; the decision between the options below is pending. No code exists for it — the Settings toggle and recipient address are stored but nothing sends mail (Requirement 8.6).
+
+**Blocker.** Knots exist only in each device's IndexedDB, so a server-side cron cannot read them. A PWA also cannot run reliably at a fixed time: Periodic Background Sync is Chromium-only, needs the app installed, and its timing is not guaranteed.
+
+**Costs.**
+- Cloudflare Workers Free (100k requests/day, 5 cron triggers, KV 1k writes and 100k reads per day) is enough for this.
+- Cloudflare Email Service can send to arbitrary recipients only on Workers Paid.
+- Resend Free allows 3,000 emails/month and 100/day, and needs a verified domain you own.
+- So $0/month is possible with Workers Free + Resend Free, but it needs a domain (about $10/year) and caps the whole service at 100 digests/day across all users.
+
+**Options.**
+- **(a) Catch-up send.** On the first app open each day, send yesterday's digest through a relay Worker. No server-side storage, but nothing is sent on a day the app isn't opened.
+- **(b) Push knot text to Worker KV on save**, and a cron sends at each user's local midnight. Fully automatic, but it stores user content on a server.
+- **(c) A Worker reads the Drive backup** using a stored refresh token. The heaviest option for privacy and security.
+
+**Any option needs** double opt-in verification of the recipient address and rate limiting, so the relay can't become an open spam relay.
 
 ---
 
 ## Known Limitations
 
-- **Upsert race (two devices saving within seconds).** The conflict guard in `upsertKnot` checks the remote version and then writes as two separate steps. If two devices save the same knot within the same few seconds, both can pass the check. The device whose write lands first then pulls the other device's version at its next sync without asking, because its recorded base equals its own write — so one edit is pulled over **without a review**. Closing this fully would need Drive's ETag conditional writes (`If-Match`), which are out of scope. The window is a few seconds.
+- **Upsert race (two devices saving at nearly the same moment).** Drive API v3 has **no conditional writes**: there is no ETag / `If-Match` (the `etag` field was dropped in v3), so check-then-write cannot be made atomic. Both `upsertKnot` and Merge (`syncAll` step 6) therefore re-check the cloud version right before each content write, via the shared `remoteChangedSinceBase` guard. The window that remains is the gap between that list call and the write itself. If two devices write the same knot inside it, both can pass; the device whose write lands first then pulls the other device's version at its next sync without asking, because its recorded base equals its own write — so one edit is pulled over **without a review**. The Drive `version` field must **not** be used as a guard instead: check-off metadata PATCHes bump it too, so it would flag a harmless check-off as a content change.
 - **Pre-upgrade knots (one-time conflicts).** A knot that existed before the v5 upgrade has no base version. If it is edited before the first sync after the upgrade (for example offline at launch), the guard's "no base and the two differ" rule turns it into a conflict. That is the intended one-time review — no data is lost — but the user may see a prompt for a knot they only edited on one device. Once a sync finds the two sides equal, or the user resolves the review, a base is recorded and it does not recur.
-- **`appProperties` per-key merge is inferred, not confirmed.** The design relies on Drive's `files.update` merging `appProperties` per key, so a content PATCH that omits the check-off keys leaves them unchanged. Google's reference documents that `null` values are cleared on update, and its custom-properties guide shows a PATCH of one key leaving the others intact — but the guide's example uses `properties`, not `appProperties`, and the reference does not state the merge in so many words. It still needs confirming on a real device (check off on device A, content-edit on device B, and confirm the check-off survives).
+- **`appProperties` per-key merge is inferred, not confirmed.** The design relies on Drive's `files.update` merging `appProperties` per key, so a content PATCH that omits the check-off keys leaves them unchanged. Google's v3 reference documents that `appProperties` entries with a `null` value "are cleared in update", and that `files.update` has patch semantics (only the fields supplied are changed) — together that implies per-key merge, but it never says so outright. Its custom-properties guide shows a PATCH of one key leaving the others intact — but the guide's example uses `properties`, not `appProperties`, and the reference does not state the merge in so many words. It still needs confirming on a real device (check off on device A, content-edit on device B, and confirm the check-off survives).
 - **Quick-capture notification cannot be pinned.** A web app cannot create an undismissable notification (`requireInteraction` is ignored on Android, and there is no Quick Settings tile for a PWA); on Android the user can swipe it away, and it returns at the next launch and after each tap. A native or TWA wrapper would be needed to change that.
 - **"Keep both" can leave a duplicate copy.** It is not atomic, but it cannot lose the cloud version (see *Conflict resolution*): if it fails part-way and the user retries, a second copy of the cloud version can be created. The extra knot can be checked off or deleted.
 - **Check-off read/save race.** `withLatestCheckOff` reads the stored check-off state and the caller then saves, as two separate steps; a check-off made in the tiny gap between them can still be overwritten by the content save.
-- **Centre "+" nav glyph (pre-existing UI quirk).** On `#/knot/...` and `#/conflict/...` the centre "+" navigation button renders without its "+" glyph. This was not introduced by this work.
 
 ---
 
@@ -1560,7 +1608,7 @@ worker-src 'self';
 | **State management** | **Plain TypeScript objects + EventBus** | No reactive framework overhead. Sufficient for this app's complexity level. |
 | **IndexedDB** | **Hand-written Promise wrappers (`db.ts`)** | Removes the `idb` library dependency. The wrapper covers all required operations. |
 | **Service Worker** | **Hand-written `sw.ts`** | No Workbox dependency; the precache list is small and static, making manual maintenance tractable. |
-| **CSS** | **Single `app.css` with custom properties** | Zero runtime, mobile-first media queries, dark mode via `prefers-color-scheme`. No preprocessor needed. |
+| **CSS** | **Single `app.css` with custom properties** | Zero runtime, mobile-first media queries, dark mode via `prefers-color-scheme`. No preprocessor needed. Colour tokens include `--color-primary-soft`, a translucent green (light `rgba(45,122,79,0.15)`, dark `rgba(76,175,118,0.18)`) for the checked-off pill, check-off tick hover/focus and backup badges. |
 | **Icons / Illustrations** | **SVG sprites inlined at build** | No icon font dependencies; full control over contrast and sizing for accessibility. |
 | **Reverse Geocoding** | **Nominatim (OpenStreetMap)** | Free, no API key required, HTTPS. Rate-limited to 1 req/s — acceptable for the app's usage pattern. |
 | **Testing** | **Framework-free `*.chartest.ts` / `*.proptest.ts`** | Plain TypeScript compiled by `tsc` and run with `node` (see *Correctness Properties and Testing*). No test runner dependency. Google Drive and Web Share behaviour are verified by hand in a browser. |

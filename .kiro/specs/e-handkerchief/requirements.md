@@ -28,7 +28,7 @@ e-Handkerchief is a mobile-first Progressive Web App (PWA) that lets users quick
 - **Service Worker**: The background script that enables offline functionality, caching, and background sync for the PWA.
 - **Settings**: A user-accessible configuration screen where preferences such as recipient address and optional feature toggles are managed.
 - **Notification Shortcut**: A quick-capture notification ("Tap to tie a knot") in the device's notification drawer, or a home-screen shortcut, that allows the user to launch the Capture Screen directly without navigating through the browser. A web app cannot pin a notification, so on Android the user can swipe it away; the App puts it back at the next launch and after every tap.
-- **Knot Detail View**: A dedicated screen for a single Knot, accessible via its unique hash-based URL (`#/knot/{id}`), that displays the full Knot content including all Media Items, and provides Share, Check off / Uncheck, Edit, and Delete controls.
+- **Knot Detail View**: A dedicated screen for a single Knot, accessible via its unique hash-based URL (`#/knot/{id}`), that displays the full Knot content including all Media Items, and provides Share, Edit and Delete controls and a check-off tick.
 - **Conflict Review Screen**: The screen at `#/conflict/{id}` where the user compares a conflicted Knot's two versions and chooses which to keep (Requirement 17).
 
 ---
@@ -44,11 +44,12 @@ e-Handkerchief is a mobile-first Progressive Web App (PWA) that lets users quick
 1. THE App SHALL display the Capture Screen as the default landing view on every launch.
 2. WHEN the user opens the Capture Screen, THE App SHALL automatically record the current Timestamp in the device's local date, time, and UTC offset.
 3. WHEN the user opens the Capture Screen, THE App SHALL request GPS Location from the browser Geolocation API and display the result on the Capture Screen within 10 seconds.
-4. IF the Geolocation API returns a permission-denied error, THEN THE App SHALL display a message indicating that location access is required and instructing the user to enable Location permissions in their device settings, and SHALL allow the Knot to be saved without a Location.
-5. IF the Geolocation API does not return a fix within 10 seconds, THEN THE App SHALL save the Knot with the best available Location fix or mark Location as unavailable if no fix was received.
+4. IF the Geolocation API returns a permission-denied error, THEN THE App SHALL show, in place of the location, a tappable message "Location blocked for this site — allow it in browser settings, then tap to retry", and SHALL allow the Knot to be saved without a Location.
+5. IF the Geolocation API does not return a fix within 10 seconds, or cannot determine a position, THEN THE App SHALL show a tappable message "Location unavailable — tap to retry" and SHALL save the Knot with the best available Location fix, or without a Location if none was received.
 6. THE Capture Screen SHALL provide controls to add at least one of the following Media Items: a voice recording, a photo, a video, or a text entry of between 1 and 2000 characters.
 7. IF the user attempts to save a Knot without at least one Media Item, THEN THE App SHALL display a validation message indicating that at least one Media Item is required and SHALL NOT save the Knot.
 8. IF a Media Item capture operation fails (microphone, camera, or storage unavailable), THEN THE App SHALL display a message indicating which Media Item type could not be captured and SHALL return the user to the Capture Screen with any previously added Media Items preserved.
+9. WHEN the user taps either location message, THE App SHALL show "Getting location…" with a progress indicator and request the Location again. WHILE a request is in progress, THE App SHALL ignore further taps; only the most recent request SHALL be able to set the Location, and nothing SHALL be shown for a request that finishes after the user has left the Capture Screen. THE Knot SHALL be saved with whatever Location is known at the moment of saving.
 
 ---
 
@@ -135,9 +136,9 @@ e-Handkerchief is a mobile-first Progressive Web App (PWA) that lets users quick
 
 #### Acceptance Criteria
 
-1. WHERE the Transcription feature is enabled in Settings, THE App SHALL attempt to transcribe each voice recording using the Web Speech API or an equivalent browser-native API, with each transcription attempt subject to a maximum timeout of 30 seconds.
+1. WHERE the Transcription feature is enabled in Settings, THE App SHALL transcribe each voice recording live while it records, using the Web Speech API or an equivalent browser-native API, continuing across pauses until the recording stops. WHEN the recording stops, THE App SHALL finish transcription within 3 seconds even if the speech engine does not respond, keeping any text already recognised.
 2. WHERE the Transcription feature is enabled, WHEN a transcription is successfully produced, THE App SHALL attach the transcribed text to that voice recording's Media Item as searchable text content alongside the original audio file.
-3. WHERE the Transcription feature is enabled, IF transcription fails, times out after 30 seconds, or the speech recognition API is not supported by the browser, THEN THE App SHALL save the Knot with the audio file only and display a non-blocking notice indicating transcription was unavailable; the notice SHALL dismiss automatically after 5 seconds or on user interaction.
+3. WHERE the Transcription feature is enabled, IF no transcript is produced for a voice recording (recognition fails, produces no text, the speech recognition API is not supported by the browser, or the device is offline), THEN THE App SHALL save the Knot with the audio file and mark that recording as pending transcription, so it can be transcribed later from the Knot Detail View when a transcription server is configured in Settings. After saving, THE App SHALL display a non-blocking notice indicating transcription was unavailable, giving the reason where it is known; the notice SHALL dismiss automatically after 5 seconds or on user interaction.
 4. WHERE the Transcription feature is disabled, THE App SHALL NOT attempt transcription.
 
 ---
@@ -205,6 +206,7 @@ e-Handkerchief is a mobile-first Progressive Web App (PWA) that lets users quick
 10. WHEN the user deletes a backup via "Manage backups", THE App SHALL delete the Drive file and SHALL record a cloud marker so that no device re-uploads a backup for that Knot until the Knot is next edited on that device; Knot copies already present on any device SHALL NOT be deleted.
 11. THE Settings screen SHALL explain, in plain language, both kinds of delete: that deleting a Knot from the Knots list or its detail page removes it from this device only (its cloud backup is kept and other devices keep their copies), and that deleting a backup via "Manage backups" deletes the Knot's cloud backup only (copies already on devices are kept and won't be backed up again unless edited).
 12. WHERE Google Drive is connected, WHEN the provider's access authorisation expires, THE App SHALL renew it automatically without user interaction. IF the provider refuses renewal, THEN THE App SHALL mark the provider as disconnected and SHALL display a message prompting the user to reconnect.
+13. IF the user cancels or denies Google's consent screen (Google redirects back with an `error` parameter such as `access_denied`), THEN THE App SHALL remove the OAuth parameters from the URL, SHALL leave the connection status and any stored authorisation unchanged, and SHALL display the notice "Google Drive connection cancelled" (for any other error, "Could not connect to Google Drive").
 
 ---
 
@@ -248,7 +250,9 @@ e-Handkerchief is a mobile-first Progressive Web App (PWA) that lets users quick
 6. THE Knot Detail View SHALL provide a back-navigation control that returns the user to the Knots list (`#/knots`).
 7. IF the user navigates directly to `#/knot/{id}` and no Knot with that `{id}` exists in Local Storage, THEN THE App SHALL display a message indicating the Knot could not be found on this device and SHALL provide a control to navigate to the Knots list.
 8. THE Knot Detail View SHALL be fully accessible offline; the App SHALL load the Knot from Local Storage without requiring a network request.
-9. THE Knot Detail View SHALL provide a "Check off" / "Uncheck" control (Requirement 14), and WHILE the Knot is in conflict SHALL display a banner with a "Review" button that opens the Conflict Review Screen (Requirement 17).
+9. THE Knot Detail View SHALL provide the same per-knot check-off control as the Knots list (Requirement 14; accessible names "Check off knot" / "Uncheck knot"), shown beside the Knot's timestamp, and WHILE the Knot is in conflict SHALL display a banner with a "Review" button that opens the Conflict Review Screen (Requirement 17).
+10. WHILE a Knot is checked off, THE Knot Detail View SHALL show a "Checked off" indicator reading "✓ Checked off · " followed by the time it was checked off, formatted in the user's chosen time zone and date/time format, on its own line under the timestamp. THE Knot Detail View SHALL NOT fade or strike through the Knot's content because it is checked off.
+11. THE App's persistent navigation SHALL mark exactly one tab as current: Knots while the Knots list, a Knot Detail View, or the Conflict Review Screen is shown; Calendar, Settings, and Capture on their own screens. WHILE the Capture Screen is current, THE centre "+" navigation control SHALL be visually distinguished from its normal state.
 
 ---
 
@@ -258,7 +262,7 @@ e-Handkerchief is a mobile-first Progressive Web App (PWA) that lets users quick
 
 #### Acceptance Criteria
 
-1. THE Knots list SHALL provide a per-knot check-off control (accessible name "Check off knot" when the Knot is not checked off, "Uncheck knot" when it is), and THE Knot Detail View SHALL provide a "Check off" / "Uncheck" control.
+1. THE Knots list SHALL provide a per-knot check-off control (accessible name "Check off knot" when the Knot is not checked off, "Uncheck knot" when it is), and THE Knot Detail View SHALL provide the same control (same accessible names), shown beside the Knot's timestamp, and, while the Knot is checked off, a "Checked off" indicator showing when (Requirement 13.10).
 2. WHEN the user checks off a Knot, THE App SHALL record the time as the Knot's `checkedOffAt` and as its `checkOffChangedAt`, and SHALL display the toast "Checked off · Undo". WHEN the user unchecks a Knot, THE App SHALL clear `checkedOffAt`, set `checkOffChangedAt` to the current time, and SHALL display "Unchecked · Undo". Activating "Undo" in either toast SHALL reverse that action.
 3. Checking off or unchecking a Knot SHALL NOT change the Knot's `updatedAt`, its media, or any other content, and SHALL NOT be treated as an edit for the purposes of sync or conflict detection.
 4. WHILE a Knot is checked off and the next "New day starts at" time after `checkedOffAt` has not yet passed, THE Knots list SHALL keep the Knot visible, faded and struck through. THE "New day starts at" time defaults to 03:00, is configurable in Settings (Requirement 12.15), and SHALL be evaluated in the App's timezone setting ("auto" meaning the device's own timezone).

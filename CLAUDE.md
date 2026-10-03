@@ -125,7 +125,80 @@ Audit findings (Claude): the Knot theme was half-applied. The nav, list and cale
     - "Allow notifications" / "Blocked in browser settings".
 - **Decision (Claude):** supercharge ran degraded. There is no `docs/`, OpenSpec or graphify graph in this repo, and none was scaffolded. The Kiro spec stays the spec of record.
 
-## Session status (as of 2026-09-29)
+### 2026-10-03 — Open-items sweep + mobile detail-page buttons (plan: `~/.claude/plans/proceed-with-all-open-partitioned-tulip.md`)
+- **Bug (reported by user):** on a phone, the knot detail page's buttons ran off the right edge. **Cause (found by Claude):** the view-mode header put ← Back, Share, Check off, Edit and Delete in one row that couldn't wrap, about 510px wide against 328px usable. `app.css` has no width breakpoints.
+- **Decision (user):** use two rows plus a tick:
+  - Row 1 is ← Back to Knots.
+  - Row 2 is Share / Edit / Delete as smaller buttons (6px/10px, 13px) that wrap.
+  - The Check off / Uncheck text button becomes the list's ✓/↩ tick (`.knot-check-btn`), shown in the card beside the timestamp (`.knot-detail-meta`) and hidden in edit mode.
+  - Claude pointed out that turning Check off into a tick isn't enough on its own (Back + Share + Edit + Delete is still about 410px).
+- **Bug (found by Claude):** the "+" glyph was invisible on `#/`, `#/knot/…` and `#/conflict/…`. It wasn't missing: `.nav-bar a[aria-current="page"]` (specificity 0,2,1) coloured it primary on the primary button. **Fix:** `.nav-bar .capture-btn[aria-current="page"] { color: white; }`.
+- **Finding (Claude, from Google's docs):** Drive API v3 has **no** conditional writes. The `etag` field was dropped in v3, and `files.update` has no If-Match header or precondition. So the earlier note "closing the upsert race needs ETag writes" was wrong.
+- **Decision (user):** narrow the race; don't redesign. Merge with Cloud (`doSyncAll` step 6) now re-lists the knot's files and re-runs the same guard as `upsertKnot` just before each content push, then writes to the freshly found file id.
+  - A change detected there records a conflict, which is counted as "need review"; its queued upload job is cleared.
+  - The guard is the pure `remoteChangedSinceBase` in `src/syncPlan.ts`.
+  - **Rejected by user:** self-heal of the check-off keys after a content upload, and per-device files (a large redesign).
+- **Decision (Claude):** don't use Drive's `version` field as a guard, because check-off metadata PATCHes bump it and would show up as content conflicts. This is recorded in code and in design.md.
+- **Decision (user):** for Req 7, rewrite the text to match the live behaviour (transcribes while recording, keeps going across pauses, deferred fallback) and add a safety cap.
+  - **Implementation (Claude):** `stop()` force-finishes after `STOP_SAFETY_MS = 3000` if the engine never fires `onend`. It calls `abort()` and resolves with the text collected so far.
+  - **Review fix (Claude):** `onerror` ignores events that arrive after the session has finished (the async `aborted` error from that `abort()`), so the live box isn't overwritten after saving.
+- **Decision (Claude, docs reconcile, to match the code):**
+  - Req 7.3's notice now says it "dismisses automatically after **6** seconds". That is what ships (`toastService.show(msg, 6000)`). The old "5 seconds or on user interaction" clause was dropped, because the toast has no tap-to-dismiss.
+  - 7.3 also lists "device is offline" as a trigger and says the recording is marked pending transcription.
+  - New **Req 11.13** covers a cancelled or denied consent.
+  - The design.md error-handling table row for transcription was corrected.
+  - ~~**Open question for the user:** keep the loosened 7.3, or change the toast to 5 s plus dismiss on tap.~~ **Superseded (user, round 2):** the app now follows the old spec (5 s or dismiss on tap). See below.
+
+### 2026-10-03 (round 2) — Notice per spec, checked-off pill, Capture "+" state, location retry
+- **Decision (user):** the transcription notice follows the old Req 7.3: it dismisses after **5 s or on tap**. `captureScreen` uses the default `toastService.show(msg)`.
+  - **Decision (Claude, plan approved):** tap-to-dismiss applies to **every** plain `show()` toast (with `cursor: pointer`). There are about 40 callers and none of them act on a click. `showAction` (Undo) and `showPersistent` are unchanged.
+- **Decision (user):** the knot page shows the checked-off state as a green pill "✓ Checked off · <date time>" under the timestamp row, with no fading or strike-through, because it's the dedicated single-knot view. The ✓/↩ tick stays.
+  - The time is `formatKnotTimestamp(new Date(checkedOffAt).toISOString())`, which gives the user's zone and format.
+  - Claude also checked that the `conflictScreen` and `settingsScreen` call sites that use the same pattern are correct, not UTC.
+- **Decision (Claude, plan approved):** a new CSS token `--color-primary-soft` for light and dark. It is used by the pill, the `.knot-check-btn` hover state and `.backup-badge`, which fixes their dark-mode tint. `.combobox-option.is-highlighted` still hard-codes the light rgba; this is minor and was left alone.
+- **Decision (user):** when Capture is current, the "+" is darker (`--color-primary-dark`) with a ring (3px surface gap + 2px primary). It's the normal green elsewhere.
+- **Decision (user):** `#/knot/…` and `#/conflict/…` highlight the **Knots** tab. Previously the `else` catch-all marked "+" as current there. This is the pure `navTabForRoute` in `router.ts`, covered by `router.chartest.ts`.
+- **Decision (user, feature request):** if location fails on Capture, tapping the line retries it with no page reload.
+  - The copy, chosen by the user: "Location unavailable — tap to retry", or "Location blocked for this site — allow it in browser settings, then tap to retry".
+  - The new `geoService.locate()` separates `denied` (PERMISSION_DENIED) from `unavailable`. `getCurrentPosition()` is now a wrapper.
+ Its options, costs and privacy trade-offs are now written up in design.md; there's no code.
+- **Decision (Claude, plan approved):** `?error=` on the OAuth return now:
+  - clears `pkce_verifier`;
+  - strips the URL params;
+  - toasts "Google Drive connection cancelled" for `access_denied`, otherwise "Could not connect to Google Drive";
+  - never changes the connection status or tokens.
+  - **Copy:** "Google Drive connection cancelled" was proposed by Claude and approved with the plan.
+- **Decision (Claude, plan approved):** housekeeping:
+  - `timezoneCombobox.js` is added to the SW precache.
+  - `deploy.yml` deletes `*.chartest.js` / `*.proptest.js` from `_site`. `tsconfig` is unchanged, because local tests need the compiled JS.
+  - The nine no-op `removeEventListener` calls (captureScreen ×1, settingsScreen ×8) now use named handlers. They were dead code rather than a leak, since the elements are removed with the screen.
+- **Decision (user, implicit in plan approval):** the 2026-09-29 Claude-invented copy is kept as it is, unless the user marks changes later.
+- **Not done by Claude:** the real-device checks need the user's Google account and devices. The checklist is in the plan file and in "Session status (as of 2026-10-03)" below.
+
+## Session status (as of 2026-10-03)
+- All 2026-10-03 items are implemented and reviewed. **Nothing is committed or pushed.**
+  - `tsc` (app + SW) exits 0.
+  - All 7 chartests pass (syncPlan has 7 new `remoteChangedSinceBase` cases), plus the timezone proptest.
+  - Every SW ASSETS path exists (40 entries).
+- **Browser-checked locally at 320×640:**
+  - Detail header: Back on row 1; Share/Edit/Delete fit on row 2 (x 84–304); document width 320, so no horizontal scroll.
+  - The tick toggles ✓→↩ with the "Checked off · Undo" toast; Undo restores ✓.
+  - The tick is absent in edit mode, and Save/Cancel fit.
+  - "+" is white on `#/` and `#/knot/…`.
+  - `/?error=access_denied#/knots` shows the toast, and the URL is cleaned to `/#/knots`.
+  - The conflict screen wasn't stubbed this time. Its header reuses `.knot-detail-header`, and `.conflict-actions` is already a column.
+- **Round 2:** also implemented and browser-checked at 320×640 in dark mode: the toast tap, the 5 s notice, the pill, the nav state, the "+" ring and location retry. `tsc` and all tests pass (router chartest has 8 new cases).
+- **Suggested commit message:** "Knot page: two-row header, check-off tick and Checked-off pill; Capture '+' shows current state, knot pages highlight Knots; tap-to-retry location on Capture; tap-to-dismiss toasts (5 s notice per Req 7.3); handle OAuth ?error=; re-check cloud version before each Merge push; add transcription stop safety cap; precache timezoneCombobox; drop test files from deploy; fix no-op listener cleanups; document email digest options; update Kiro spec and README".
+- **Pending verification (user, real Google account, two or more devices):** the 2026-09-29 list below still applies, and two checks are new:
+  - Cancelling the Google consent screen on the deployed site shows "Google Drive connection cancelled" and returns to a clean URL.
+  - On a phone, the detail page's two rows and the tick look right.
+- **Open items:**
+  - Daily email digest: the decision is pending (options are in design.md).
+  - The remaining race window between list and write: accepted.
+  - The `appProperties` per-key merge is still unconfirmed on a device.
+  - P3 (optional `docs/` tree + graphify graph) was not requested.
+
+## Session status (as of 2026-09-29) — superseded by 2026-10-03 above
 - All of the above is implemented, and **nothing is committed or pushed**.
   - `tsc` (app + SW) passes.
   - All chartests pass: dayCutoff, deviceLabel, knotDiff, knotSummary, mergeMessage, router, syncPlan, plus the timezone proptest.
@@ -218,7 +291,7 @@ Audit findings (Claude): the Knot theme was half-applied. The nav, list and cale
 - **Note saved while offline, or while the broker is unreachable during a refresh:** the upload is queued. Previously only HTTP errors queued; network throws were silently lost, contrary to Req 11.3. Fixed by Claude after advisor review. Manual test only.
 - **Queued retry fails again:** `uploadPending` calls `sendNoteToDrive` directly, so the existing job's attempt count advances and no duplicate job is created. Previously every failed retry enqueued a new job.
 - **Cold offline launch:** `config.js` is now precached by the service worker, so the Drive globals are defined offline.
-- **User cancels consent (`?error=access_denied`):** not handled specially. The param stays in the URL and nothing else happens. Open item.
+- ~~**User cancels consent (`?error=access_denied`):** not handled specially. The param stays in the URL and nothing else happens. Open item.~~ **Resolved 2026-10-03:** see the 2026-10-03 edge cases.
 - **Fork or self-deploy:** its deploy fails until it has its own Google client, its own `oauth-worker`, and both GitHub secrets. The owner's client and broker reject other origins.
 - **Placeholder colliding with other identifiers:** the placeholder must not appear anywhere else in `config.js`, including comments. The guard compares against `'@@GOOGLE' + '_CLIENT_ID@@'` so sed can't rewrite the comparison. `node --check` in CI catches any breakage.
 - **Stale config.js after redeploy:** the service worker is network-first for `.js`, so a normal online reload picks up the fixed file.
@@ -256,7 +329,7 @@ Audit findings (Claude): the Knot theme was half-applied. The nav, list and cale
   - Remote newer and no upload job → pull.
   - Otherwise → a one-time review.
   - Covered by `syncPlan.chartest.ts`.
-- **Upsert race:** two devices saving the same knot within a few seconds can both pass the guard. One edit is then pulled over without review. Documented in design.md Known Limitations. Closing it needs Drive ETag writes, which are out of scope.
+- **Upsert race:** two devices saving the same knot within a few seconds can both pass the guard. One edit is then pulled over without review. Documented in design.md Known Limitations. ~~Closing it needs Drive ETag writes, which are out of scope.~~ **Corrected 2026-10-03:** Drive v3 has no ETag/If-Match, so it can't be closed. Merge now re-checks before each push too, which narrows the window to the gap between list and write.
 - **Cloud changes again during a review:** `resolveConflict` returns `changed-again`, and the screen reloads the newer version. Manual test only.
 - **"Keep both" fails partway:** the cloud copy is saved locally first. If the upload of the copy fails, it stays as a local-only knot and is pushed on the next sync. Manual test only.
 - **Review while offline:** "Connect to the internet to review this knot".
@@ -265,6 +338,36 @@ Audit findings (Claude): the Knot theme was half-applied. The nav, list and cale
 - **Attribution off:** no footer, and the multi-share header is "N knots" without the app name. Covered by `knotSummary.chartest.ts`.
 - **Notification permission states:** granted = toggle; not asked = "Allow notifications" button; denied = "Blocked in browser settings"; unsupported = section hidden. Manual test only.
 - **Notification swiped away on Android:** it returns at the next app launch. It can't be made unswipeable on the web.
+
+### Edge cases added 2026-10-03 (mobile layout / OAuth cancel / race re-check / transcription cap)
+- **Detail page at 320px:**
+  - Back sits on its own row, and Share/Edit/Delete wrap if they still don't fit (e.g. with larger system fonts).
+  - In edit mode the tick is hidden and Save/Cancel wrap.
+  - Browser-checked at 320×640.
+- **Tick on a checked-off knot:** it shows ↩ ("Uncheck knot"). Undo re-renders it through `knot:checkedOff`. Browser-checked.
+- **User cancels Google consent (`?error=access_denied`):**
+  - The toast "Google Drive connection cancelled" appears.
+  - The URL query is stripped and the hash kept.
+  - `pkce_verifier` is cleared and the status is unchanged; an existing connection stays connected.
+  - Browser-checked locally. *Supersedes the 2026-09-22 edge case "not handled specially".*
+- **Any other OAuth `?error=`:** the error is logged and the toast "Could not connect to Google Drive" appears. Status is unchanged.
+- **Cloud copy changed between Merge's listing and its push:**
+  - Step 6 re-lists and re-runs `remoteChangedSinceBase`.
+  - A change records a conflict instead of overwriting; it is counted as "need review" and its queued upload job is cleared.
+  - Covered by `syncPlan.chartest.ts` (the guard's semantics); the re-list itself is a manual or real-device check.
+- **Guard: remote older than base:** not a conflict, so the push goes ahead (unchanged behaviour). Covered by `syncPlan.chartest.ts`.
+- **Speech engine never fires `onend` after stop:**
+  - After 3 s, `abort()` runs and the transcript resolves with the text collected so far. If that's empty, the recording takes the existing deferred-transcription path.
+  - A late `aborted` error is ignored.
+  - Manual test only (it needs a hung engine).
+- **Compiled test files:** they are deleted from `_site` at deploy and kept locally for `node` runs.
+- **Location retry tapped repeatedly, or a slow first fix arriving after a retry:** taps while loading are ignored, and a request counter means only the newest request can set `location`, render, or apply its reverse-geocoded address. Browser-checked with a stubbed `navigator.geolocation` (code 1 → blocked copy, code 2 → unavailable copy, then success → coordinates).
+- **Location result arrives after leaving Capture:** a `disposed` flag set in cleanup means nothing renders.
+- **Knot saved before any location fix:** it saves with `location: null`, same as before.
+- **Location blocked for the site:** a retry fails immediately until the user allows it in browser settings, which the copy says. The browser won't prompt again, so a retry can't re-prompt.
+- **Tapping a plain toast:** it dismisses immediately and its timer is cleared, so nothing is removed twice. The Undo toast's button keeps its own behaviour. Browser-checked.
+- **"+" ring in dark mode:** primary-dark #2d7a4f with a #1e1e1e gap and a #4caf76 ring. Browser-checked (computed styles).
+- **Checked-off pill:** it appears on check-off and disappears on Undo, re-rendered by `knot:checkedOff`. The time shows in the user's zone. Browser-checked (SGT).
 
 ## Refactoring Standard Operating Procedure (SOP)
 When instructed to refactor code, adopt the role of a principal software engineer and execute in four strict phases:

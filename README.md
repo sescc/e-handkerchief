@@ -112,11 +112,22 @@ The `transcribe-worker/` folder lives in this SAME repository (a monorepo) and i
 - The GitHub Pages workflow only publishes the PWA's own files (`index.html`, `app.css`, `manifest.webmanifest`, `sw.js`, `config.js`, `src/`, `icons/`); the `transcribe-worker/` folder is not part of the deployed site.
 - The repo contains NO secrets (the Groq key is a Cloudflare secret set via `wrangler secret put`), so the whole repo — worker subfolder included — is safe to push publicly.
 
+## Location on the Capture screen
+
+The Capture screen asks the browser for your GPS position (up to 10 seconds) and shows it, with
+a street address when one can be looked up. If that fails, the location line becomes a tappable
+**"Location unavailable — tap to retry"**, or, when you've blocked location for the site,
+**"Location blocked for this site — allow it in browser settings, then tap to retry"**. Tap it to
+ask again ("Getting location…"); you can save the knot at any time with whatever location is
+known by then (none if it never arrived).
+
 ## Checking off a knot
 
 When you've dealt with a knot, **check it off** — it's not the same as deleting it. There's a
-check-off button (✓, or ↩ once a knot is checked off) on each entry in the Knots list, and a
-**Check off** / **Uncheck** button on the knot's detail page. You get a **Checked off · Undo** (or **Unchecked · Undo**) toast, so a
+check-off button (✓, or ↩ once a knot is checked off) on each entry in the Knots list, and the
+same ✓ tick beside the timestamp on the knot's detail page (↩ to uncheck). While a knot is checked
+off, its detail page also shows a green **✓ Checked off · {date and time}** pill under the timestamp
+(in your Settings time zone and format). You get a **Checked off · Undo** (or **Unchecked · Undo**) toast, so a
 slip of the thumb is easy to reverse.
 
 - A checked-off knot stays in the Knots list, **faded and struck through**, until the next
@@ -392,7 +403,7 @@ e-Handkerchief/
 │   ├── knotSummary.chartest.ts # Test: knotSummaryText / mediaFileName
 │   ├── shareService.ts     # Web Share API wrapper (one or several knots) + clipboard fallback
 │   ├── syncPlan.ts         # Pure: base-aware push/pull/conflict/check-off/dedupe decisions
-│   ├── syncPlan.chartest.ts    # Test: planSync
+│   ├── syncPlan.chartest.ts    # Test: planSync / remoteChangedSinceBase
 │   ├── checkOffActions.ts  # Check off / uncheck / Undo, shared by the Knots list and detail screen
 │   ├── dayCutoff.ts        # Pure: when a checked-off knot leaves the Knots list
 │   ├── dayCutoff.chartest.ts   # Test: dayCutoff

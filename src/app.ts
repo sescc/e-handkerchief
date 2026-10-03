@@ -4,7 +4,7 @@
 // ============================================================
 
 import { settingsStore } from './settingsStore.js';
-import { initRouter, navigate } from './router.js';
+import { initRouter, navigate, parseHash, navTabForRoute } from './router.js';
 import { toastService } from './toastService.js';
 import { cloudSyncService } from './cloudSyncService.js';
 import { notificationService } from './notificationService.js';
@@ -58,11 +58,14 @@ async function init(): Promise<void> {
   // 1. Load settings before any screen renders (Requirement 12.10)
   await settingsStore.load();
 
-  // 2. Handle Google Drive OAuth callback (?code=...) if present
+  // 2. Handle Google Drive OAuth callback (?code=... or ?error=...) if present.
+  // Toasts attach to document.body, so they work before the shell is built.
   const urlParams = new URLSearchParams(location.search);
   const code = urlParams.get('code');
   if (code) {
     await cloudSyncService.handleOAuthCallback(code);
+  } else if (urlParams.has('error')) {
+    await cloudSyncService.handleOAuthError(urlParams.get('error') ?? '');
   }
 
   // 3. Build the app shell: main content area + fixed bottom nav bar
@@ -194,19 +197,18 @@ function buildNavBar(): HTMLElement {
   settingsLink.innerHTML = '<span class="nav-icon">⚙️</span><span>Settings</span>';
 
   function updateActive(): void {
-    const hash = window.location.hash;
-    knotsLink.removeAttribute('aria-current');
-    calendarLink.removeAttribute('aria-current');
-    captureBtn.removeAttribute('aria-current');
-    settingsLink.removeAttribute('aria-current');
-    if (hash === '#/knots') {
-      knotsLink.setAttribute('aria-current', 'page');
-    } else if (hash === '#/calendar') {
-      calendarLink.setAttribute('aria-current', 'page');
-    } else if (hash === '#/settings') {
-      settingsLink.setAttribute('aria-current', 'page');
-    } else {
-      captureBtn.setAttribute('aria-current', 'page');
+    // Knot detail and conflict screens count as the Knots tab; unknown
+    // routes fall back to Capture (see navTabForRoute / parseHash).
+    const current = navTabForRoute(parseHash(window.location.hash).route);
+    const tabs = {
+      knots: knotsLink,
+      calendar: calendarLink,
+      capture: captureBtn,
+      settings: settingsLink,
+    };
+    for (const [tab, el] of Object.entries(tabs)) {
+      if (tab === current) el.setAttribute('aria-current', 'page');
+      else el.removeAttribute('aria-current');
     }
   }
   window.addEventListener('hashchange', updateActive);

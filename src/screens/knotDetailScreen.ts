@@ -160,19 +160,6 @@ export function renderKnotDetail(
     });
     actionsEl.appendChild(shareBtn);
 
-    const checkBtn = document.createElement('button');
-    checkBtn.className = 'btn btn-ghost';
-    checkBtn.textContent = isCheckedOff(knot) ? 'Uncheck' : 'Check off';
-    checkBtn.addEventListener('click', () => {
-      // The screen re-renders from the 'knot:checkedOff' event below.
-      void toggleCheckOff(knot.id)
-        .catch((err) => {
-          console.warn('Check-off failed:', err);
-          toastService.show('Could not save — please try again');
-        });
-    });
-    actionsEl.appendChild(checkBtn);
-
     const editBtn = document.createElement('button');
     editBtn.className = 'btn btn-ghost';
     editBtn.textContent = '✏️ Edit';
@@ -210,11 +197,43 @@ export function renderKnotDetail(
     contentEl.appendChild(conflictBannerEl);
     void updateConflictBanner();
 
-    // Timestamp
+    // Timestamp + check-off tick (same control as in the Knots list). The
+    // screen re-renders from the 'knot:checkedOff' event below, so the tick
+    // updates after toggling and after Undo.
+    const metaEl = document.createElement('div');
+    metaEl.className = 'knot-detail-meta';
+
     const tsEl = document.createElement('div');
     tsEl.className = 'knot-detail-timestamp';
     tsEl.textContent = formatKnotTimestamp(knot.timestamp.localISO);
-    contentEl.appendChild(tsEl);
+    metaEl.appendChild(tsEl);
+
+    const checked = isCheckedOff(knot);
+    const checkBtn = document.createElement('button');
+    checkBtn.className = 'knot-check-btn';
+    checkBtn.textContent = checked ? '↩' : '✓';
+    const checkLabel = checked ? 'Uncheck knot' : 'Check off knot';
+    checkBtn.setAttribute('aria-label', checkLabel);
+    checkBtn.title = checkLabel;
+    checkBtn.addEventListener('click', () => {
+      void toggleCheckOff(knot.id).catch((err) => {
+        console.warn('Check-off failed:', err);
+        toastService.show('Could not save — please try again');
+      });
+    });
+    metaEl.appendChild(checkBtn);
+    contentEl.appendChild(metaEl);
+
+    // "✓ Checked off · date time" pill — present only while checked off. The
+    // 'knot:checkedOff' re-render adds or removes it.
+    if (checked && typeof knot.checkedOffAt === 'number') {
+      const pillRow = document.createElement('div');
+      const pill = document.createElement('span');
+      pill.className = 'knot-checked-off-pill';
+      pill.textContent = `✓ Checked off · ${formatKnotTimestamp(new Date(knot.checkedOffAt).toISOString())}`;
+      pillRow.appendChild(pill);
+      contentEl.appendChild(pillRow);
+    }
 
     // Location — clickable Google Maps link
     const locLink = renderLocation(knot, 'knot-detail-location');
