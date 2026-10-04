@@ -25,6 +25,8 @@ node src/dayCutoff.chartest.js
 node src/knotDiff.chartest.js
 node src/deviceLabel.chartest.js
 node src/mergeMessage.chartest.js
+node src/locateFailure.chartest.js
+node src/randomKnot.chartest.js
 node src/components/timezoneCombobox.proptest.js
 ```
 
@@ -116,10 +118,15 @@ The `transcribe-worker/` folder lives in this SAME repository (a monorepo) and i
 
 The Capture screen asks the browser for your GPS position (up to 10 seconds) and shows it, with
 a street address when one can be looked up. If that fails, the location line becomes a tappable
-**"Location unavailable — tap to retry"**, or, when you've blocked location for the site,
-**"Location blocked for this site — allow it in browser settings, then tap to retry"**. Tap it to
-ask again ("Getting location…"); you can save the knot at any time with whatever location is
-known by then (none if it never arrived).
+message that says what went wrong:
+
+- **"Location unavailable — tap to retry"** — no fix arrived in time, or the position couldn't be worked out.
+- **"Location blocked for this site — allow it in browser settings, then tap to retry"** — you've blocked location for the site.
+- **"Location is off — turn it on, then tap to retry"** — the site is allowed, but your phone's own Location setting is off.
+- **"Location is off or blocked — turn it on or allow it for this site, then tap to retry"** — the browser refused but can't say which of the two it was.
+
+Tap it to ask again ("Getting location…"); you can save the knot at any time with whatever
+location is known by then (none if it never arrived).
 
 ## Checking off a knot
 
@@ -136,7 +143,7 @@ slip of the thumb is easy to reverse.
   morning; one checked off at 23:00 leaves it at 03:00 the next day.
 - After that it's **hidden from the Knots list only**. It stays in the Calendar (faded) and on
   its detail page, where you can uncheck it. A **Show N checked-off knots** toggle in
-  the list brings the hidden ones back into view (and **Hide checked-off knots**
+  the top of the list brings the hidden ones back into view (and **Hide checked-off knots**
   tucks them away again). The list updates by itself when a cutoff passes while it's open; if
   every knot is checked off you'll see "All your knots are checked off."
 - Checking off is **not an edit**: it doesn't change the knot's content, so it never causes an
@@ -144,6 +151,15 @@ slip of the thumb is easy to reverse.
   syncs to your other devices on its own, and a check-off never restores a backup you deleted.
 - In **Manage backups**, a checked-off knot's backup carries a **Checked off** badge, so you can
   see which backups are safe to delete.
+
+## Random knot
+
+Not sure which knot to deal with next? In the Knots list, tap **🎲 Random** (next to Select) to
+open a random knot that isn't checked off — even if the list is currently hiding checked-off
+ones. On that page, **Another random knot** draws a different one (never the one you're looking
+at). If nothing is left you'll see "No unchecked knots yet", or "This is your only unchecked
+knot" when only the current one remains. Random is hidden while you're selecting knots to share,
+and **Another random knot** is hidden while you're editing.
 
 ## Sharing a knot
 
@@ -162,8 +178,8 @@ messaging apps, Bluetooth, AirDrop, "Copy", and so on.
   copied to the clipboard instead, with a toast confirming the copy.
 - Cancelling the share sheet does nothing — no error, no toast.
 - By default the text ends with **— Shared from e-Handkerchief** and a link to the app, so
-  the people you share with can find it. Turn this off in **Settings → Sharing** ("Add
-  'Shared from e-Handkerchief' to shared knots").
+  the people you share with can find it. Turn this off in **Settings → Sharing** ("Append
+  source when sharing").
 
 ### Sharing several knots at once
 
@@ -394,6 +410,8 @@ e-Handkerchief/
 │   ├── router.chartest.ts  # Test: parseHash
 │   ├── eventBus.ts         # Pub/sub event system
 │   ├── geoService.ts       # Geolocation + reverse geocoding
+│   ├── locateFailure.ts    # Pure: why a location request failed (denied / off / unknown / unavailable)
+│   ├── locateFailure.chartest.ts # Test: classifyLocateFailure
 │   ├── mediaService.ts     # Audio/photo/video capture
 │   ├── mapsLink.ts         # Maps link builder
 │   ├── dateFormat.ts       # Date/time formatting helpers
@@ -401,6 +419,8 @@ e-Handkerchief/
 │   ├── transcriptionService.ts
 │   ├── knotSummary.ts      # Pure: share summary text + media filenames
 │   ├── knotSummary.chartest.ts # Test: knotSummaryText / mediaFileName
+│   ├── randomKnot.ts       # Pure: pick a random unchecked knot
+│   ├── randomKnot.chartest.ts  # Test: pickRandomKnot
 │   ├── shareService.ts     # Web Share API wrapper (one or several knots) + clipboard fallback
 │   ├── syncPlan.ts         # Pure: base-aware push/pull/conflict/check-off/dedupe decisions
 │   ├── syncPlan.chartest.ts    # Test: planSync / remoteChangedSinceBase

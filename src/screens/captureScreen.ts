@@ -144,14 +144,17 @@ export function renderCapture(container: HTMLElement): () => void {
     metaLocation.replaceChildren(spinner);
   }
 
-  function renderLocationFailure(reason: 'denied' | 'unavailable'): void {
+  function renderLocationFailure(reason: 'denied' | 'off' | 'unknown' | 'unavailable'): void {
     const retryBtn = document.createElement('button');
     retryBtn.type = 'button';
     retryBtn.className = 'location-retry';
-    retryBtn.textContent =
-      reason === 'denied'
-        ? 'Location blocked for this site — allow it in browser settings, then tap to retry'
-        : 'Location unavailable — tap to retry';
+    const copy: Record<typeof reason, string> = {
+      denied: 'Location blocked for this site — allow it in browser settings, then tap to retry',
+      off: 'Location is off — turn it on, then tap to retry',
+      unknown: 'Location is off or blocked — turn it on or allow it for this site, then tap to retry',
+      unavailable: 'Location unavailable — tap to retry',
+    };
+    retryBtn.textContent = copy[reason];
     retryBtn.addEventListener('click', onLocationRetryClick);
     metaLocation.replaceChildren(retryBtn);
   }

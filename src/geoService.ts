@@ -5,6 +5,10 @@
 // ============================================================
 
 import type { KnotLocation } from './types.js';
+import { classifyLocateFailure } from './locateFailure.js';
+import type { LocateFailureReason } from './locateFailure.js';
+
+export type { LocateFailureReason };
 
 export interface GeoServiceAPI {
   /**
@@ -15,8 +19,10 @@ export interface GeoServiceAPI {
   getCurrentPosition(): Promise<KnotLocation | null>;
 
   /**
-   * Like getCurrentPosition(), but reports whether a failure was a permission
-   * denial or anything else. Never rejects.
+   * Like getCurrentPosition(), but reports why a failure happened:
+   * 'denied' (site blocked), 'off' (device Location off), 'unknown'
+   * (permission denied, cause unclear) or 'unavailable' (anything else).
+   * Never rejects.
    */
   locate(): Promise<LocateResult>;
 
@@ -28,32 +34,79 @@ export interface GeoServiceAPI {
   reverseGeocode(lat: number, lng: number): Promise<string | null>;
 }
 
-/** Outcome of a location request, distinguishing a permission block from other failures. */
+/**
+ * Outcome of a location request. On failure, `reason` is one of:
+ * - 'denied':      the site is blocked in the browser settings.
+ * - 'off':         the site is allowed, so the device's own Location is off.
+ * - 'unknown':     permission was denied but the cause (site vs device) can't be told.
+ * - 'unavailable': any other failure (no fix, timeout, no geolocation support).
+ */
 export type LocateResult =
   | { ok: true; coords: KnotLocation }
-  | { ok: false; reason: 'denied' | 'unavailable' };
+  | { ok: false; reason: LocateFailureReason };
+
+/** Max time to wait for the Permissions API before treating its state as unknown. */
+const PERMISSION_QUERY_TIMEOUT_MS = 1000;
+
+/**
+ * Read the geolocation permission state, or null if the Permissions API is
+ * missing, throws, rejects, or doesn't answer within PERMISSION_QUERY_TIMEOUT_MS.
+ * Never rejects.
+ */
+async function queryGeolocationPermission(): Promise<'granted' | 'denied' | 'prompt' | null> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    if (!navigator.permissions) return null;
+    const query = navigator.permissions
+      .query({ name: 'geolocation' as PermissionName })
+      .then((s) => s.state as 'granted' | 'denied' | 'prompt')
+      .catch(() => null);
+    const timeout = new Promise<null>((res) => {
+      timer = setTimeout(() => res(null), PERMISSION_QUERY_TIMEOUT_MS);
+    });
+    return await Promise.race([query, timeout]);
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 /**
  * Request the current GPS position, reporting why it failed.
- * Always resolves within 10 seconds — never rejects.
- * PERMISSION_DENIED (code 1) -> 'denied'; POSITION_UNAVAILABLE, TIMEOUT, the
- * guard timeout, or no geolocation support -> 'unavailable'.
+ * Always resolves within about 11 seconds (10 s guard, or a 1 s permission
+ * lookup after an error) — never rejects, and resolves exactly once.
+ *
+ * Failure reasons: PERMISSION_DENIED (code 1) is refined with the Permissions
+ * API, queried after the error fires so the state is fresh — site blocked ->
+ * 'denied', site allowed -> 'off' (device Location is off; Android Chrome also
+ * reports that as code 1), state unknown -> 'unknown'. POSITION_UNAVAILABLE,
+ * TIMEOUT, the guard timeout, or no geolocation support -> 'unavailable'.
  */
 export function locate(): Promise<LocateResult> {
   return new Promise((resolve) => {
-    if (!navigator.geolocation) {
-      resolve({ ok: false, reason: 'unavailable' });
-      return;
-    }
+    let settled = false;
+    const finish = (result: LocateResult): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(guard);
+      resolve(result);
+    };
+    const fail = (code: number | null, perm: 'granted' | 'denied' | 'prompt' | null): void =>
+      finish({ ok: false, reason: classifyLocateFailure(code, perm) });
 
     // Belt-and-suspenders: our own timeout in case the API doesn't respect its timeout option
-    const guard = setTimeout(() => resolve({ ok: false, reason: 'unavailable' }), 10000);
+    const guard = setTimeout(() => fail(null, null), 10000);
+
+    if (!navigator.geolocation) {
+      fail(null, null);
+      return;
+    }
 
     try {
       navigator.geolocation.getCurrentPosition(
         (pos) => {
-          clearTimeout(guard);
-          resolve({
+          finish({
             ok: true,
             coords: {
               latitude: pos.coords.latitude,
@@ -63,15 +116,21 @@ export function locate(): Promise<LocateResult> {
           });
         },
         (err) => {
+          // The error has arrived: stop the guard so it can't fire while the
+          // permission lookup is pending (finish() also ignores late callers).
           clearTimeout(guard);
           // PERMISSION_DENIED = 1; POSITION_UNAVAILABLE = 2; TIMEOUT = 3
-          resolve({ ok: false, reason: err && err.code === 1 ? 'denied' : 'unavailable' });
+          const code = err && typeof err.code === 'number' ? err.code : null;
+          if (code === 1) {
+            void queryGeolocationPermission().then((state) => fail(code, state));
+          } else {
+            fail(code, null);
+          }
         },
         { timeout: 10000, maximumAge: 0, enableHighAccuracy: true }
       );
     } catch {
-      clearTimeout(guard);
-      resolve({ ok: false, reason: 'unavailable' });
+      fail(null, null);
     }
   });
 }

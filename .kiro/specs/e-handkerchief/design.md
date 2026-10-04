@@ -79,11 +79,13 @@ The architecture is intentionally flat: a thin vanilla-JS UI layer built from Ty
 | Component | Responsibility |
 |---|---|
 | **index.html** | App shell; loads `src/app.js` as an ES module, links `app.css` and `manifest.webmanifest`. |
-| **router.ts** | Hash-based single-page routing (`#/`, `#/knots`, `#/calendar`, `#/knot/:id`, `#/conflict/:id`, `#/settings`). Calls screen `render`/cleanup functions. An unrecognised hash falls back to `#/`. |
+| **router.ts** | Hash-based single-page routing (`#/`, `#/knots`, `#/calendar`, `#/knot/:id`, `#/random/:id`, `#/conflict/:id`, `#/settings`). Calls screen `render`/cleanup functions. An unrecognised hash falls back to `#/`. |
 | **KnotStore** | CRUD on Knots in IndexedDB using hand-written Promise wrappers from `db.ts`. `delete()` also writes a local delete tombstone and drops any recorded conflict; `saveFromSync()` is a plain save used by sync pulls that deliberately does not emit events. Also reads and writes the per-knot sync bookkeeping (`syncState`). |
 | **SettingsStore** | Reads/writes app settings to IndexedDB with an in-memory reactive cache using a custom event-emitter pattern. |
 | **MediaService** | Wraps MediaRecorder API (audio) and HTML Media Capture (photo/video). Returns Blobs. |
-| **GeoService** | Wraps `navigator.geolocation`, enforces 10-second timeout, resolves reverse-geocoding via Nominatim. |
+| **GeoService** | Wraps `navigator.geolocation`, enforces 10-second timeout, resolves reverse-geocoding via Nominatim; `locate()` also says why a failure happened (using the pure *LocateFailure* classifier). |
+| **LocateFailure** | Pure module (`locateFailure.ts`): `classifyLocateFailure(code, permState)` maps a geolocation error code plus the Permissions API state to `'denied'` / `'off'` / `'unknown'` / `'unavailable'`. |
+| **RandomKnot** | Pure module (`randomKnot.ts`): `pickRandomKnot(knots, excludeId, rand)` picks a random knot that is not checked off, optionally excluding one id. |
 | **TranscriptionService** | Wraps Web Speech API for live transcription while recording; `remoteTranscribe.ts` handles deferred transcription of a saved recording via the user's own Worker. |
 | **KnotSummary** | Pure module (`knotSummary.ts`, no DOM, no settingsStore/db imports): builds the plain-text share summary for one knot or several (with the optional attribution footer) and the filename for each media attachment. Used by ShareService and imported by KnotsScreen for `collectTranscripts`. |
 | **ShareService** | Wraps the Web Share API (`navigator.share`) for one or several knots (`shareKnots`; `shareKnot` delegates to it), with a clipboard fallback when it's unavailable. |
@@ -358,14 +360,21 @@ interface GeoServiceAPI {
 
   /**
    * Like getCurrentPosition(), but says why a failure happened. Never rejects.
-   * `denied` = the user/browser blocked location for this site (PERMISSION_DENIED);
+   * `denied`  = the site is blocked in the browser settings;
+   * `off`     = the site is allowed, so the device's own Location is off;
+   * `unknown` = permission was denied but the cause (site vs device) can't be told;
    * `unavailable` = anything else (no fix, timeout, the 10 s guard, no geolocation support).
    */
-  locate(): Promise<{ ok: true; coords: KnotLocation } | { ok: false; reason: 'denied' | 'unavailable' }>;
+  locate(): Promise<LocateResult>;
 
   /** Attempt reverse geocoding. Returns address string (≤ 100 chars) or null. */
   reverseGeocode(lat: number, lng: number): Promise<string | null>;
 }
+
+type LocateFailureReason = 'denied' | 'off' | 'unknown' | 'unavailable';
+type LocateResult =
+  | { ok: true; coords: KnotLocation }
+  | { ok: false; reason: LocateFailureReason };
 ```
 
 ### TranscriptionService API
@@ -562,6 +571,8 @@ e-Handkerchief/
 │   ├── router.chartest.ts        # Characterization test for parseHash / navTabForRoute
 │   ├── eventBus.ts             # Lightweight pub/sub
 │   ├── geoService.ts           # Geolocation + reverse geocoding
+│   ├── locateFailure.ts          # Pure: why a location request failed (denied / off / unknown / unavailable)
+│   ├── locateFailure.chartest.ts # Characterization test for locateFailure
 │   ├── mediaService.ts         # Audio/photo/video capture
 │   ├── mapsLink.ts             # Google Maps URL builder (pure)
 │   ├── dateFormat.ts           # Date/time formatting helpers
@@ -569,6 +580,8 @@ e-Handkerchief/
 │   ├── transcriptionService.ts # Web Speech API (live) wrapper
 │   ├── knotSummary.ts            # Pure: share summary text (one or several knots) + media filenames
 │   ├── knotSummary.chartest.ts   # Characterization test for knotSummary
+│   ├── randomKnot.ts             # Pure: pick a random unchecked knot
+│   ├── randomKnot.chartest.ts    # Characterization test for randomKnot
 │   ├── shareService.ts         # Web Share API wrapper (one or several knots) + clipboard fallback
 │   ├── syncPlan.ts               # Pure: base-aware push/pull/conflict/check-off/dedupe decisions
 │   ├── syncPlan.chartest.ts      # Characterization test for planSync
@@ -593,7 +606,7 @@ e-Handkerchief/
 │       ├── captureScreen.ts    # Capture screen render + logic
 │       ├── knotsScreen.ts      # Knots list screen render + logic
 │       ├── calendarScreen.ts   # Calendar screen render + logic
-│       ├── knotDetailScreen.ts # Knot detail screen render + logic (Share/Edit/Delete, check-off tick, conflict banner)
+│       ├── knotDetailScreen.ts # Knot detail screen render + logic (Share/Edit/Delete, "Another random knot", check-off tick, conflict banner)
 │       ├── conflictScreen.ts   # Conflict review screen (#/conflict/{id})
 │       └── settingsScreen.ts   # Settings screen render + logic
 ├── sw.ts                       # Service Worker source
@@ -744,7 +757,7 @@ Each version's block is additive to `onupgradeneeded`, so a future `v5 → v6` s
 
 Manages a single `<main id="app">` container element. On `hashchange` and initial load:
 1. Calls the current cleanup function (if any) and clears the container's children.
-2. Parses `window.location.hash` against the known routes (`#/`, `#/knots`, `#/calendar`, `#/knot/:id`, `#/conflict/:id`, `#/settings`); unknown hashes fall back to `#/`.
+2. Parses `window.location.hash` against the known routes (`#/`, `#/knots`, `#/calendar`, `#/knot/:id`, `#/random/:id`, `#/conflict/:id`, `#/settings`); unknown hashes fall back to `#/`. `#/random/:id` parses to the same `knot` route as `#/knot/:id`, with an extra param `random: '1'` (so there is no new `Route` value); `#/random/` with no id is an unknown route.
 3. Calls the matching screen's `render(container)` and stores the returned cleanup function.
 
 ```typescript
@@ -758,7 +771,7 @@ function initRouter(container: HTMLElement): void
 
 `parseHash` is pure (no `window` access at import time), so it is exercised directly by `router.chartest.ts` under plain `node` — see *Correctness Properties and Testing*.
 
-**Bottom navigation.** `app.ts` builds a fixed nav bar (Knots, Calendar, a centre "+" for Capture, Settings). Which tab is current comes from the pure `navTabForRoute(route)` in `router.ts`: the `knot` and `conflict` routes map to `'knots'`, and every other route maps to itself (an unknown hash parses to `capture`). `updateActive()` in `app.ts` sets `aria-current="page"` on exactly that tab, so `#/knot/…` and `#/conflict/…` highlight **Knots** (they previously marked "+" as current, which also hid its glyph). When Capture is current, the "+" button is darker (`--color-primary-dark`) with a ring (a 3 px surface-coloured gap, then a 2 px primary ring); otherwise it is the normal green — a subtle signal that you are on Capture. `navTabForRoute` is covered by `router.chartest.ts`.
+**Bottom navigation.** `app.ts` builds a fixed nav bar (Knots, Calendar, a centre "+" for Capture, Settings). Which tab is current comes from the pure `navTabForRoute(route)` in `router.ts`: the `knot` and `conflict` routes map to `'knots'`, and every other route maps to itself (an unknown hash parses to `capture`). Because `#/random/…` is the `knot` route, it highlights Knots too. `updateActive()` in `app.ts` sets `aria-current="page"` on exactly that tab, so `#/knot/…`, `#/random/…` and `#/conflict/…` highlight **Knots** (they previously marked "+" as current, which also hid its glyph). When Capture is current, the "+" button is darker (`--color-primary-dark`) with a ring (a 3 px surface-coloured gap, then a 2 px primary ring); otherwise it is the normal green — a subtle signal that you are on Capture. `navTabForRoute` is covered by `router.chartest.ts`.
 
 ### CaptureScreen (`src/screens/captureScreen.ts`)
 
@@ -766,7 +779,13 @@ Default landing view rendered at route `#/`. Title "Tie a Knot"; Save button "Ti
 
 **Lifecycle:**
 1. On `render`, record a `KnotTimestamp` immediately (local ISO string + UTC offset) and call `GeoService.locate()` with a 10-second deadline; a spinner and "Getting location…" show while location resolves.
-   - **Location retry.** On failure the location line becomes a link-styled `button.location-retry` reading exactly "Location unavailable — tap to retry" (`unavailable`) or "Location blocked for this site — allow it in browser settings, then tap to retry" (`denied`). Tapping it shows "Getting location…" with the spinner and asks again; taps while a request is loading are ignored. A request counter (`locationRequestId`) guarantees only the **latest** request can set `location` or render, and a `disposed` flag stops anything rendering after the user leaves the screen. The knot saves with whatever location is known at save time (`null` if none yet).
+   - **Location retry.** On failure the location line becomes a link-styled `button.location-retry` whose text depends on the `LocateResult` reason, reading exactly:
+     - `unavailable` — "Location unavailable — tap to retry";
+     - `denied` (site blocked) — "Location blocked for this site — allow it in browser settings, then tap to retry";
+     - `off` (site allowed, so the device's Location is off) — "Location is off — turn it on, then tap to retry";
+     - `unknown` (permission denied, cause unclear) — "Location is off or blocked — turn it on or allow it for this site, then tap to retry".
+
+     Tapping it shows "Getting location…" with the spinner and asks again; taps while a request is loading are ignored. A request counter (`locationRequestId`) guarantees only the **latest** request can set `location` or render, and a `disposed` flag stops anything rendering after the user leaves the screen. The knot saves with whatever location is known at save time (`null` if none yet).
 2. The shared `mediaCapture` component (mic/photo/video/library, live transcript, previews, errors) is mounted between the textarea and the Save button; it owns the draft media items.
 3. On Save: validate at least one media item is present; build the `Knot` and call `KnotStore.save()`; on success, emit `knot:saved` via `eventBus` — the app-level listener in `app.ts` (not this screen) triggers the cloud upload; navigate to `#/knots`.
 
@@ -783,7 +802,9 @@ Route `#/knots`. Displays all knots as an inline, scrollable feed, newest first.
 
 **Data loading:** Calls `KnotStore.listAll()` on every `render`. Subscribes to `knot:saved`, `knot:deleted`, `knot:checkedOff`, `knots:synced`, and `knots:conflicts` via `eventBus` to reload without a full re-route (`knots:synced` is how a knot pulled from another device shows up here; `knots:conflicts` refreshes the conflict badge). Cleans up all the subscriptions.
 
-**Checked-off knots:** each entry has a check-off button (`.knot-check-btn`) showing **✓** (aria-label "Check off knot"), or **↩** (aria-label "Uncheck knot") when the knot is already checked off; it stops propagation so it never navigates. It calls `toggleCheckOff(knot.id)` from *CheckOffActions* (which saves without touching `updatedAt`, emits `knot:checkedOff`, and shows the "Checked off · Undo" / "Unchecked · Undo" toast). A checked-off entry is drawn faded and struck through (`.knot-entry--checked-off`) while `isCheckedOffVisible(checkedOffAt, now, settings.dayCutoff, resolveTimeZone(settings.timezone))` is true; once it is false the entry is omitted from the list. When any knots are hidden that way, a toggle "Show N checked-off knot(s)" / "Hide checked-off knots" reveals them. Visibility is derived at render time — nothing is stored and there is no persistent background job. The list re-renders (a) on `visibilitychange` when the app becomes visible, and (b) on a **timer** set to the earliest upcoming cutoff among the visible checked-off knots (`nextCutoffAfter`, plus 500 ms, capped at 24 hours), so a knot disappears while the list is open. The timer is cleared on every render and on cleanup. Empty states: "No knots yet — tap + to tie your first." when there are no knots at all, and "All your knots are checked off." when every knot is hidden.
+**Checked-off knots:** each entry has a check-off button (`.knot-check-btn`) showing **✓** (aria-label "Check off knot"), or **↩** (aria-label "Uncheck knot") when the knot is already checked off; it stops propagation so it never navigates. It calls `toggleCheckOff(knot.id)` from *CheckOffActions* (which saves without touching `updatedAt`, emits `knot:checkedOff`, and shows the "Checked off · Undo" / "Unchecked · Undo" toast). A checked-off entry is drawn faded and struck through (`.knot-entry--checked-off`) while `isCheckedOffVisible(checkedOffAt, now, settings.dayCutoff, resolveTimeZone(settings.timezone))` is true; once it is false the entry is omitted from the list. When any knots are hidden that way, a toggle "Show N checked-off knot(s)" / "Hide checked-off knots" reveals them; it is the **first child of the list** (above the empty-state message and the entries, so it stays reachable in a long list), and its CSS spacing is `margin-bottom`. Visibility is derived at render time — nothing is stored and there is no persistent background job. The list re-renders (a) on `visibilitychange` when the app becomes visible, and (b) on a **timer** set to the earliest upcoming cutoff among the visible checked-off knots (`nextCutoffAfter`, plus 500 ms, capped at 24 hours), so a knot disappears while the list is open. The timer is cleared on every render and on cleanup. Empty states: "No knots yet — tap + to tie your first." when there are no knots at all, and "All your knots are checked off." when every knot is hidden.
+
+**Random:** a "🎲 Random" header button (`.knots-random-btn`, `margin-left: auto`, aria-label "Open a random unchecked knot") sits before "Select". It is hidden only in select mode (and stays visible when the list is empty or all-hidden, since hidden checked-off knots don't matter to it). On click it calls `KnotStore.listAll()` — the whole store, not just the displayed list — then `pickRandomKnot(all, null)` from *RandomKnot* and navigates to `#/random/{id}`. With no unchecked knot it toasts "No unchecked knots yet"; if `listAll()` throws it logs and toasts "Could not load knots".
 
 **Select mode:** a "Select" header button (hidden when there is nothing to select) turns entries into checkbox rows and shows a sticky bar with "Cancel" and "Share (N)" (disabled while N is 0). The selection survives re-renders while in select mode, and entries that leave the screen are dropped from it. In select mode a tap on an entry — including on its **location link**, whose default action is suppressed — toggles its selection instead of opening the knot or Maps; the per-entry check-off/delete buttons and conflict badge are not shown. Share (N) builds the list from the in-memory knots and calls `shareKnots(chosen)` synchronously from the click handler, then leaves select mode. Long-press is not used because it clashes with the media controls.
 
@@ -819,11 +840,11 @@ Route `#/calendar`. A scrollable, reverse-chronological month grid.
 
 ### KnotDetailScreen (`src/screens/knotDetailScreen.ts`)
 
-Route `#/knot/:id`. Loads a single `Knot` from `KnotStore` by UUID on mount.
+Routes `#/knot/:id` and `#/random/:id` (the latter parses to the same screen with `params.random === '1'`). Loads a single `Knot` from `KnotStore` by UUID on mount.
 
 **Header (view mode)** is two rows, so it fits a phone without overflowing (the old single row of four buttons plus the back button did not):
 - Row 1 (`.knot-detail-header`): **← Back to Knots**.
-- Row 2 (`.knot-detail-actions`): **Share**, **Edit**, **Delete** as smaller buttons that wrap if needed (`btn btn-ghost` except Delete, which is `btn btn-danger`).
+- Row 2 (`.knot-detail-actions`): **Share**, **Edit**, **Delete** as smaller buttons that wrap if needed (`btn btn-ghost` except Delete, which is `btn btn-danger`). On `#/random/:id` an **"Another random knot"** button (`btn btn-ghost btn-sm`) comes first in this row, so the destructive Delete stays last. It calls `listAll()` then `pickRandomKnot(all, knotId)`: with no other unchecked knot it toasts "This is your only unchecked knot"; otherwise it navigates to `#/random/{next.id}`; a failed read toasts "Could not load knots". The `hashchange` makes the router run this screen's cleanup and render the next knot from scratch. Like Share/Edit/Delete, it is part of the view-mode actions: `renderEditMode` empties `.knot-detail-actions`, and leaving edit mode (`renderKnot`) rebuilds it. The back button stays "← Back to Knots".
 
 **Check-off tick.** There is no text "Check off" / "Uncheck" button. Check-off is the same ✓ / ↩ tick button as in the Knots list (`.knot-check-btn`, accessible names "Check off knot" / "Uncheck knot"), placed in the knot card beside the timestamp (`.knot-detail-meta`), and hidden in edit mode.
 - **Checked-off pill.** While the knot is checked off, a green pill `span.knot-checked-off-pill` reads "✓ Checked off · {`formatKnotTimestamp(checkedOffAt)`}" (so it follows the user's time zone and date/time format). It sits on its own line under the timestamp + tick row. The tick is unchanged, and the detail page deliberately does **not** fade or strike through a checked-off knot (that is the Knots list's job). The pill's background is the `--color-primary-soft` token (light `rgba(45,122,79,0.15)`, dark `rgba(76,175,118,0.18)`), which `.knot-check-btn` hover/focus and `.backup-badge` also use.
@@ -865,7 +886,9 @@ Route `#/settings`. All controls read from and write to `SettingsStore`, in thes
 
 **Date & Time** — Timezone (searchable combobox, see `timezoneCombobox.ts`), Date Format, Time Format, a live preview line, all via `formatKnotTimestamp`, and — placed **after** the preview line so the preview isn't read as belonging to it — a **"New day starts at"** `<input type="time">` bound to `dayCutoff` (default `03:00`) with the hint "Checked-off knots stay visible (faded) until this time, then leave the Knots list. They stay in Calendar." A change that isn't a valid `HH:MM` (a cleared input) reverts to the previous value; a failed save reverts and toasts "Could not save setting".
 
-**Sharing** — toggle "Add 'Shared from e-Handkerchief' to shared knots", bound to `shareAttribution` (default on; a stored absent value counts as on).
+**Sharing** — toggle "Append source when sharing" with the hint *Adds "— Shared from e-Handkerchief" and a link to the application at the end of what you share.* (the dash is the em dash of the real footer), bound to `shareAttribution` (default on; a stored absent value counts as on).
+
+**Toggle layout.** `buildToggle` returns a `<label class="toggle-switch">`. `.toggle-switch` is `display: block` (not `inline-block`, which leaves a baseline gap): placed inside a plain `div.settings-row-control` (the Notifications row) an inline label ignored its 44×26 size, so the absolutely positioned slider and knob spilled out to the right on a phone. The label wrappers of the Transcription, Email, Sharing and Notifications rows also carry `settings-row-labelwrap` (`min-width: 0; flex: 1`) so the text shrinks instead of pushing the toggle off-screen.
 
 **Notifications** — "Quick-capture notification", with the hint "Keeps a 'Tap to tie a knot' notification in your notification drawer. On Android you can still swipe it away; it comes back the next time you open the app." The control follows `notificationService.permission()`:
 - `granted` → an on/off **toggle** bound to `quickCaptureNotification` (a stored absent value counts as on). Turning it on calls `notificationService.enable()` and off calls `disable()`; if `enable()` finds permission has been revoked meanwhile, the control is re-rendered.
@@ -909,12 +932,14 @@ const ASSETS: string[] = [
   'src/eventBus.js',
   'src/toastService.js',
   'src/geoService.js',
+  'src/locateFailure.js',
   'src/mediaService.js',
   'src/transcriptionService.js',
   'src/notificationService.js',
   'src/cloudSyncService.js',
   'src/syncPlan.js',
   'src/knotSummary.js',
+  'src/randomKnot.js',
   'src/knotDiff.js',
   'src/checkOffActions.js',
   'src/dayCutoff.js',
@@ -1021,9 +1046,16 @@ Wraps `MediaRecorder` and the HTML Media Capture API. Returns raw `Blob` values;
 Wraps `navigator.geolocation.getCurrentPosition` with a 10-second deadline. Optionally resolves coordinates to a human-readable address via Nominatim.
 
 **Contracts:**
-- Must resolve (not reject) within 10 seconds regardless of GPS availability.
+- Must resolve (not reject) within about 11 seconds (the 10 s deadline, plus up to 1 s for the permission lookup after an error) regardless of GPS availability.
 - Returns `null` on permission denial, timeout, or unavailability — never throws to callers.
-- `locate()` is the underlying call and `getCurrentPosition()` is a thin wrapper over it (`ok ? coords : null`). `PERMISSION_DENIED` maps to `{ ok: false, reason: 'denied' }`; position unavailable, timeout, the 10 s guard, an exception, or a missing `navigator.geolocation` all map to `'unavailable'`. `CaptureScreen` uses `locate()` so it can word its retry prompt accordingly.
+- `locate()` is the underlying call and `getCurrentPosition()` is a thin wrapper over it (`ok ? coords : null`). It resolves **exactly once**: a `settled` flag makes every later caller (the 10 s guard, a late error, a late permission answer) a no-op, and the guard is cleared as soon as an error arrives so it cannot fire during the permission lookup.
+- **Why a failure happened.** Android Chrome reports `PERMISSION_DENIED` (code 1) both when the site is blocked and when the phone's own Location toggle is off. So only after a code-1 error does `locate()` query `navigator.permissions.query({ name: 'geolocation' })` — after the error, so the state is fresh — capped at 1 s; a throw, a missing Permissions API, or a timeout gives `null`. The pure `classifyLocateFailure(code, permState)` in `locateFailure.ts` then maps:
+  - code 1 + `denied` → `'denied'` (site blocked);
+  - code 1 + `granted` → `'off'` (the site is allowed, so the device's Location is off);
+  - code 1 + `prompt` or `null` → `'unknown'`;
+  - any other code, or a `null` code (the 10 s guard, an exception, no `navigator.geolocation`) → `'unavailable'`.
+
+  `CaptureScreen` uses `locate()` so it can word its retry prompt accordingly. `classifyLocateFailure` is covered by `locateFailure.chartest.ts`.
 - `resolvedAddress` is capped at 100 characters.
 - No background location tracking.
 
@@ -1339,6 +1371,8 @@ node src/dayCutoff.chartest.js
 node src/knotDiff.chartest.js
 node src/deviceLabel.chartest.js
 node src/mergeMessage.chartest.js
+node src/locateFailure.chartest.js
+node src/randomKnot.chartest.js
 node src/components/timezoneCombobox.proptest.js
 ```
 
@@ -1428,9 +1462,9 @@ For any string input supplied as the `content` of a `TextMediaItem`, the stored 
 
 ### Property 6: Router — hash parsing (`router.chartest.ts`)
 
-For each known route hash, `parseHash` returns the matching `{ route, params }`; for any unrecognised hash it falls back to `capture`. The pure `navTabForRoute` is covered too: `knot` and `conflict` map to `knots`, every other route maps to itself, and an unknown hash resolves to `capture`. Twenty labelled cases in all (the `parseHash` cases plus eight for `navTabForRoute`), run directly under `node`.
+For each known route hash, `parseHash` returns the matching `{ route, params }`; for any unrecognised hash it falls back to `capture`. `#/random/{id}` parses to the `knot` route with `params {id, random: '1'}` (a plain `#/knot/{id}` has no `random` key), and `#/random/` or `#/random` with no id falls back to `capture`. The pure `navTabForRoute` is covered too: `knot` and `conflict` map to `knots`, every other route maps to itself, an unknown hash resolves to `capture`, and `#/random/abc` resolves to `knots`. Twenty-four labelled cases in all (fifteen `parseHash` cases plus nine for `navTabForRoute`), run directly under `node`.
 
-**Validates: Requirement 13.1, 13.11** — `router.ts` `parseHash` and `navTabForRoute`. **Automated** — `node src/router.chartest.js`.
+**Validates: Requirement 13.1, 13.11, 19.4, 19.7** — `router.ts` `parseHash` and `navTabForRoute`. **Automated** — `node src/router.chartest.js`.
 
 ---
 
@@ -1483,9 +1517,25 @@ Identical knots report `identical` with nothing else; changed text is reported w
 
 ---
 
+### Property 12: LocateFailure — why a location request failed (`locateFailure.chartest.ts`)
+
+`classifyLocateFailure(code, permState)` must return `'denied'` for code 1 with a `denied` permission, `'off'` for code 1 with `granted`, `'unknown'` for code 1 with `prompt` or `null`, and `'unavailable'` for every other code (2, 3, or `null`) whatever the permission state. Twelve scenarios. The Permissions API lookup, its 1 s cap, and the settle-once guarantee in `geoService.locate()` need a browser and are verified by hand.
+
+**Validates: Requirement 1.4, 1.5** — `locateFailure.ts`. **Automated** — `node src/locateFailure.chartest.js`.
+
+---
+
+### Property 13: RandomKnot — which knot may be picked (`randomKnot.chartest.ts`)
+
+`pickRandomKnot` must return `null` for an empty list, when every knot is checked off, and when excluding an id leaves no unchecked knot; return the only candidate when there is one; never return the excluded id or a checked-off knot (including `checkedOffAt: 0`, which is still a number) over a sweep of `rand` values from 0 to 1; and, with an injected `rand`, pick `candidates[floor(rand * length)]` over the *filtered* list (0 → first, just under 1 → last, exactly 1 clamped to the last). Sixteen checks.
+
+**Validates: Requirement 19.2, 19.5** — `randomKnot.ts`. **Automated** — `node src/randomKnot.chartest.js`.
+
+---
+
 ### Drive and Share behaviour: verified by hand
 
-Everything that requires a real Google account, a real Drive app-data folder, a real platform share sheet, or a real notification drawer — connecting, the full `syncAll` pass against live Drive data, `pushCheckOff` and `resolveConflict` against live files, `listBackups`/`deleteBackup` against live files, `navigator.share`/`navigator.canShare`, and the quick-capture notification's permission, tap, and relaunch behaviour — is **verified manually** against a real deployment, not by an automated test. `syncPlan.ts`, `knotSummary.ts`, `dayCutoff.ts`, `knotDiff.ts`, `deviceLabel.ts`, and `mergeMessage.ts` are deliberately factored out as pure modules specifically so the *decision logic* each of those features depends on can still be tested automatically, even though the I/O around them cannot be. Pending real-device checks: a check-off syncs to a second device without a content re-upload and shows in Manage backups; a check-off on one device followed by a content edit on another keeps the check-off (this is also the check for the per-key `appProperties` merge); editing the same knot on two offline devices and then syncing gives a review prompt, and all three choices work; the Merge toast counts after an offline save; the notification survives a tap and a relaunch and opens Capture under the subpath; multi-share with media opens the native sheet.
+Everything that requires a real Google account, a real Drive app-data folder, a real platform share sheet, or a real notification drawer — connecting, the full `syncAll` pass against live Drive data, `pushCheckOff` and `resolveConflict` against live files, `listBackups`/`deleteBackup` against live files, `navigator.share`/`navigator.canShare`, and the quick-capture notification's permission, tap, and relaunch behaviour — is **verified manually** against a real deployment, not by an automated test. `syncPlan.ts`, `knotSummary.ts`, `dayCutoff.ts`, `knotDiff.ts`, `deviceLabel.ts`, `mergeMessage.ts`, `locateFailure.ts`, and `randomKnot.ts` are deliberately factored out as pure modules specifically so the *decision logic* each of those features depends on can still be tested automatically, even though the I/O around them cannot be. Pending real-device checks: a check-off syncs to a second device without a content re-upload and shows in Manage backups; a check-off on one device followed by a content edit on another keeps the check-off (this is also the check for the per-key `appProperties` merge); editing the same knot on two offline devices and then syncing gives a review prompt, and all three choices work; the Merge toast counts after an offline save; the notification survives a tap and a relaunch and opens Capture under the subpath; multi-share with media opens the native sheet.
 
 ---
 
@@ -1493,7 +1543,7 @@ Everything that requires a real Google account, a real Drive app-data folder, a 
 
 | Failure Scenario | Handling |
 |---|---|
-| Geolocation denied | The location line becomes a retry button: "Location blocked for this site — allow it in browser settings, then tap to retry". Knot saves without location (or with the fix, if a retry succeeds before saving). |
+| Geolocation denied | The location line becomes a retry button. Its text separates the causes browsers report as one error: "Location blocked for this site — allow it in browser settings, then tap to retry" (site blocked), "Location is off — turn it on, then tap to retry" (site allowed, device Location off), or "Location is off or blocked — turn it on or allow it for this site, then tap to retry" (cause unknown). Knot saves without location (or with the fix, if a retry succeeds before saving). |
 | Geolocation timeout (10 s) | Save best-available fix; if none, location field marked unavailable. |
 | Microphone denied | Error toast; mic button disabled for remainder of session. |
 | Camera / MediaRecorder unsupported | Error toast; camera/mic button hidden. |
@@ -1608,7 +1658,7 @@ worker-src 'self';
 | **State management** | **Plain TypeScript objects + EventBus** | No reactive framework overhead. Sufficient for this app's complexity level. |
 | **IndexedDB** | **Hand-written Promise wrappers (`db.ts`)** | Removes the `idb` library dependency. The wrapper covers all required operations. |
 | **Service Worker** | **Hand-written `sw.ts`** | No Workbox dependency; the precache list is small and static, making manual maintenance tractable. |
-| **CSS** | **Single `app.css` with custom properties** | Zero runtime, mobile-first media queries, dark mode via `prefers-color-scheme`. No preprocessor needed. Colour tokens include `--color-primary-soft`, a translucent green (light `rgba(45,122,79,0.15)`, dark `rgba(76,175,118,0.18)`) for the checked-off pill, check-off tick hover/focus and backup badges. |
+| **CSS** | **Single `app.css` with custom properties** | Zero runtime, mobile-first media queries, dark mode via `prefers-color-scheme`. No preprocessor needed. Colour tokens include `--color-primary-soft`, a translucent green (light `rgba(45,122,79,0.15)`, dark `rgba(76,175,118,0.18)`) for the checked-off pill, check-off tick hover/focus, backup badges and the timezone combobox's highlighted option (so the highlight is correct in dark mode). |
 | **Icons / Illustrations** | **SVG sprites inlined at build** | No icon font dependencies; full control over contrast and sizing for accessibility. |
 | **Reverse Geocoding** | **Nominatim (OpenStreetMap)** | Free, no API key required, HTTPS. Rate-limited to 1 req/s — acceptable for the app's usage pattern. |
 | **Testing** | **Framework-free `*.chartest.ts` / `*.proptest.ts`** | Plain TypeScript compiled by `tsc` and run with `node` (see *Correctness Properties and Testing*). No test runner dependency. Google Drive and Web Share behaviour are verified by hand in a browser. |

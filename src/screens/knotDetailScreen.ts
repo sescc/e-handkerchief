@@ -16,6 +16,7 @@ import { cloudSyncService } from '../cloudSyncService.js';
 import { shareKnot } from '../shareService.js';
 import { toggleCheckOff, withLatestCheckOff } from '../checkOffActions.js';
 import { isCheckedOff } from '../dayCutoff.js';
+import { pickRandomKnot } from '../randomKnot.js';
 import { renderMediaCapture } from '../components/mediaCapture.js';
 import type {
   Knot,
@@ -147,6 +148,33 @@ export function renderKnotDetail(
 
   function renderActions(knot: Knot): void {
     actionsEl.innerHTML = '';
+
+    // Reached via the Knots "Random" button (#/random/{id}): offer another pick.
+    // First in the row so the destructive Delete stays last.
+    if (params['random'] === '1') {
+      const anotherBtn = document.createElement('button');
+      anotherBtn.className = 'btn btn-ghost btn-sm';
+      anotherBtn.textContent = 'Another random knot';
+      anotherBtn.addEventListener('click', () => {
+        void (async () => {
+          try {
+            const all = await knotStore.listAll();
+            const next = pickRandomKnot(all, knotId ?? null);
+            if (!next) {
+              toastService.show('This is your only unchecked knot');
+            } else {
+              // hashchange makes the router run this screen's cleanup and
+              // render the next knot from scratch.
+              navigate('#/random/' + next.id);
+            }
+          } catch (err) {
+            console.warn('Could not load knots:', err);
+            toastService.show('Could not load knots');
+          }
+        })();
+      });
+      actionsEl.appendChild(anotherBtn);
+    }
 
     const shareBtn = document.createElement('button');
     shareBtn.className = 'btn btn-ghost';

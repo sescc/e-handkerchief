@@ -148,20 +148,7 @@ Audit findings (Claude): the Knot theme was half-applied. The nav, list and cale
   - New **Req 11.13** covers a cancelled or denied consent.
   - The design.md error-handling table row for transcription was corrected.
   - ~~**Open question for the user:** keep the loosened 7.3, or change the toast to 5 s plus dismiss on tap.~~ **Superseded (user, round 2):** the app now follows the old spec (5 s or dismiss on tap). See below.
-
-### 2026-10-03 (round 2) — Notice per spec, checked-off pill, Capture "+" state, location retry
-- **Decision (user):** the transcription notice follows the old Req 7.3: it dismisses after **5 s or on tap**. `captureScreen` uses the default `toastService.show(msg)`.
-  - **Decision (Claude, plan approved):** tap-to-dismiss applies to **every** plain `show()` toast (with `cursor: pointer`). There are about 40 callers and none of them act on a click. `showAction` (Undo) and `showPersistent` are unchanged.
-- **Decision (user):** the knot page shows the checked-off state as a green pill "✓ Checked off · <date time>" under the timestamp row, with no fading or strike-through, because it's the dedicated single-knot view. The ✓/↩ tick stays.
-  - The time is `formatKnotTimestamp(new Date(checkedOffAt).toISOString())`, which gives the user's zone and format.
-  - Claude also checked that the `conflictScreen` and `settingsScreen` call sites that use the same pattern are correct, not UTC.
-- **Decision (Claude, plan approved):** a new CSS token `--color-primary-soft` for light and dark. It is used by the pill, the `.knot-check-btn` hover state and `.backup-badge`, which fixes their dark-mode tint. `.combobox-option.is-highlighted` still hard-codes the light rgba; this is minor and was left alone.
-- **Decision (user):** when Capture is current, the "+" is darker (`--color-primary-dark`) with a ring (3px surface gap + 2px primary). It's the normal green elsewhere.
-- **Decision (user):** `#/knot/…` and `#/conflict/…` highlight the **Knots** tab. Previously the `else` catch-all marked "+" as current there. This is the pure `navTabForRoute` in `router.ts`, covered by `router.chartest.ts`.
-- **Decision (user, feature request):** if location fails on Capture, tapping the line retries it with no page reload.
-  - The copy, chosen by the user: "Location unavailable — tap to retry", or "Location blocked for this site — allow it in browser settings, then tap to retry".
-  - The new `geoService.locate()` separates `denied` (PERMISSION_DENIED) from `unavailable`. `getCurrentPosition()` is now a wrapper.
- Its options, costs and privacy trade-offs are now written up in design.md; there's no code.
+- **Decision (user):** the daily email digest stays deferred. Its options, costs and privacy trade-offs are now written up in design.md › "Daily Email Summary — options (deferred)"; there's no code.
 - **Decision (Claude, plan approved):** `?error=` on the OAuth return now:
   - clears `pkce_verifier`;
   - strips the URL params;
@@ -175,8 +162,81 @@ Audit findings (Claude): the Knot theme was half-applied. The nav, list and cale
 - **Decision (user, implicit in plan approval):** the 2026-09-29 Claude-invented copy is kept as it is, unless the user marks changes later.
 - **Not done by Claude:** the real-device checks need the user's Google account and devices. The checklist is in the plan file and in "Session status (as of 2026-10-03)" below.
 
-## Session status (as of 2026-10-03)
-- All 2026-10-03 items are implemented and reviewed. **Nothing is committed or pushed.**
+### 2026-10-03 (round 2) — Notice per spec, checked-off pill, Capture "+" state, location retry
+- **Decision (user):** the transcription notice follows the old Req 7.3: it dismisses after **5 s or on tap**. `captureScreen` uses the default `toastService.show(msg)`.
+  - **Decision (Claude, plan approved):** tap-to-dismiss applies to **every** plain `show()` toast (with `cursor: pointer`). There are about 40 callers and none of them act on a click. `showAction` (Undo) and `showPersistent` are unchanged.
+- **Decision (user):** the knot page shows the checked-off state as a green pill "✓ Checked off · <date time>" under the timestamp row, with no fading or strike-through, because it's the dedicated single-knot view. The ✓/↩ tick stays.
+  - The time is `formatKnotTimestamp(new Date(checkedOffAt).toISOString())`, which gives the user's zone and format.
+  - Claude also checked that the `conflictScreen` and `settingsScreen` call sites that use the same pattern are correct, not UTC.
+- **Decision (Claude, plan approved):** a new CSS token `--color-primary-soft` for light and dark. It is used by the pill, the `.knot-check-btn` hover state and `.backup-badge`, which fixes their dark-mode tint. ~~`.combobox-option.is-highlighted` still hard-codes the light rgba; this is minor and was left alone.~~ **Resolved 2026-10-04:** it now uses `var(--color-primary-soft)`.
+- **Decision (user):** when Capture is current, the "+" is darker (`--color-primary-dark`) with a ring (3px surface gap + 2px primary). It's the normal green elsewhere.
+- **Decision (user):** `#/knot/…` and `#/conflict/…` highlight the **Knots** tab. Previously the `else` catch-all marked "+" as current there. This is the pure `navTabForRoute` in `router.ts`, covered by `router.chartest.ts`.
+- **Decision (user, feature request):** if location fails on Capture, tapping the line retries it with no page reload.
+  - The copy, chosen by the user: "Location unavailable — tap to retry", or "Location blocked for this site — allow it in browser settings, then tap to retry".
+  - The new `geoService.locate()` separates `denied` (PERMISSION_DENIED) from `unavailable`. `getCurrentPosition()` is now a wrapper. **(Extended 2026-10-04: `denied` is split further into `denied` / `off` / `unknown`; see below.)**
+- **Decision (Claude, end of session):** a broken earlier edit had cut off the round-1 "daily email digest" decision and spliced this section into the middle of round 1. That was committed in `4c70b9a`, and both are now repaired.
+
+### 2026-10-04 — Settings toggle overflow, Location off vs blocked, Sharing hint, Random knot, checked-off toggle at top (plan: `~/.claude/plans/decisions-proceed-with-p2-recursive-dawn.md`)
+- **Bug (reported by user, on a phone):** a Settings toggle spilled out to the right of the screen. **Root cause (found by Claude):** `buildToggle` returns `<label class="toggle-switch">`. Inside the plain `div.settings-row-control` of the Notifications row that label stayed inline, so its 44×26 size was ignored and the absolutely positioned slider and knob spilled out.
+  - **Decision (Claude, plan approved):** `.toggle-switch { display: block }` (block, not inline-block, to avoid the baseline gap). The label wrappers of the Transcription, Email, Sharing and Notifications rows also got the existing `settings-row-labelwrap` class (`min-width: 0; flex: 1`), so long text shrinks instead of pushing the toggle off-screen.
+- **Decision (user):** Sharing setting copy: label `Append source when sharing`, with the small text `Adds "— Shared from e-Handkerchief" and a link to the application at the end of what you share.` The user typed "-"; Claude used "—" to match the real footer. That one-character change was flagged in the plan, which the user approved. This **supersedes** the old label "Add 'Shared from e-Handkerchief' to shared knots" (Req 12.16, design.md, README updated).
+- **Bug (reported by user):** with the phone's Location switched off, Capture said "Location blocked for this site…". **Cause (found by Claude):** Android Chrome reports PERMISSION_DENIED (code 1) both when the site is blocked and when the phone's Location toggle is off.
+  - **Decision (Claude, plan approved):** the new pure `src/locateFailure.ts` `classifyLocateFailure(code, permState)` tells them apart. `geoService.locate()` queries `navigator.permissions.query({name:'geolocation'})` only after a code-1 error (so the state is fresh), capped at 1 s; a throw, a missing API or a timeout gives null.
+    - code 1 + denied → `denied`;
+    - code 1 + granted → `off`;
+    - code 1 + prompt or null → `unknown`;
+    - any other or null code → `unavailable`.
+  - `locate()` resolves exactly once (a `settled` flag) within about 11 s. The 10 s guard is cleared when an error arrives, so it can't fire during the lookup.
+  - **Decision (user):** the Capture copy.
+    - denied: "Location blocked for this site — allow it in browser settings, then tap to retry" (unchanged);
+    - off: "Location is off — turn it on, then tap to retry" (user-approved);
+    - unknown: "Location is off or blocked — turn it on or allow it for this site, then tap to retry" (user-approved);
+    - unavailable: "Location unavailable — tap to retry" (unchanged).
+  - Test: `src/locateFailure.chartest.ts`, 12 scenarios. `sw.ts` ASSETS gains `src/locateFailure.js` after `geoService`.
+- **Decision (user, feature request, design approved):** **Random knot.**
+  - A "🎲 Random" button in the Knots header (before Select, hidden only in select mode) opens `#/random/{id}` for a random knot that is **not checked off**, chosen from the whole store, not just the displayed list.
+  - `#/random/{id}` is the same `knot` route with `params.random = '1'`, so the Knots tab stays current and no new `Route` value exists. The page gets an "Another random knot" button (first in the actions row, so Delete stays last; hidden in edit mode like Share/Edit/Delete). It never picks the knot being shown.
+  - Pure `src/randomKnot.ts` `pickRandomKnot(knots, excludeId, rand)`; `sw.ts` ASSETS gains `src/randomKnot.js` after `knotSummary`.
+  - **Copy:** "No unchecked knots yet" is user-approved (the user chose it with the option). "This is your only unchecked knot" and "Could not load knots" were **invented by Claude and are not yet user-approved**; the user may change them. The button labels "🎲 Random" / "Another random knot" and the aria-label "Open a random unchecked knot" came from the approved design.
+  - New **Req 19**; Req 6.10, 13.11 and design.md updated.
+- **Decision (user request):** the "Show N checked-off knots" / "Hide checked-off knots" toggle moves from the bottom to the **top** of the Knots list, because it was hard to reach at the bottom of a long list. It is the first child of the list, above "All your knots are checked off." and the entries. Wording and behaviour are unchanged, and the CSS spacing flipped from margin-top to margin-bottom (Req 14.6 updated).
+- **Decision (Claude, plan approved):** the dark-mode combobox highlight (`.combobox-option.is-highlighted`) now uses `var(--color-primary-soft)`. This closes the 2026-10-03 P3 item.
+- **Decision (user):** P2, the daily email digest, **stays deferred** this session. Nothing changes; the options remain in design.md › "Daily Email Summary — options (deferred)".
+- **Decision (user):** P3, the supercharge `docs/` tree, graphify graph and OpenSpec, is **KIV**: not done this session. The design is kept in the plan `~/.claude/plans/decisions-proceed-with-p2-recursive-dawn.md` Step 5:
+  - a code-only graph with no LLM;
+  - OpenSpec with `skip_specs`, because Kiro `requirements.md` stays the behaviour spec of record;
+  - `docs/` holding only the Dat/Trn/Loc/Trm model and the file:symbol maps, with `design.md` staying authoritative for design detail.
+
+## Session status (as of 2026-10-04)
+- Implemented, reviewed and browser-checked, but **not committed**. The working tree also still has the staged 2026-10-03 CLAUDE.md log repair and the 2026-10-03 session log, which the user hadn't committed yet.
+  - `tsc` (app + SW) exits 0.
+  - All 9 chartests pass: dayCutoff, deviceLabel, knotDiff, knotSummary, locateFailure (12), mergeMessage, randomKnot (16), router (24), syncPlan. The timezone proptest passes.
+  - SW ASSETS has 42 entries, none missing.
+- **Browser-checked at 320×640:**
+  - Settings toggles stay inside their rows in light and dark, with `Notification.permission` stubbed to granted.
+  - Capture location copy: granted → off; denied → blocked; prompt, throw or hang → combined; code 2 → unavailable. A retry after "off" then success resolves the location.
+  - The Knots header fits: Random at x 163–246, Select at 254–304.
+  - The checked-off toggle is the first child of the list, and Show/Hide works.
+  - Random → `#/random/test-2` with the Knots tab current. On the knot page, "Another random knot" + Share fit on row 1 and Edit + Delete wrap to row 2, with no horizontal scroll.
+  - Both empty-state toasts appear.
+  - Random is hidden in select mode.
+  - The combobox highlight is `rgba(76,175,118,0.18)` in dark mode.
+- **Suggested commit message:** "Fix Settings toggle overflow (toggle-switch display:block); tell 'Location is off' apart from 'blocked for this site' via Permissions API; add Sharing setting hint; add Random knot (Knots header + Another random knot, #/random/{id}); move 'Show N checked-off knots' to the top of the list; dark-mode combobox highlight token; update Kiro spec and README".
+- **Pending verification (user, on a phone):**
+  - Location off → "Location is off" copy; turn Location on → tap retry works.
+  - The Settings toggle sits inside its row.
+  - Random knot and Another.
+  - The checked-off toggle at the top.
+  - The 2026-10-03 phone and real-Google-account checks still apply.
+- **Open items:**
+  - The Claude-invented copy "This is your only unchecked knot" / "Could not load knots" needs user review.
+  - P2 daily email digest: deferred (user).
+  - P3 supercharge scaffold: KIV (user); the design is in plan Step 5.
+  - The remaining sync race window: accepted.
+  - The `appProperties` per-key merge is unconfirmed on a device.
+
+## Session status (as of 2026-10-03) — superseded by 2026-10-04 above
+- All 2026-10-03 items (both rounds) are implemented and reviewed, and the user committed them as **`4c70b9a`**. The only uncommitted change is the end-of-session repair of this file's log ordering, plus the final session log.
   - `tsc` (app + SW) exits 0.
   - All 7 chartests pass (syncPlan has 7 new `remoteChangedSinceBase` cases), plus the timezone proptest.
   - Every SW ASSETS path exists (40 entries).
@@ -188,7 +248,8 @@ Audit findings (Claude): the Knot theme was half-applied. The nav, list and cale
   - `/?error=access_denied#/knots` shows the toast, and the URL is cleaned to `/#/knots`.
   - The conflict screen wasn't stubbed this time. Its header reuses `.knot-detail-header`, and `.conflict-actions` is already a column.
 - **Round 2:** also implemented and browser-checked at 320×640 in dark mode: the toast tap, the 5 s notice, the pill, the nav state, the "+" ring and location retry. `tsc` and all tests pass (router chartest has 8 new cases).
-- **Suggested commit message:** "Knot page: two-row header, check-off tick and Checked-off pill; Capture '+' shows current state, knot pages highlight Knots; tap-to-retry location on Capture; tap-to-dismiss toasts (5 s notice per Req 7.3); handle OAuth ?error=; re-check cloud version before each Merge push; add transcription stop safety cap; precache timezoneCombobox; drop test files from deploy; fix no-op listener cleanups; document email digest options; update Kiro spec and README".
+- **Committed** as `4c70b9a` by the user.
+- **Pending verification (user, on a phone):** the "+" ring on Capture; the checked-off pill; location retry after switching Location off and then on; tapping a toast to dismiss it.
 - **Pending verification (user, real Google account, two or more devices):** the 2026-09-29 list below still applies, and two checks are new:
   - Cancelling the Google consent screen on the deployed site shows "Google Drive connection cancelled" and returns to a clean URL.
   - On a phone, the detail page's two rows and the tick look right.
@@ -364,10 +425,29 @@ Audit findings (Claude): the Knot theme was half-applied. The nav, list and cale
 - **Location retry tapped repeatedly, or a slow first fix arriving after a retry:** taps while loading are ignored, and a request counter means only the newest request can set `location`, render, or apply its reverse-geocoded address. Browser-checked with a stubbed `navigator.geolocation` (code 1 → blocked copy, code 2 → unavailable copy, then success → coordinates).
 - **Location result arrives after leaving Capture:** a `disposed` flag set in cleanup means nothing renders.
 - **Knot saved before any location fix:** it saves with `location: null`, same as before.
-- **Location blocked for the site:** a retry fails immediately until the user allows it in browser settings, which the copy says. The browser won't prompt again, so a retry can't re-prompt.
+- **Location blocked for the site:** a retry fails immediately until the user allows it in browser settings, which the copy says. The browser won't prompt again, so a retry can't re-prompt. *(Refined 2026-10-04: this copy is now shown only when the Permissions API confirms the site is `denied`; see below.)*
 - **Tapping a plain toast:** it dismisses immediately and its timer is cleared, so nothing is removed twice. The Undo toast's button keeps its own behaviour. Browser-checked.
 - **"+" ring in dark mode:** primary-dark #2d7a4f with a #1e1e1e gap and a #4caf76 ring. Browser-checked (computed styles).
 - **Checked-off pill:** it appears on check-off and disappears on Undo, re-rendered by `knot:checkedOff`. The time shows in the user's zone. Browser-checked (SGT).
+
+### Edge cases added 2026-10-04 (toggle overflow / location off vs blocked / Random knot / toggle at top)
+- **Location off on the phone, site still allowed (code 1 + `granted`):** Capture shows "Location is off — turn it on, then tap to retry". Covered by `locateFailure.chartest.ts`.
+- **Site blocked (code 1 + `denied`):** Capture shows "Location blocked for this site — allow it in browser settings, then tap to retry". Covered by `locateFailure.chartest.ts`.
+- **Permission state `prompt` or unreadable (code 1 + `prompt`/null):** the combined "Location is off or blocked — turn it on or allow it for this site, then tap to retry". Covered by `locateFailure.chartest.ts`.
+- **Other errors (codes 2/3, or no code) whatever the permission state:** "Location unavailable — tap to retry". Covered by `locateFailure.chartest.ts`.
+- **Permissions API hangs, throws or is missing:** the lookup is capped at 1 s and gives null, so the result is `unknown` (the combined copy) rather than a stuck "Getting location…". Browser-checked with a stubbed `permissions.query` (hang and throw → combined copy).
+- **Error arrives, then the 10 s guard would fire:** the guard is cleared on the error and `finish()` ignores late callers (`settled` flag), so `locate()` resolves exactly once. Manual test only.
+- **All knots are checked off, then 🎲 Random:** toast "No unchecked knots yet", no navigation. Browser-checked.
+- **One unchecked knot, on its `#/random/` page, tap "Another random knot":** toast "This is your only unchecked knot", stays put. Browser-checked.
+- **"Another random knot" never repeats the current knot:** `pickRandomKnot` excludes the shown id, whatever `rand` returns. Covered by `randomKnot.chartest.ts`.
+- **`checkedOffAt: 0`:** still counts as checked off (the test is `typeof === 'number'`), so it's never picked. Covered by `randomKnot.chartest.ts`.
+- **`rand()` returns exactly 1:** the index is clamped to the last candidate. Covered by `randomKnot.chartest.ts`.
+- **Random with checked-off knots hidden or shown in the list:** it reads the whole store, so the "Show N checked-off knots" state doesn't matter. Manual test only.
+- **`#/random/` or `#/random` with no id:** an ordinary unknown route, so it falls back to Capture. Covered by `router.chartest.ts`; `#/random/abc` highlights Knots (also covered).
+- **Navigating `#/random/a` → `#/random/b`:** `hashchange` runs the old screen's cleanup and renders the new knot; nothing stale is left. Browser-checked (8 consecutive "Another" taps across 3 knots, 0 repeats).
+- **Another random knot while editing:** the button is gone in edit mode (`renderEditMode` empties the actions row) and comes back after Save/Cancel. Browser-checked.
+- **Settings toggle row, notification permission granted:** the toggle's 44×26 switch stays inside the row (no spill to the right). Browser-checked at 320×640. Light and dark; all four toggle rows (Transcription, Email, Sharing, Notifications) with `Notification.permission` stubbed to granted; document width 320.
+- **Checked-off toggle when every knot is hidden:** the "Show N checked-off knots" button sits at the top, above "All your knots are checked off.". Browser-checked.
 
 ## Refactoring Standard Operating Procedure (SOP)
 When instructed to refactor code, adopt the role of a principal software engineer and execute in four strict phases:
