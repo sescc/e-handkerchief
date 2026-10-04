@@ -82,6 +82,12 @@ const CASES: Case[] = [
   // --- knot detail ---
   { label: "'#/knot/abc' -> knot, params.id='abc'", hash: '#/knot/abc', expected: { route: 'knot', params: { id: 'abc' } } },
 
+  // --- random knot (same knot route, plus params.random='1') ---
+  { label: "'#/random/abc' -> knot, params {id:'abc', random:'1'}", hash: '#/random/abc', expected: { route: 'knot', params: { id: 'abc', random: '1' } } },
+  { label: "'#/random/' -> capture (fallback, no id)", hash: '#/random/', expected: { route: 'capture', params: {} } },
+  { label: "'#/random' -> capture (fallback, no id)", hash: '#/random', expected: { route: 'capture', params: {} } },
+  { label: "'#/knot/abc' has no 'random' param", hash: '#/knot/abc', expected: { route: 'knot', params: { id: 'abc' } } },
+
   // --- edit-conflict review ---
   { label: "'#/conflict/abc' -> conflict, params.id='abc'", hash: '#/conflict/abc', expected: { route: 'conflict', params: { id: 'abc' } } },
   { label: "'#/conflict/' -> capture (fallback, no id)", hash: '#/conflict/', expected: { route: 'capture', params: {} } },
@@ -148,6 +154,11 @@ const NAV_TAB_CASES: Array<{ label: string; actual: () => string; expected: stri
   {
     label: "navTabForRoute(parseHash('#/knot/abc').route) -> 'knots'",
     actual: () => navTabForRoute(parseHash('#/knot/abc').route),
+    expected: 'knots',
+  },
+  {
+    label: "navTabForRoute(parseHash('#/random/abc').route) -> 'knots'",
+    actual: () => navTabForRoute(parseHash('#/random/abc').route),
     expected: 'knots',
   },
 ];

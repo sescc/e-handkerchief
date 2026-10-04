@@ -44,12 +44,12 @@ e-Handkerchief is a mobile-first Progressive Web App (PWA) that lets users quick
 1. THE App SHALL display the Capture Screen as the default landing view on every launch.
 2. WHEN the user opens the Capture Screen, THE App SHALL automatically record the current Timestamp in the device's local date, time, and UTC offset.
 3. WHEN the user opens the Capture Screen, THE App SHALL request GPS Location from the browser Geolocation API and display the result on the Capture Screen within 10 seconds.
-4. IF the Geolocation API returns a permission-denied error, THEN THE App SHALL show, in place of the location, a tappable message "Location blocked for this site — allow it in browser settings, then tap to retry", and SHALL allow the Knot to be saved without a Location.
-5. IF the Geolocation API does not return a fix within 10 seconds, or cannot determine a position, THEN THE App SHALL show a tappable message "Location unavailable — tap to retry" and SHALL save the Knot with the best available Location fix, or without a Location if none was received.
+4. IF the Geolocation API returns a permission-denied error, THEN THE App SHALL show, in place of the location, a tappable message, and SHALL allow the Knot to be saved without a Location. Because browsers (notably Android Chrome) report the same permission-denied error both when the site is blocked and when the device's own Location setting is off, THE App SHALL consult the Permissions API after the error to choose the message: site blocked → "Location blocked for this site — allow it in browser settings, then tap to retry"; site allowed (so the device's Location is off) → "Location is off — turn it on, then tap to retry"; state unknown, or not answered within 1 second → "Location is off or blocked — turn it on or allow it for this site, then tap to retry".
+5. IF the Geolocation API does not return a fix within 10 seconds, or cannot determine a position (any failure other than permission-denied), THEN THE App SHALL show a tappable message "Location unavailable — tap to retry" and SHALL save the Knot with the best available Location fix, or without a Location if none was received.
 6. THE Capture Screen SHALL provide controls to add at least one of the following Media Items: a voice recording, a photo, a video, or a text entry of between 1 and 2000 characters.
 7. IF the user attempts to save a Knot without at least one Media Item, THEN THE App SHALL display a validation message indicating that at least one Media Item is required and SHALL NOT save the Knot.
 8. IF a Media Item capture operation fails (microphone, camera, or storage unavailable), THEN THE App SHALL display a message indicating which Media Item type could not be captured and SHALL return the user to the Capture Screen with any previously added Media Items preserved.
-9. WHEN the user taps either location message, THE App SHALL show "Getting location…" with a progress indicator and request the Location again. WHILE a request is in progress, THE App SHALL ignore further taps; only the most recent request SHALL be able to set the Location, and nothing SHALL be shown for a request that finishes after the user has left the Capture Screen. THE Knot SHALL be saved with whatever Location is known at the moment of saving.
+9. WHEN the user taps any location message (Acceptance Criteria 4 and 5), THE App SHALL show "Getting location…" with a progress indicator and request the Location again. WHILE a request is in progress, THE App SHALL ignore further taps; only the most recent request SHALL be able to set the Location, and nothing SHALL be shown for a request that finishes after the user has left the Capture Screen. THE Knot SHALL be saved with whatever Location is known at the moment of saving.
 
 ---
 
@@ -127,6 +127,7 @@ e-Handkerchief is a mobile-first Progressive Web App (PWA) that lets users quick
 7. IF a voice recording, image, or video attached to a Knot entry fails to load, THEN THE App SHALL display a placeholder indicating the media is unavailable in place of the inline control or thumbnail, without removing the rest of the Knot entry from the Knots list.
 8. EACH Knot entry in the Knots list SHALL provide a check-off control (Requirement 14), and a Select mode for sharing several Knots at once (Requirement 16).
 9. WHILE a Knot is in conflict (Requirement 17), ITS entry in the Knots list SHALL display the badge "⚠ Also edited on another device".
+10. THE Knots list header SHALL provide a "🎲 Random" control that opens a random unchecked Knot (Requirement 19).
 
 ---
 
@@ -231,7 +232,7 @@ e-Handkerchief is a mobile-first Progressive Web App (PWA) that lets users quick
 13. IF persisting a Settings change to Local Storage fails, THEN THE App SHALL display an error message indicating the setting could not be saved and revert the control to its previous value.
 14. WHEN the App is launched, THE App SHALL load all Settings from Local Storage before rendering any screen, applying defaults for any settings not found in Local Storage.
 15. THE Settings screen SHALL include a "New day starts at" time field, defaulting to 03:00 when no prior setting has been persisted, with the hint "Checked-off knots stay visible (faded) until this time, then leave the Knots list. They stay in Calendar." (Requirement 14).
-16. THE Settings screen SHALL include a Sharing section with a toggle labelled "Add 'Shared from e-Handkerchief' to shared knots", defaulting to on when no prior setting has been persisted (Requirement 15).
+16. THE Settings screen SHALL include a Sharing section with a toggle labelled "Append source when sharing" with the description "Adds "— Shared from e-Handkerchief" and a link to the application at the end of what you share.", defaulting to on when no prior setting has been persisted (Requirement 15).
 17. THE Settings screen SHALL include the "Quick-capture notification" toggle described in Requirement 9.2 and 9.3, defaulting to on when no prior setting has been persisted.
 
 ---
@@ -252,7 +253,7 @@ e-Handkerchief is a mobile-first Progressive Web App (PWA) that lets users quick
 8. THE Knot Detail View SHALL be fully accessible offline; the App SHALL load the Knot from Local Storage without requiring a network request.
 9. THE Knot Detail View SHALL provide the same per-knot check-off control as the Knots list (Requirement 14; accessible names "Check off knot" / "Uncheck knot"), shown beside the Knot's timestamp, and WHILE the Knot is in conflict SHALL display a banner with a "Review" button that opens the Conflict Review Screen (Requirement 17).
 10. WHILE a Knot is checked off, THE Knot Detail View SHALL show a "Checked off" indicator reading "✓ Checked off · " followed by the time it was checked off, formatted in the user's chosen time zone and date/time format, on its own line under the timestamp. THE Knot Detail View SHALL NOT fade or strike through the Knot's content because it is checked off.
-11. THE App's persistent navigation SHALL mark exactly one tab as current: Knots while the Knots list, a Knot Detail View, or the Conflict Review Screen is shown; Calendar, Settings, and Capture on their own screens. WHILE the Capture Screen is current, THE centre "+" navigation control SHALL be visually distinguished from its normal state.
+11. THE App's persistent navigation SHALL mark exactly one tab as current: Knots while the Knots list, a Knot Detail View (including one opened at `#/random/{id}`, Requirement 19), or the Conflict Review Screen is shown; Calendar, Settings, and Capture on their own screens. WHILE the Capture Screen is current, THE centre "+" navigation control SHALL be visually distinguished from its normal state.
 
 ---
 
@@ -267,7 +268,7 @@ e-Handkerchief is a mobile-first Progressive Web App (PWA) that lets users quick
 3. Checking off or unchecking a Knot SHALL NOT change the Knot's `updatedAt`, its media, or any other content, and SHALL NOT be treated as an edit for the purposes of sync or conflict detection.
 4. WHILE a Knot is checked off and the next "New day starts at" time after `checkedOffAt` has not yet passed, THE Knots list SHALL keep the Knot visible, faded and struck through. THE "New day starts at" time defaults to 03:00, is configurable in Settings (Requirement 12.15), and SHALL be evaluated in the App's timezone setting ("auto" meaning the device's own timezone).
 5. WHEN that time has passed, THE Knots list SHALL hide the Knot. THE Knot SHALL remain in the Calendar (shown faded) and on its Knot Detail View, where it can be unchecked.
-6. WHERE at least one Knot is hidden by Acceptance Criterion 5, THE Knots list SHALL provide a toggle "Show N checked-off knots" that reveals them and reads "Hide checked-off knots" while they are shown.
+6. WHERE at least one Knot is hidden by Acceptance Criterion 5, THE Knots list SHALL provide a toggle "Show N checked-off knots" that reveals them and reads "Hide checked-off knots" while they are shown. THE toggle SHALL be the first item in the list — above the Knot entries and above any empty-state message — so it stays reachable however long the list is.
 7. THE App SHALL derive visibility when the list is rendered (nothing is stored and there is no persistent background job), and SHALL re-evaluate it when the App returns to the foreground and, while the Knots list is open, when the earliest upcoming cutoff among the visible checked-off Knots passes (re-checked at least every 24 hours).
    WHEN every Knot is hidden by Acceptance Criterion 5, THE Knots list SHALL show "All your knots are checked off." instead of the first-run empty state.
 8. WHERE Google Drive is connected, WHEN a Knot is checked off or unchecked, THE App SHALL write the state to the Knot's Drive backup as a metadata-only update, without uploading the Knot's content. IF the Knot has no backup file yet, or its backup has been deleted via "Manage backups" and not edited since, THEN THE App SHALL do nothing — a check-off SHALL NOT create or restore a deleted backup. A failed update SHALL NOT be queued for retry; the next full sync reconciles it.
@@ -337,3 +338,19 @@ e-Handkerchief is a mobile-first Progressive Web App (PWA) that lets users quick
 3. THE count "backed up" SHALL include queued uploads that were flushed at the start of the merge, as well as knots pushed by the merge itself.
 4. THE count "need(s) review" SHALL be the number of Knots in conflict after the merge (Requirement 17).
 5. IF the merge fails, THEN THE App SHALL display "Merge failed — check your connection".
+
+---
+
+### Requirement 19: Random Knot
+
+**User Story:** As a user with many knots, I want to open a random one that I haven't dealt with yet, and keep drawing more, so that I can work through my reminders without choosing.
+
+#### Acceptance Criteria
+
+1. THE Knots list header SHALL provide a "🎲 Random" control (accessible name "Open a random unchecked knot"), placed beside the Select control. THE control SHALL be hidden WHILE Select mode is active (Requirement 16) and visible otherwise.
+2. WHEN the user activates "🎲 Random", THE App SHALL pick one Knot at random from those on this device that are not checked off (Requirement 14) — whether or not the list is currently showing checked-off Knots — and navigate to `#/random/{id}`, where `{id}` is the picked Knot's UUID.
+3. IF no Knot on this device is unchecked, THEN THE App SHALL display "No unchecked knots yet" and SHALL NOT navigate. IF the Knots cannot be read, THEN THE App SHALL display "Could not load knots" and SHALL NOT navigate.
+4. WHEN the user navigates to `#/random/{id}`, THE App SHALL display the Knot Detail View for that Knot (Requirement 13) with one addition: an "Another random knot" control in its actions row. A route `#/random/` with no `{id}` SHALL be treated as an unknown route (fall back to the Capture Screen).
+5. WHEN the user activates "Another random knot", THE App SHALL pick one unchecked Knot other than the one being shown and navigate to its `#/random/{id}`; the Knot being shown SHALL never be picked again by that action. IF the shown Knot is the only unchecked Knot, THEN THE App SHALL display "This is your only unchecked knot" and SHALL stay on the current Knot. IF the Knots cannot be read, THEN THE App SHALL display "Could not load knots".
+6. THE "Another random knot" control SHALL be hidden WHILE the Knot is being edited, in the same way as the Share, Edit and Delete controls, and SHALL reappear when editing ends.
+7. THE Knots tab SHALL be the current navigation tab while a `#/random/{id}` page is shown (Requirement 13.11), and its back-navigation control SHALL read "← Back to Knots" and return to the Knots list.

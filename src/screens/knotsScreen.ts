@@ -16,6 +16,7 @@ import { settingsStore } from '../settingsStore.js';
 import { collectTranscripts } from '../knotSummary.js';
 import { shareKnots } from '../shareService.js';
 import { toggleCheckOff } from '../checkOffActions.js';
+import { pickRandomKnot } from '../randomKnot.js';
 import { isCheckedOff, isCheckedOffVisible, nextCutoffAfter, resolveTimeZone } from '../dayCutoff.js';
 import type { Knot, AudioMediaItem, PhotoMediaItem, VideoMediaItem, TextMediaItem } from '../types.js';
 
@@ -63,6 +64,28 @@ export function renderKnots(container: HTMLElement): () => void {
   titleEl.className = 'page-title';
   titleEl.textContent = 'Knots';
   headerRow.appendChild(titleEl);
+
+  const randomBtn = document.createElement('button');
+  randomBtn.className = 'btn btn-ghost btn-sm knots-random-btn';
+  randomBtn.textContent = '🎲 Random';
+  randomBtn.setAttribute('aria-label', 'Open a random unchecked knot');
+  randomBtn.addEventListener('click', () => {
+    void (async () => {
+      try {
+        const all = await knotStore.listAll();
+        const picked = pickRandomKnot(all, null);
+        if (!picked) {
+          toastService.show('No unchecked knots yet');
+        } else {
+          navigate('#/random/' + picked.id);
+        }
+      } catch (err) {
+        console.warn('Could not load knots:', err);
+        toastService.show('Could not load knots');
+      }
+    })();
+  });
+  headerRow.appendChild(randomBtn);
 
   const selectBtn = document.createElement('button');
   selectBtn.className = 'btn btn-ghost btn-sm knots-select-btn';
@@ -386,6 +409,7 @@ export function renderKnots(container: HTMLElement): () => void {
 
     root.classList.toggle('knots-screen--select', selectMode);
     selectBar.style.display = selectMode ? 'flex' : 'none';
+    randomBtn.style.display = selectMode ? 'none' : '';
 
     if (allKnots.length === 0) {
       displayedKnots = [];
@@ -393,6 +417,7 @@ export function renderKnots(container: HTMLElement): () => void {
       selectBar.style.display = 'none';
       root.classList.remove('knots-screen--select');
       selectBtn.style.display = 'none';
+      randomBtn.style.display = '';
 
       const emptyState = document.createElement('div');
       emptyState.className = 'empty-state';
@@ -443,20 +468,8 @@ export function renderKnots(container: HTMLElement): () => void {
     updateSelectBar();
     selectBtn.style.display = selectMode || displayedKnots.length === 0 ? 'none' : '';
 
-    if (displayedKnots.length === 0) {
-      const emptyState = document.createElement('div');
-      emptyState.className = 'empty-state';
-      const msg = document.createElement('p');
-      msg.textContent = 'All your knots are checked off.';
-      emptyState.appendChild(msg);
-      listEl.appendChild(emptyState);
-    }
-
-    for (const knot of displayedKnots) {
-      listEl.appendChild(renderKnotEntry(knot));
-    }
-
-    // Show / hide toggle for checked-off knots past the cutoff
+    // Show / hide toggle for checked-off knots past the cutoff — at the top of
+    // the list, before the empty-state message and the entries.
     if (hiddenCheckedOff.length > 0) {
       const toggle = document.createElement('button');
       toggle.className = 'btn btn-ghost btn-full knots-checked-toggle';
@@ -469,6 +482,19 @@ export function renderKnots(container: HTMLElement): () => void {
         renderList();
       });
       listEl.appendChild(toggle);
+    }
+
+    if (displayedKnots.length === 0) {
+      const emptyState = document.createElement('div');
+      emptyState.className = 'empty-state';
+      const msg = document.createElement('p');
+      msg.textContent = 'All your knots are checked off.';
+      emptyState.appendChild(msg);
+      listEl.appendChild(emptyState);
+    }
+
+    for (const knot of displayedKnots) {
+      listEl.appendChild(renderKnotEntry(knot));
     }
   }
 

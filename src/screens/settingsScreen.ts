@@ -41,6 +41,7 @@ export function renderSettings(container: HTMLElement): () => void {
   transcriptionRow.className = 'settings-row';
 
   const transcriptionLabelWrap = document.createElement('div');
+  transcriptionLabelWrap.className = 'settings-row-labelwrap';
   const transcriptionLabel = document.createElement('div');
   transcriptionLabel.className = 'settings-row-label';
   transcriptionLabel.textContent = 'Voice Transcription';
@@ -129,6 +130,7 @@ export function renderSettings(container: HTMLElement): () => void {
   emailRow.className = 'settings-row';
 
   const emailLabelWrap = document.createElement('div');
+  emailLabelWrap.className = 'settings-row-labelwrap';
   const emailLabel = document.createElement('div');
   emailLabel.className = 'settings-row-label';
   emailLabel.textContent = 'Enable daily email summary';
@@ -405,10 +407,16 @@ export function renderSettings(container: HTMLElement): () => void {
   const sharingRow = document.createElement('div');
   sharingRow.className = 'settings-row';
   const sharingLabelWrap = document.createElement('div');
+  sharingLabelWrap.className = 'settings-row-labelwrap';
   const sharingLabel = document.createElement('div');
   sharingLabel.className = 'settings-row-label';
-  sharingLabel.textContent = "Add 'Shared from e-Handkerchief' to shared knots";
+  sharingLabel.textContent = 'Append source when sharing';
+  const sharingDesc = document.createElement('div');
+  sharingDesc.className = 'settings-row-desc';
+  sharingDesc.textContent =
+    'Adds "— Shared from e-Handkerchief" and a link to the application at the end of what you share.';
   sharingLabelWrap.appendChild(sharingLabel);
+  sharingLabelWrap.appendChild(sharingDesc);
   sharingRow.appendChild(sharingLabelWrap);
 
   const attributionToggle = buildToggle(current.shareAttribution !== false);
@@ -448,6 +456,7 @@ export function renderSettings(container: HTMLElement): () => void {
   const notifRow = document.createElement('div');
   notifRow.className = 'settings-row';
   const notifLabelWrap = document.createElement('div');
+  notifLabelWrap.className = 'settings-row-labelwrap';
   const notifLabel = document.createElement('div');
   notifLabel.className = 'settings-row-label';
   notifLabel.textContent = 'Quick-capture notification';

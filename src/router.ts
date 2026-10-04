@@ -37,6 +37,13 @@ export function parseHash(hash: string): RouteMatch {
     return { route: 'knot', params: { id: knotMatch[1] } };
   }
 
+  // '/random/{id}' is the knot detail screen reached via the Random button; the
+  // `random` param makes it offer "Another random knot". Same Route, same tab.
+  const randomMatch = path.match(/^\/random\/(.+)$/);
+  if (randomMatch) {
+    return { route: 'knot', params: { id: randomMatch[1], random: '1' } };
+  }
+
   // '/conflict/{id}' is the edit-conflict review screen.
   const conflictMatch = path.match(/^\/conflict\/(.+)$/);
   if (conflictMatch) {
