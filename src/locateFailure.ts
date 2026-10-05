@@ -6,21 +6,23 @@
 
 /**
  * Why a location request failed.
- * - 'denied':      the site is blocked in the browser settings.
- * - 'off':         the site is allowed, so the device's own Location is off.
- * - 'unknown':     permission was denied but we can't tell whether the site or
- *                  the device is the cause (browsers report both as code 1).
- * - 'unavailable': any other failure (no fix, timeout, no geolocation support).
+ * - 'off':         the site is still allowed, so the device's own Location is off.
+ * - 'unavailable': anything else, including every case where we can't be sure
+ *                  what is wrong (see classifyLocateFailure).
  */
-export type LocateFailureReason = 'denied' | 'off' | 'unknown' | 'unavailable';
+export type LocateFailureReason = 'off' | 'unavailable';
 
 /**
  * Classify a location failure.
  *
  * Android Chrome reports PERMISSION_DENIED (code 1) both when the site is
  * blocked and when the phone's own Location toggle is off. The Permissions API
- * state tells them apart: a site that is still 'granted' must be failing
- * because the device's Location is off.
+ * state is no better for 'denied': Android folds a site that is blocked, the
+ * device's Location being off and Chrome itself lacking Android's location
+ * permission into the same 'denied'. So 'denied' is NOT trusted to mean "this
+ * site is blocked", and we show the generic message instead of a misleading one.
+ * Only a site that is still 'granted' is reliable: it must be failing because
+ * the device's Location is off.
  *
  * @param code GeolocationPositionError.code, or null for no geolocation
  *   support, our own guard timeout, or a thrown call.
@@ -31,8 +33,6 @@ export function classifyLocateFailure(
   code: number | null,
   permState: 'granted' | 'denied' | 'prompt' | null
 ): LocateFailureReason {
-  if (code !== 1) return 'unavailable';
-  if (permState === 'denied') return 'denied';
-  if (permState === 'granted') return 'off';
-  return 'unknown';
+  if (code === 1 && permState === 'granted') return 'off';
+  return 'unavailable';
 }

@@ -82,9 +82,10 @@ The architecture is intentionally flat: a thin vanilla-JS UI layer built from Ty
 | **router.ts** | Hash-based single-page routing (`#/`, `#/knots`, `#/calendar`, `#/knot/:id`, `#/random/:id`, `#/conflict/:id`, `#/settings`). Calls screen `render`/cleanup functions. An unrecognised hash falls back to `#/`. |
 | **KnotStore** | CRUD on Knots in IndexedDB using hand-written Promise wrappers from `db.ts`. `delete()` also writes a local delete tombstone and drops any recorded conflict; `saveFromSync()` is a plain save used by sync pulls that deliberately does not emit events. Also reads and writes the per-knot sync bookkeeping (`syncState`). |
 | **SettingsStore** | Reads/writes app settings to IndexedDB with an in-memory reactive cache using a custom event-emitter pattern. |
-| **MediaService** | Wraps MediaRecorder API (audio) and HTML Media Capture (photo/video). Returns Blobs. |
+| **MediaService** | Wraps MediaRecorder API (audio) and HTML Media Capture (photo/video). Returns Blobs. Records without call-style processing; the Library picker also accepts M4A audio; `validateMedia` classifies a picked file via *MediaImport*. |
+| **MediaImport** | Pure module (`mediaImport.ts`): `classifyImport(type, name)` decides whether a picked file is a photo, video or (normalised `audio/mp4`) M4A audio, or unsupported. |
 | **GeoService** | Wraps `navigator.geolocation`, enforces 10-second timeout, resolves reverse-geocoding via Nominatim; `locate()` also says why a failure happened (using the pure *LocateFailure* classifier). |
-| **LocateFailure** | Pure module (`locateFailure.ts`): `classifyLocateFailure(code, permState)` maps a geolocation error code plus the Permissions API state to `'denied'` / `'off'` / `'unknown'` / `'unavailable'`. |
+| **LocateFailure** | Pure module (`locateFailure.ts`): `classifyLocateFailure(code, permState)` maps a geolocation error code plus the Permissions API state to `'off'` (code 1 with the site still `granted`) or `'unavailable'` (everything else, including `'denied'`). |
 | **RandomKnot** | Pure module (`randomKnot.ts`): `pickRandomKnot(knots, excludeId, rand)` picks a random knot that is not checked off, optionally excluding one id. |
 | **TranscriptionService** | Wraps Web Speech API for live transcription while recording; `remoteTranscribe.ts` handles deferred transcription of a saved recording via the user's own Worker. |
 | **KnotSummary** | Pure module (`knotSummary.ts`, no DOM, no settingsStore/db imports): builds the plain-text share summary for one knot or several (with the optional attribution footer) and the filename for each media attachment. Used by ShareService and imported by KnotsScreen for `collectTranscripts`. |
@@ -97,7 +98,7 @@ The architecture is intentionally flat: a thin vanilla-JS UI layer built from Ty
 | **MergeMessage** | Pure module (`mergeMessage.ts`): the wording of the "Merge with Cloud" result toast. |
 | **CloudSyncService** | Authenticates with Google Drive OAuth2 PKCE flow (token exchange and refresh via `oauth-worker`); upserts each knot's single backup file behind a conflict guard; runs the full two-way sync (via SyncPlan); pushes check-off state as metadata; lists and resolves conflicts; lists and deletes individual backups; manages local/cloud delete tombstones. |
 | **oauth-worker** | Owner-operated Cloudflare Worker (`oauth-worker/src/index.js`). `POST /token` and `POST /refresh` add the Google client secret (a Wrangler secret) and relay Google's token endpoint. CORS is locked to `ALLOWED_ORIGIN`. |
-| **NotificationService** | The quick-capture notification: reports the permission state, posts it on launch (`ensureShown`), turns it on from a user gesture (`enable`, which is where the permission prompt happens) and off (`disable`). |
+| **NotificationService** | The quick-capture notification: reports the permission state, posts it on launch (`ensureShown`, which reports `shown` / `skipped` / `failed` with a reason), turns it on from a user gesture (`enable`, which is where the permission prompt happens) and off (`disable`). |
 | **EventBus** | Lightweight publish/subscribe module; decouples service events (`knot:saved`, `knot:deleted`, `knot:checkedOff`, `knots:synced`, `knots:conflicts`, `settings:changed`, `sw:waiting`) from screen renders. |
 | **Service Worker** | Hand-written `sw.ts` compiled to `sw.js` (via `tsconfig.sw.json`); precaches all static assets; relays the `cloud-sync` Background Sync tag to the page as `FLUSH_CLOUD`; opens Capture from the quick-capture notification and re-posts it. |
 
@@ -332,7 +333,12 @@ interface MediaServiceAPI {
   /** Invoke device camera for video capture (max 60 s). Returns a Blob or throws. */
   captureVideo(): Promise<Blob>;
 
-  /** Open file picker for existing photo/video from media library. */
+  /**
+   * Open file picker for an existing photo, video or M4A audio file from the
+   * device library. accept = JPEG/PNG/GIF/WEBP, MP4/MOV, and audio/mp4,
+   * audio/x-m4a, audio/m4a, audio/mp4a-latm, .m4a. The returned Blob is re-typed
+   * to the normalised type (an M4A becomes audio/mp4).
+   */
   pickFromLibrary(): Promise<Blob>;
 
   /** Generate an 80×80 JPEG thumbnail from an image or video Blob. */
@@ -360,10 +366,11 @@ interface GeoServiceAPI {
 
   /**
    * Like getCurrentPosition(), but says why a failure happened. Never rejects.
-   * `denied`  = the site is blocked in the browser settings;
-   * `off`     = the site is allowed, so the device's own Location is off;
-   * `unknown` = permission was denied but the cause (site vs device) can't be told;
-   * `unavailable` = anything else (no fix, timeout, the 10 s guard, no geolocation support).
+   * `off`         = the site is still allowed, so the device's own Location is off;
+   * `unavailable` = anything else, including every ambiguous case (no fix, timeout, the
+   *                 10 s guard, no geolocation support, or permission denied — Android reports
+   *                 a blocked site, device Location off and Chrome lacking Android's location
+   *                 permission alike as `denied`, so `denied` is not trusted).
    */
   locate(): Promise<LocateResult>;
 
@@ -371,7 +378,7 @@ interface GeoServiceAPI {
   reverseGeocode(lat: number, lng: number): Promise<string | null>;
 }
 
-type LocateFailureReason = 'denied' | 'off' | 'unknown' | 'unavailable';
+type LocateFailureReason = 'off' | 'unavailable';
 type LocateResult =
   | { ok: true; coords: KnotLocation }
   | { ok: false; reason: LocateFailureReason };
@@ -520,10 +527,19 @@ function mergeResultMessage(pulled: number, pushed: number, conflicts: number): 
 ```typescript
 const notificationService: {
   permission(): NotificationPermission | 'unsupported';
-  ensureShown(): Promise<void>;                                     // post the notification if the setting is on and permission is granted; never throws
-  enable(): Promise<NotificationPermission | 'unsupported'>;        // call from a click: asks permission if needed, saves the setting, shows it
+  ensureShown(): Promise<ShowResult>;                               // post the notification if the setting is on and permission is granted; never throws, reports why it failed
+  enable(): Promise<EnableResult>;                                  // call from a click: asks permission if needed, saves the setting, shows it
   disable(): Promise<void>;                                         // saves the setting off and closes any shown notification
 };
+
+type ShowResult =
+  | { status: 'shown' }
+  | { status: 'skipped' }                      // permission not granted, setting off, or no service-worker API
+  | { status: 'failed'; reason: string };
+interface EnableResult {
+  permission: NotificationPermission | 'unsupported';
+  show?: ShowResult;                           // present only when permission is granted
+}
 ```
 
 ### ToastService API
@@ -540,7 +556,7 @@ function showAction(message: string, actionLabel: string, onAction: () => void, 
 |---|---|
 | `navigator.geolocation.getCurrentPosition` | GPS location on knot creation |
 | `MediaRecorder` | Audio recording |
-| `<input type="file" accept="..." capture="...">` | Photo/video capture and library pick |
+| `<input type="file" accept="..." capture="...">` | Photo/video capture and library pick (photo, video, M4A audio) |
 | `SpeechRecognition` / `webkitSpeechRecognition` | Live voice transcription |
 | `navigator.share` / `navigator.canShare` | Sharing one or several knots (Web Share API) |
 | `navigator.clipboard.writeText` | Clipboard fallback when Web Share is unavailable, or after a share failure |
@@ -571,9 +587,11 @@ e-Handkerchief/
 │   ├── router.chartest.ts        # Characterization test for parseHash / navTabForRoute
 │   ├── eventBus.ts             # Lightweight pub/sub
 │   ├── geoService.ts           # Geolocation + reverse geocoding
-│   ├── locateFailure.ts          # Pure: why a location request failed (denied / off / unknown / unavailable)
+│   ├── locateFailure.ts          # Pure: why a location request failed (off / unavailable)
 │   ├── locateFailure.chartest.ts # Characterization test for locateFailure
 │   ├── mediaService.ts         # Audio/photo/video capture
+│   ├── mediaImport.ts            # Pure: classify a picked file (photo / video / M4A audio)
+│   ├── mediaImport.chartest.ts   # Characterization test for mediaImport
 │   ├── mapsLink.ts             # Google Maps URL builder (pure)
 │   ├── dateFormat.ts           # Date/time formatting helpers
 │   ├── remoteTranscribe.ts     # Deferred transcription via the user's own Worker
@@ -594,7 +612,7 @@ e-Handkerchief/
 │   ├── deviceLabel.chartest.ts   # Characterization test for deviceLabel
 │   ├── mergeMessage.ts           # Pure: "Merge with Cloud" result wording
 │   ├── mergeMessage.chartest.ts  # Characterization test for mergeMessage
-│   ├── notificationService.ts  # Quick-capture notification: permission, ensureShown, enable, disable
+│   ├── notificationService.ts  # Quick-capture notification: permission, ensureShown (ShowResult), enable (EnableResult), disable
 │   ├── cloudSyncService.ts     # Google Drive OAuth2 PKCE + upsert + two-way sync + backups
 │   ├── toastService.ts         # Global toast UI (DOM-based)
 │   ├── app.ts                  # Entry point: init, SW registration, routing, sync triggers
@@ -780,14 +798,12 @@ Default landing view rendered at route `#/`. Title "Tie a Knot"; Save button "Ti
 **Lifecycle:**
 1. On `render`, record a `KnotTimestamp` immediately (local ISO string + UTC offset) and call `GeoService.locate()` with a 10-second deadline; a spinner and "Getting location…" show while location resolves.
    - **Location retry.** On failure the location line becomes a link-styled `button.location-retry` whose text depends on the `LocateResult` reason, reading exactly:
-     - `unavailable` — "Location unavailable — tap to retry";
-     - `denied` (site blocked) — "Location blocked for this site — allow it in browser settings, then tap to retry";
-     - `off` (site allowed, so the device's Location is off) — "Location is off — turn it on, then tap to retry";
-     - `unknown` (permission denied, cause unclear) — "Location is off or blocked — turn it on or allow it for this site, then tap to retry".
+     - `off` (site still allowed, so the device's Location is off) — "Location is off — turn it on, then tap to retry";
+     - `unavailable` (everything else, including a Permissions API state of `denied`) — "Location unavailable — tap to retry".
 
-     Tapping it shows "Getting location…" with the spinner and asks again; taps while a request is loading are ignored. A request counter (`locationRequestId`) guarantees only the **latest** request can set `location` or render, and a `disposed` flag stops anything rendering after the user leaves the screen. The knot saves with whatever location is known at save time (`null` if none yet).
-2. The shared `mediaCapture` component (mic/photo/video/library, live transcript, previews, errors) is mounted between the textarea and the Save button; it owns the draft media items.
-3. On Save: validate at least one media item is present; build the `Knot` and call `KnotStore.save()`; on success, emit `knot:saved` via `eventBus` — the app-level listener in `app.ts` (not this screen) triggers the cloud upload; navigate to `#/knots`.
+     There is deliberately no "blocked for this site" message: Android folds a blocked site, the device's Location being off, and Chrome lacking Android's location permission into the same `denied`, so it can't be told reliably. Tapping it shows "Getting location…" with the spinner and asks again; taps while a request is loading are ignored. A request counter (`locationRequestId`) guarantees only the **latest** request can set `location` or render, and a `disposed` flag stops anything rendering after the user leaves the screen. The knot saves with whatever location is known at save time (`null` if none yet).
+2. The shared `mediaCapture` component (mic/photo/video/library, live transcript, previews, errors) is mounted between the textarea and the Save button; it owns the draft media items. A Library pick that classifies as audio becomes an `AudioMediaItem` (duration read from `<audio>` metadata with a 3 s cap, `0` on failure; `transcriptionStatus` `pending` when transcription is enabled, else `none`), playable through `<audio controls>` and transcribed from the detail page's existing "🎧 Transcribe voice" panel. The Photo and Video controls accept photo/video only. The unsupported-format error reads "Unsupported file format. Please use JPEG, PNG, GIF, WEBP, MP4, MOV, or M4A."
+3. On Save: validate at least one media item is present; build the `Knot` and call `KnotStore.save()`; on success, emit `knot:saved` via `eventBus` — the app-level listener in `app.ts` (not this screen) triggers the cloud upload; navigate to `#/knots`. When every pending audio item was imported from the Library (not recorded), the post-save toast is "Saved. To transcribe the audio file, open the knot and tap 'Transcribe voice'." instead of the live-transcription messages; an imported item removed from the draft before saving is not counted.
 
 **Validation:**
 - No media items → "Please add at least one item before saving."
@@ -897,13 +913,15 @@ Route `#/settings`. All controls read from and write to `SettingsStore`, in thes
 - `unsupported` (no Notification API) → the **whole section is hidden**.
 The stored setting defaults to on but only takes effect once permission is granted.
 
-**Cloud Backup** — Google Drive status badge and a Connect/Disconnect button. Badge text: "Disconnected" when not connected; when connected, "Connected as `{email}`" once `cloudSyncService.getAccountEmail()` returns the account's email (fetched via `refreshAccountInfo()`), or plain "Connected" while it is still unknown. Set via `textContent` only. The badge wraps long addresses (`overflow-wrap: anywhere`) instead of overflowing, and its wrapper (`settings-row-labelwrap`, `min-width: 0; flex: 1`) lets it shrink so the Connect/Disconnect button stays on-screen at narrow widths. It re-renders on `cloudSyncService.onStatusChange` and on `settingsStore.onChange` (so the badge picks up the email once `refreshAccountInfo()` resolves after connecting). Below the badge: an explanatory block (two `<p>` elements inside one `settings-row-desc`, built with `createElement`/`textContent`/`<strong>`, never `innerHTML`) reading:
+**Notification failure line.** Inside the row's label wrapper, under the description, sits a hidden `settings-row-desc mt-sm` element. When `ensureShown()` / `enable()` reports `failed`, it shows "Couldn't show the notification (`<reason>`). Switch this off and on to try again." This happens after the toggle's or the "Allow notifications" button's `enable()` returns, and once on screen mount when permission is `granted` and the setting is on (the mount call re-posts the notification, which replaces rather than stacks because of the shared tag). The line is hidden on success, on disable, and whenever permission is not granted; results that arrive after the screen is cleaned up are ignored (`notifDisposed`).
 
-> **Deleting a knot** (from Knots or its detail page) removes it from **this device only**. Its cloud backup is kept, and your other devices keep their copies.
->
+**Cloud Backup** — Google Drive status badge and a Connect/Disconnect button. Badge text: "Disconnected" when not connected; when connected, "Connected as `{email}`" once `cloudSyncService.getAccountEmail()` returns the account's email (fetched via `refreshAccountInfo()`), or plain "Connected" while it is still unknown. Set via `textContent` only. The badge wraps long addresses (`overflow-wrap: anywhere`) instead of overflowing, and its wrapper (`settings-row-labelwrap`, `min-width: 0; flex: 1`) lets it shrink so the Connect/Disconnect button stays on-screen at narrow widths. It re-renders on `cloudSyncService.onStatusChange` and on `settingsStore.onChange` (so the badge picks up the email once `refreshAccountInfo()` resolves after connecting). Below the badge, in order: a **"Merge with Cloud"** button (disabled + labelled "Merging…" while a sync is in flight; result toast `mergeResultMessage(pulled, pushed, conflicts)` — see *MergeMessage*; error toast "Merge failed — check your connection"), a description line reading "Sends new and edited knots from this device to Google Drive, and brings in new and edited knots from your other devices. Data is never deleted during a merge. If a knot was edited on two devices, you'll be asked which version to keep.", a **"Last merged: …"** / **"Not merged yet"** line (from `settings.lastSyncAt`, updated after every sync and on `settings:changed`), a **"Manage backups"** button, and then — directly under that button it describes — an explanatory block (two `<p>` elements inside one `settings-row-desc`, built with `createElement`/`textContent`/`<strong>`, never `innerHTML`) reading:
+
 > **Manage backups** deletes a knot's **cloud backup**. Copies already on your devices are not deleted, and they won't be backed up again unless you edit them.
+>
+> **Deleting a knot** (from Knots or its detail page) removes it from **this device only**. Its cloud backup is kept, and your other devices keep their copies.
 
-Below that: a **"Merge with Cloud"** button (disabled + labelled "Merging…" while a sync is in flight; result toast `mergeResultMessage(pulled, pushed, conflicts)` — see *MergeMessage*; error toast "Merge failed — check your connection"), a description line reading "Sends new and edited knots from this device to Google Drive, and brings in new and edited knots from your other devices. Data is never deleted during a merge. If a knot was edited on two devices, you'll be asked which version to keep.", a **"Last merged: …"** / **"Not merged yet"** line (from `settings.lastSyncAt`, updated after every sync and on `settings:changed`), and a **"Manage backups"** button that toggles an inline panel (`.backup-list`) below it.
+(The block used to sit above "Merge with Cloud", far from the button it explains; it moved, and the "Manage backups" paragraph now comes first, with no wording change.) After the explanation come the offline/disconnected hint and the inline panel (`.backup-list`) that the button toggles.
 
 The panel calls `cloudSyncService.listBackups()` on open and renders one `.backup-row` per file, newest first: a primary line (the file's `description`, or "Backup from `<modifiedTime>`" for a knot-kind file with no description, or "Old-format backup (`<name>`)" for a non-knot file), a secondary badge ("On this device" / "Only in backup", by comparing `knotId` against `KnotStore.listAll()`, or "Old format"), a "Checked off" badge when `BackupEntry.checkedOffAt` is set (so the user can tell which backups are safe to delete), and a Delete button (`confirm('Delete this backup from Google Drive? Copies on your devices are not deleted.')`, then `deleteBackup()`, removing the row and toasting "Backup deleted" on success). Empty state: "No backups in Google Drive yet."; loading state: "Loading backups…"; error state: "Could not load backups — check your connection".
 
@@ -934,6 +952,7 @@ const ASSETS: string[] = [
   'src/geoService.js',
   'src/locateFailure.js',
   'src/mediaService.js',
+  'src/mediaImport.js',
   'src/transcriptionService.js',
   'src/notificationService.js',
   'src/cloudSyncService.js',
@@ -1034,10 +1053,22 @@ Reads and writes `AppSettings` to the single-record `settings` IndexedDB store. 
 Wraps `MediaRecorder` and the HTML Media Capture API. Returns raw `Blob` values; does not persist to IndexedDB.
 
 **Contracts:**
-- Files larger than 100 MB or of unsupported MIME type are rejected before any blob is written to IndexedDB.
+- Files larger than 100 MB or of unsupported type are rejected before any blob is written to IndexedDB.
+- `validateMedia(blob | file)` throws `FileSizeError` / `UnsupportedFormatError`, otherwise returns the `ImportClassification` (`{ kind, mimeType }`) from `classifyImport(blob.type, file.name)` — the file name is passed because external recorders' `.m4a` files often carry a wrong or empty type.
+- `pickFromLibrary` accepts `image/jpeg,image/png,image/gif,image/webp,video/mp4,video/quicktime,audio/mp4,audio/x-m4a,audio/m4a,audio/mp4a-latm,.m4a` and allows photo, video and audio results; the chosen file is returned re-typed to the normalised `mimeType` when it differs (so an M4A is stored as `audio/mp4`). `capturePhoto` / `captureVideo` allow photo and video results only, so an `.m4a` picked through them is rejected rather than stored as a broken photo.
+- `startAudioRecording` calls `getUserMedia` with `echoCancellation`, `noiseSuppression` and `autoGainControl` all `false` and `channelCount: 1`: call-style processing degrades a voice memo, and on Android `echoCancellation` also selects the voice-call microphone path. A `NotAllowedError` / `SecurityError` propagates unchanged; any other error retries once with `{ audio: true }`. (Risk: with automatic gain control off some phones may record quietly; reverting is a one-line change to `{ audio: true }`.) The recorder uses `audio/webm;codecs=opus` if supported, else `audio/mp4`, at `audioBitsPerSecond: 128000`, falling back to a plain `new MediaRecorder(stream)` if those options are rejected. Live speech recognition is unchanged.
 - `generateThumbnail` always returns an 80×80 JPEG blob (rendered via an offscreen `<canvas>`).
 - If `MediaRecorder` is unsupported, `startAudioRecording` throws `MediaUnsupportedError`.
 - `elapsedSeconds` callbacks fire at most every 1 second.
+
+---
+
+### MediaImport (`src/mediaImport.ts`)
+
+Pure — no DOM — so it runs under plain `node` (`mediaImport.chartest.ts`, 23 cases). `classifyImport(type, name)` returns `{ kind: 'photo' | 'video' | 'audio', mimeType }` or `null`:
+- A name ending in `.m4a` (case-insensitive) is **always** audio stored as `audio/mp4`, whatever the reported type: Android providers report m4a files as `audio/mp4a-latm`, `audio/aac`, `video/mp4`, `''` or `application/octet-stream`.
+- Otherwise the type (lower-cased, `;codecs=…` stripped) maps: `audio/mp4`, `audio/x-m4a`, `audio/m4a`, `audio/mp4a-latm` → audio as `audio/mp4`; `image/jpeg|png|gif|webp` → photo; `video/mp4`, `video/quicktime` → video; anything else (for example `audio/mpeg`) → `null`.
+- `remoteTranscribe` uploads `audio/mp4` as `audio.m4a`. No client-side size check is made against the transcription provider's file limit (Groq's free tier is 25 MB); an over-limit file surfaces as the existing transcription error toast.
 
 ---
 
@@ -1049,13 +1080,11 @@ Wraps `navigator.geolocation.getCurrentPosition` with a 10-second deadline. Opti
 - Must resolve (not reject) within about 11 seconds (the 10 s deadline, plus up to 1 s for the permission lookup after an error) regardless of GPS availability.
 - Returns `null` on permission denial, timeout, or unavailability — never throws to callers.
 - `locate()` is the underlying call and `getCurrentPosition()` is a thin wrapper over it (`ok ? coords : null`). It resolves **exactly once**: a `settled` flag makes every later caller (the 10 s guard, a late error, a late permission answer) a no-op, and the guard is cleared as soon as an error arrives so it cannot fire during the permission lookup.
-- **Why a failure happened.** Android Chrome reports `PERMISSION_DENIED` (code 1) both when the site is blocked and when the phone's own Location toggle is off. So only after a code-1 error does `locate()` query `navigator.permissions.query({ name: 'geolocation' })` — after the error, so the state is fresh — capped at 1 s; a throw, a missing Permissions API, or a timeout gives `null`. The pure `classifyLocateFailure(code, permState)` in `locateFailure.ts` then maps:
-  - code 1 + `denied` → `'denied'` (site blocked);
-  - code 1 + `granted` → `'off'` (the site is allowed, so the device's Location is off);
-  - code 1 + `prompt` or `null` → `'unknown'`;
-  - any other code, or a `null` code (the 10 s guard, an exception, no `navigator.geolocation`) → `'unavailable'`.
+- **Why a failure happened.** Android Chrome reports `PERMISSION_DENIED` (code 1) when the site is blocked, when the phone's own Location toggle is off, and when Chrome lacks Android's location permission — and the Permissions API then reports `denied` for all three, so `denied` cannot be trusted to mean "site blocked". Only after a code-1 error does `locate()` query `navigator.permissions.query({ name: 'geolocation' })` — after the error, so the state is fresh — capped at 1 s; a throw, a missing Permissions API, or a timeout gives `null`. The pure `classifyLocateFailure(code, permState)` in `locateFailure.ts` then maps:
+  - code 1 + `granted` → `'off'` (the site is still allowed, so the device's Location must be off);
+  - every other input (code 1 + `denied` / `prompt` / `null`, any other code, a `null` code from the 10 s guard, an exception, or no `navigator.geolocation`) → `'unavailable'`.
 
-  `CaptureScreen` uses `locate()` so it can word its retry prompt accordingly. `classifyLocateFailure` is covered by `locateFailure.chartest.ts`.
+  `CaptureScreen` uses `locate()` so it can show the "Location is off" copy when the cause is certain, and the generic "Location unavailable" copy otherwise. (An earlier design also returned `'denied'` and `'unknown'`; they were removed because the "blocked for this site" claim was shown on phones where Location was simply off.) `classifyLocateFailure` is covered by `locateFailure.chartest.ts`.
 - `resolvedAddress` is capped at 100 characters.
 - No background location tracking.
 
@@ -1269,8 +1298,14 @@ Owns the quick-capture notification ("Tap to tie a knot"). A web app **cannot** 
 
 **Contracts:**
 - `permission()` returns the current `Notification.permission`, or `'unsupported'` when the API is missing.
-- `ensureShown()` posts the notification (`tag: "capture-shortcut"`, body "Tap to tie a knot", `silent: true`, `requireInteraction: true`) through the service-worker registration. It does nothing unless the API exists, permission is `granted`, `settings.quickCaptureNotification` is on, and a service worker is available; it never throws. The shared tag makes a repeat post replace rather than stack. `app.ts` calls it on every launch.
-- `enable()` **must be called from a click handler**, because the browser's permission prompt needs a user gesture — this is why the request moved from startup to the Settings toggle. If permission is `default` it calls `Notification.requestPermission()`, then saves `quickCaptureNotification: true` and `notificationPermissionRequested: true`, then calls `ensureShown()` when permission is granted, and returns the resulting permission.
+- `ensureShown()` posts the notification (`tag: "capture-shortcut"`, body "Tap to tie a knot", `silent: true`, `requireInteraction: true`) through the service-worker registration and returns a `ShowResult`; it never throws. `{ status: 'skipped' }` means the API is missing, permission is not `granted`, `settings.quickCaptureNotification` is off, or there is no service-worker API. Otherwise it **no longer swallows errors**:
+  - `navigator.serviceWorker.ready` is raced against a 5 s timeout (timer cleared afterwards); on timeout it returns `failed` with reason "service worker not ready";
+  - a `showNotification` error is logged with `console.error` and returned as `failed` with reason `` `${err.name}: ${err.message}` `` (or `String(err)`);
+  - after a successful `showNotification` it calls `reg.getNotifications({ tag })`; an empty list is `failed` with reason "not listed after showing" (Android can accept the call and still display nothing). If `getNotifications` itself throws, the post is treated as `shown` (best effort) with a `console.warn`;
+  - otherwise `{ status: 'shown' }`.
+
+  The shared tag makes a repeat post replace rather than stack. `app.ts` calls it on every launch and ignores the result; the Settings screen shows a failure (see *SettingsScreen*).
+- `enable()` **must be called from a click handler**, because the browser's permission prompt needs a user gesture — this is why the request moved from startup to the Settings toggle. If permission is `default` it calls `Notification.requestPermission()`, then saves `quickCaptureNotification: true` and `notificationPermissionRequested: true`, then, when permission is granted, calls `ensureShown()`. It returns an `EnableResult`: `{ permission, show }` when granted, `{ permission }` otherwise.
 - `disable()` saves `quickCaptureNotification: false` and closes any notification with that tag.
 - The stored setting defaults to on but only takes effect once permission is granted; a denied permission is never re-prompted and the Settings toggle shows "Blocked in browser settings".
 - `notificationclick` in `sw.ts` opens Capture under the SW scope and re-posts the notification — see *Service Worker*.
@@ -1373,6 +1408,7 @@ node src/deviceLabel.chartest.js
 node src/mergeMessage.chartest.js
 node src/locateFailure.chartest.js
 node src/randomKnot.chartest.js
+node src/mediaImport.chartest.js
 node src/components/timezoneCombobox.proptest.js
 ```
 
@@ -1519,7 +1555,7 @@ Identical knots report `identical` with nothing else; changed text is reported w
 
 ### Property 12: LocateFailure — why a location request failed (`locateFailure.chartest.ts`)
 
-`classifyLocateFailure(code, permState)` must return `'denied'` for code 1 with a `denied` permission, `'off'` for code 1 with `granted`, `'unknown'` for code 1 with `prompt` or `null`, and `'unavailable'` for every other code (2, 3, or `null`) whatever the permission state. Twelve scenarios. The Permissions API lookup, its 1 s cap, and the settle-once guarantee in `geoService.locate()` need a browser and are verified by hand.
+`classifyLocateFailure(code, permState)` must return `'off'` for code 1 with `granted`, and `'unavailable'` for every other input: code 1 with `denied`, `prompt` or `null`, and every other code (2, 3, or `null`) whatever the permission state. Twelve scenarios. The Permissions API lookup, its 1 s cap, and the settle-once guarantee in `geoService.locate()` need a browser and are verified by hand.
 
 **Validates: Requirement 1.4, 1.5** — `locateFailure.ts`. **Automated** — `node src/locateFailure.chartest.js`.
 
@@ -1533,9 +1569,17 @@ Identical knots report `identical` with nothing else; changed text is reported w
 
 ---
 
+### Property 14: MediaImport — what a picked file is (`mediaImport.chartest.ts`)
+
+`classifyImport(type, name)` must treat a `.m4a` name as audio stored as `audio/mp4` whatever the type (including `''`, `application/octet-stream`, `video/mp4` and `audio/mp4a-latm`); map `audio/mp4`, `audio/x-m4a`, `audio/m4a` and `audio/mp4a-latm` to audio; leave the JPEG/PNG/GIF/WEBP and MP4/MOV mappings unchanged; and return `null` for anything else, including `audio/mpeg` (`.mp3`). Twenty-three cases.
+
+**Validates: Requirement 3.4, 3.7** — `mediaImport.ts`. **Automated** — `node src/mediaImport.chartest.js`.
+
+---
+
 ### Drive and Share behaviour: verified by hand
 
-Everything that requires a real Google account, a real Drive app-data folder, a real platform share sheet, or a real notification drawer — connecting, the full `syncAll` pass against live Drive data, `pushCheckOff` and `resolveConflict` against live files, `listBackups`/`deleteBackup` against live files, `navigator.share`/`navigator.canShare`, and the quick-capture notification's permission, tap, and relaunch behaviour — is **verified manually** against a real deployment, not by an automated test. `syncPlan.ts`, `knotSummary.ts`, `dayCutoff.ts`, `knotDiff.ts`, `deviceLabel.ts`, `mergeMessage.ts`, `locateFailure.ts`, and `randomKnot.ts` are deliberately factored out as pure modules specifically so the *decision logic* each of those features depends on can still be tested automatically, even though the I/O around them cannot be. Pending real-device checks: a check-off syncs to a second device without a content re-upload and shows in Manage backups; a check-off on one device followed by a content edit on another keeps the check-off (this is also the check for the per-key `appProperties` merge); editing the same knot on two offline devices and then syncing gives a review prompt, and all three choices work; the Merge toast counts after an offline save; the notification survives a tap and a relaunch and opens Capture under the subpath; multi-share with media opens the native sheet.
+Everything that requires a real Google account, a real Drive app-data folder, a real platform share sheet, or a real notification drawer — connecting, the full `syncAll` pass against live Drive data, `pushCheckOff` and `resolveConflict` against live files, `listBackups`/`deleteBackup` against live files, `navigator.share`/`navigator.canShare`, and the quick-capture notification's permission, tap, and relaunch behaviour — is **verified manually** against a real deployment, not by an automated test. `syncPlan.ts`, `knotSummary.ts`, `dayCutoff.ts`, `knotDiff.ts`, `deviceLabel.ts`, `mergeMessage.ts`, `locateFailure.ts`, `randomKnot.ts`, and `mediaImport.ts` are deliberately factored out as pure modules specifically so the *decision logic* each of those features depends on can still be tested automatically, even though the I/O around them cannot be. Pending real-device checks: a check-off syncs to a second device without a content re-upload and shows in Manage backups; a check-off on one device followed by a content edit on another keeps the check-off (this is also the check for the per-key `appProperties` merge); editing the same knot on two offline devices and then syncing gives a review prompt, and all three choices work; the Merge toast counts after an offline save; the notification survives a tap and a relaunch and opens Capture under the subpath; multi-share with media opens the native sheet.
 
 ---
 
@@ -1639,7 +1683,7 @@ worker-src 'self';
 
 ### Input Validation
 - Text input is bounded at 2 000 characters client-side; the raw string is stored as-is (no HTML interpretation). The Knots list and Knot Detail screens set text via `element.textContent`, not `innerHTML`, preventing XSS. The Settings screen's explanatory copy uses the same rule even though the text itself is static — no `innerHTML` with content, ever.
-- File type and size limits (100 MB, JPEG/PNG/GIF/WEBP/MP4/MOV) are enforced before any blob is written to IndexedDB.
+- File type and size limits (100 MB; JPEG/PNG/GIF/WEBP/MP4/MOV, plus M4A audio from the Library) are enforced before any blob is written to IndexedDB.
 - Email addresses (for the Daily Email Summary recipient) are validated against a standard RFC 5321 format regex before being stored.
 
 ### Service Worker Scope

@@ -17,10 +17,12 @@ interface Scenario {
 }
 
 const SCENARIOS: Scenario[] = [
-  { label: 'code 1 + denied -> denied', code: 1, perm: 'denied', expected: 'denied' },
+  // 'denied' is deliberately not trusted: Android reports it for a blocked site,
+  // device Location off and missing Chrome-app permission alike.
+  { label: 'code 1 + denied -> unavailable', code: 1, perm: 'denied', expected: 'unavailable' },
   { label: 'code 1 + granted -> off', code: 1, perm: 'granted', expected: 'off' },
-  { label: 'code 1 + prompt -> unknown', code: 1, perm: 'prompt', expected: 'unknown' },
-  { label: 'code 1 + null -> unknown', code: 1, perm: null, expected: 'unknown' },
+  { label: 'code 1 + prompt -> unavailable', code: 1, perm: 'prompt', expected: 'unavailable' },
+  { label: 'code 1 + null -> unavailable', code: 1, perm: null, expected: 'unavailable' },
   { label: 'code 2 + granted -> unavailable', code: 2, perm: 'granted', expected: 'unavailable' },
   { label: 'code 2 + denied -> unavailable', code: 2, perm: 'denied', expected: 'unavailable' },
   { label: 'code 2 + null -> unavailable', code: 2, perm: null, expected: 'unavailable' },

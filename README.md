@@ -27,6 +27,7 @@ node src/deviceLabel.chartest.js
 node src/mergeMessage.chartest.js
 node src/locateFailure.chartest.js
 node src/randomKnot.chartest.js
+node src/mediaImport.chartest.js
 node src/components/timezoneCombobox.proptest.js
 ```
 
@@ -58,8 +59,16 @@ A knot's voice recording can be turned into text in two ways.
 
 ### How transcription works (two modes)
 
-- **Live (online):** When "Voice Transcription" is enabled in Settings and you record a voice recording while online in a supporting browser (Chrome on Android), it's transcribed live on-device via the Web Speech API as you speak. The audio is also saved.
+- **Live (online):** When "Voice Transcription" is enabled in Settings and you record a voice recording while online in a supporting browser (Chrome on Android), it's transcribed live on-device via the Web Speech API as you speak. The audio is also saved. Mic recordings are made without call-style processing (echo cancellation, noise suppression and automatic gain control are off), which keeps them clean; if a phone records too quietly, that is a one-line change in `mediaService.ts`.
 - **Deferred (offline / later):** If you record while offline (or live transcription isn't available), the audio is saved and marked "transcription pending." Later, when online, open the knot and tap "🎧 Transcribe voice" to transcribe the saved audio via your transcription server (Groq Whisper via a Cloudflare Worker). The transcript is appended to that recording.
+
+### Attaching an existing audio file (m4a)
+
+The **Library** button picks photos and videos (JPEG, PNG, GIF, WEBP, MP4, MOV) and also **M4A
+audio**, for example a recording made with your phone's recorder app. A picked m4a becomes a voice
+recording on the knot: you can play it, and transcribe it later with **🎧 Transcribe voice**
+(this needs the transcription server below). The **Photo** and **Video** buttons accept photos
+and videos only. Other audio formats, such as MP3, aren't supported.
 
 ### Setting up the transcription server (optional)
 
@@ -120,10 +129,13 @@ The Capture screen asks the browser for your GPS position (up to 10 seconds) and
 a street address when one can be looked up. If that fails, the location line becomes a tappable
 message that says what went wrong:
 
-- **"Location unavailable — tap to retry"** — no fix arrived in time, or the position couldn't be worked out.
-- **"Location blocked for this site — allow it in browser settings, then tap to retry"** — you've blocked location for the site.
 - **"Location is off — turn it on, then tap to retry"** — the site is allowed, but your phone's own Location setting is off.
-- **"Location is off or blocked — turn it on or allow it for this site, then tap to retry"** — the browser refused but can't say which of the two it was.
+- **"Location unavailable — tap to retry"** — anything else: no fix arrived in time, the position couldn't be worked out, or the browser refused for a reason it can't pin down.
+
+There is deliberately no "blocked for this site" message. Android Chrome reports a blocked site, a
+phone with Location switched off, and Chrome lacking Android's location permission in the same
+way, so the app can't tell them apart. If the generic message keeps appearing, check your phone's
+Location switch, Chrome's Android location permission, and the site's permission in Chrome.
 
 Tap it to ask again ("Getting location…"); you can save the knot at any time with whatever
 location is known by then (none if it never arrived).
@@ -206,7 +218,11 @@ Two ways to open the Capture screen in one tap:
   permission at that moment (and only then). Once allowed, **Quick-capture notification** is a
   simple on/off toggle. If you've blocked notifications for the site, Settings says "Blocked in
   browser settings" — change it in your browser's site settings. If your browser has no
-  notification support, that section isn't shown.
+  notification support, that section isn't shown. If the notification can't be posted even though
+  it's allowed, Settings shows why: "Couldn't show the notification (<reason>). Switch this off and
+  on to try again." Opening Settings re-posts the notification once (it replaces the existing one,
+  it doesn't stack). Note that "Tap to copy the URL for this app" is Chrome's own notification for
+  an installed web app; the page can't change or remove it.
 
 **A limit worth knowing about:** web apps can't pin a notification. On Android you can still
 **swipe it away**. The app puts it back **every time you open it** and **after each tap**, but
@@ -253,13 +269,14 @@ tapping Connect on each one.
 Settings → Cloud Backup shows which Google account you're connected to (e.g. "Connected as
 someone@gmail.com"), so it's easy to tell which account a device is syncing to.
 
-There are two different kinds of "delete", and the app explains both right in Settings:
+There are two different kinds of "delete", and the app explains both right in Settings, directly
+under the **Manage backups** button:
 
-> **Deleting a knot** (from Knots or its detail page) removes it from **this device only**.
-> Its cloud backup is kept, and your other devices keep their copies.
->
 > **Manage backups** deletes a knot's **cloud backup**. Copies already on your devices are
 > not deleted, and they won't be backed up again unless you edit them.
+>
+> **Deleting a knot** (from Knots or its detail page) removes it from **this device only**.
+> Its cloud backup is kept, and your other devices keep their copies.
 
 **Why a separate "Manage backups" screen exists:** app-data-folder files are Google's
 *hidden* app data — they don't show up in the regular Drive web UI or the Drive app at
@@ -410,9 +427,11 @@ e-Handkerchief/
 │   ├── router.chartest.ts  # Test: parseHash
 │   ├── eventBus.ts         # Pub/sub event system
 │   ├── geoService.ts       # Geolocation + reverse geocoding
-│   ├── locateFailure.ts    # Pure: why a location request failed (denied / off / unknown / unavailable)
+│   ├── locateFailure.ts    # Pure: why a location request failed (off / unavailable)
 │   ├── locateFailure.chartest.ts # Test: classifyLocateFailure
 │   ├── mediaService.ts     # Audio/photo/video capture
+│   ├── mediaImport.ts      # Pure: classify a picked file (photo / video / m4a audio)
+│   ├── mediaImport.chartest.ts # Test: classifyImport
 │   ├── mapsLink.ts         # Maps link builder
 │   ├── dateFormat.ts       # Date/time formatting helpers
 │   ├── remoteTranscribe.ts # Deferred transcription via Worker

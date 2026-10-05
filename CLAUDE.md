@@ -206,9 +206,62 @@ Audit findings (Claude): the Knot theme was half-applied. The nav, list and cale
   - a code-only graph with no LLM;
   - OpenSpec with `skip_specs`, because Kiro `requirements.md` stays the behaviour spec of record;
   - `docs/` holding only the Dat/Trn/Loc/Trm model and the file:symbol maps, with `design.md` staying authoritative for design detail.
+- **Decision (user):** at the end of every implementation, Claude puts the suggested commit message in the chat reply as a copyable code block, rather than only pointing to where it's recorded. **Why:** the user couldn't find it in this file. This is now a global rule in `~/.claude/CLAUDE.md` (all projects).
 
-## Session status (as of 2026-10-04)
-- Implemented, reviewed and browser-checked, but **not committed**. The working tree also still has the staged 2026-10-03 CLAUDE.md log repair and the 2026-10-03 session log, which the user hadn't committed yet.
+### 2026-10-05 — Location fallback, Manage-backups copy, m4a import, Mic quality, notification diagnostics (plan: `~/.claude/plans/p0-location-message-wise-kahn.md`)
+- **Bug (reported by user, on a phone):** with Location switched off, Capture still said "Location blocked for this site". **Finding (Claude):** the deployed `src/locateFailure.js` was the `5690324` code, so the Permissions API returned `denied`. Android Chrome folds a blocked site, the device's Location being off, and Chrome lacking Android's location permission into the same `denied`.
+  - **Decision (user):** when it's ambiguous, show the generic "Location unavailable — tap to retry". Only code 1 + `granted` gives "Location is off — turn it on, then tap to retry". The `denied` / `unknown` reasons and their copy are removed (`LocateFailureReason` is now `'off' | 'unavailable'`). **Supersedes** the 2026-10-04 `denied` / `unknown` copy.
+  - The Permissions API lookup stays in `geoService.locate()`, because it is what identifies `off`.
+- **Finding (user + Claude):** "Tap to copy the URL for this app" is Chrome's own notification for an installed web app. A page can't change or remove it. Claude's earlier suggestion to reinstall as a WebAPK via "Install app" was **wrong and is withdrawn**: the app was already installed via Chrome › Install.
+  - **Bug (user):** our own "Tap to tie a knot" notification never appeared. The app's Android settings had notifications on, yet Android said the app "hasn't received any notifications yet". Chrome's site entry says "Managed by app".
+  - **Decision (Claude, plan approved):** `ensureShown` no longer swallows errors. It returns `shown` / `skipped` / `failed` with a reason (`ShowResult`), and `enable()` returns `{ permission, show? }` (`EnableResult`). `serviceWorker.ready` is bounded at 5 s. After `showNotification` it checks `getNotifications({ tag })` for the notification being listed.
+  - Settings shows "Couldn't show the notification (<reason>). Switch this off and on to try again." under the Notifications description. **Copy invented by Claude, not yet user-approved.** Opening Settings re-posts the notification once (same tag, so it replaces rather than stacks).
+  - **Open:** the root cause stays unknown until the user reports the reason shown on the phone.
+- **Decision (user):** the Manage-backups explanation moves directly under the "Manage backups" button. The "Manage backups deletes…" paragraph comes first, then "Deleting a knot…". The wording is unchanged. **Why:** it floated far from the button it explains.
+- **Decision (user):** M4A goes into the existing **Library** button, not a separate one. Android's own chooser decides the branching.
+  - **Named fallback (Claude, plan approved, not implemented):** an in-app "Photo or video / Audio file" menu, if the phone shows that photo picking has become clunky.
+  - **Decision (Claude, after advisor review):** a `.m4a` file name always means audio, stored as `audio/mp4`, because Android providers report m4a as `audio/mp4a-latm`, `audio/aac`, `video/mp4`, `''` or `application/octet-stream`. The pure `src/mediaImport.ts` `classifyImport(type, name)` decides this; `validateMedia` returns the classification and the picked blob is re-typed to the normalised type.
+  - A picked m4a becomes an `AudioMediaItem` (duration from `<audio>` metadata, 3 s cap, `0` on failure; `transcriptionStatus` pending if transcription is enabled, else none). It is played with `<audio controls>` and transcribed with the existing "🎧 Transcribe voice" panel; `remoteTranscribe` uploads `audio/mp4` as `audio.m4a`.
+  - New copy: "Unsupported file format. Please use JPEG, PNG, GIF, WEBP, MP4, MOV, or M4A." and the post-save toast "Saved. To transcribe the audio file, open the knot and tap 'Transcribe voice'." (shown when every pending audio item was imported). **The import toast copy was invented by Claude and is not yet user-approved.**
+- **Bug (user):** Mic recordings were glitchy and transcribed poorly. **Likely causes (Claude):** call-style processing (echo cancellation also selects Android's voice-call mic path), and live SpeechRecognition sharing the mic and restarting after about every second of silence.
+  - **Decision (user):** keep live recognition during Mic and fix only the processing and encoder settings. If hiccups remain on the phone, revisit live recognition.
+  - **Implementation:** `getUserMedia` with `echoCancellation`, `noiseSuppression` and `autoGainControl` all `false` and `channelCount: 1`. A non-permission error retries with `{ audio: true }`. The recorder is opus/webm if supported, else mp4, at 128 kbps, with a fallback to the plain constructor.
+  - **Risk:** with AGC off some phones may record quietly. The revert is one line (back to `{ audio: true }`).
+- **Decision (Claude):** the Photo, Video and Library pickers limit the kinds they accept (Photo and Video: photo or video only; Library: also audio), so an `.m4a` picked through Photo or Video is rejected, not turned into a broken photo.
+- **Spec reconciled:** requirements.md Req 1.4/1.5/1.9 (location), 2.8 (Mic), 3.4/3.7 (formats; the coordinator's "Req 4.4/4.7" is Photo and Video Input, Requirement 3 in the file), 9.8 (notification failure line), 11.11 (explanation placement); design.md (GeoService/LocateFailure, MediaService, new MediaImport section and Property 14, NotificationService, Settings layout, precache list, test list, file-type rule); README.
+
+## Session status (as of 2026-10-05)
+- **Implemented, reviewed and browser-checked; not committed.**
+  - `tsc` (app + SW) exits 0.
+  - All 10 chartests pass: dayCutoff, deviceLabel, knotDiff, knotSummary, locateFailure (12), mediaImport (23), mergeMessage, randomKnot, router, syncPlan. The timezone proptest passes.
+  - SW ASSETS has 43 entries, all present.
+- **Browser-checked at 320×640 (Claude):**
+  - Location with stubbed geolocation and permissions: code 1 + denied, prompt, throw or hang, and code 2 → "Location unavailable — tap to retry"; code 1 + granted → "Location is off — turn it on, then tap to retry".
+  - m4a: a real AAC clip generated in the page (MediaRecorder `audio/mp4;codecs=mp4a.40.2`) was picked through Library as `clip.m4a` with type `audio/mp4`, `audio/x-m4a` and empty. Each gave a playable preview (duration 1.98 s); the stored blob is `audio/mp4` with duration 2.
+    - With transcription on: status pending, the import toast appears, and the knot page shows a playable `<audio>` with "Voice not yet transcribed" and "🎧 Transcribe voice".
+    - Transcribe (fetch stubbed) uploads `audio.m4a` (`audio/mp4`) and saves the transcript.
+    - With transcription off: status none, no toast.
+    - `.mp3` and an m4a through the Photo button are rejected with the new copy. Document width stays 320.
+  - Mic (getUserMedia stubbed): the processing-off constraints are passed and the recording is `audio/webm;codecs=opus`. OverconstrainedError → retries with `{audio:true}`; NotAllowedError → rethrown, with no retry.
+  - Settings: the Cloud Backup order is Drive row → Merge with Cloud → description → Last merged → Manage backups → explanation → hint.
+  - Notification line: a `showNotification` throw shows "(TypeError: …)", "not listed after showing" shows that reason, success hides the line, and switching off hides it. In the in-app browser `serviceWorker.register` failed with "An unknown error occurred when fetching the script", even though `sw.js` returns 200. That is **unexplained**: the 2026-10-04 session had a working SW at the same origin. That path showed "(service worker not ready)" after 5 s. **Leading suspect for the phone:** no active service worker. Then `serviceWorker.ready` never resolves, the old `ensureShown` waited forever and posted nothing, and Android would say "hasn't received any notifications yet". Claude ruled out one cause: all 43 deployed precache URLs (from the deployed `sw.js` list) return 200 on GitHub Pages, so `cache.addAll` shouldn't fail on a missing file. The toggle stays inside the row (right edge 287 of 320).
+- **Pending verification (user, on the phone, after deploy):**
+  - Location off → "Location unavailable — tap to retry"; turn Location on, then tap retry → resolves.
+  - A Mic recording: no hiccups, and a comfortable level (AGC is off).
+  - An m4a from the recorder app via Library: it plays and transcribes.
+  - Photo or video via Library is still convenient; if not, use the named in-app menu fallback.
+  - Notification: switch Settings › Notifications off and on. Either "Tap to tie a knot" appears, or report the reason Settings shows.
+  - The earlier phone and real-Google-account checks still apply.
+- **Open items:**
+  - The root cause of the missing notification (awaiting the reason from the phone).
+  - Claude-invented copy needing user review: the notification failure line, the m4a import toast, "This is your only unchecked knot" and "Could not load knots".
+  - The Photo/Video unsupported-format error lists M4A even though those buttons don't accept it (minor).
+  - P2 daily email digest: deferred. P3 supercharge scaffold: KIV.
+  - The sync race window: accepted. `appProperties` per-key merge: unconfirmed.
+  - `src/screens/knotDetailScreen.ts` has an uncommitted change made by neither agent ("Another random knot" → "🎲 Another random knot"). Both agents confirmed they didn't touch the file. The change is unexplained and was left as is; the user was asked whether it's theirs.
+
+## Session status (as of 2026-10-04) — superseded by 2026-10-05 above
+- Implemented, reviewed and browser-checked. Committed by the user as **`5690324`**; the 2026-10-03 log repair and the 2026-10-03 session log were committed with it.
   - `tsc` (app + SW) exits 0.
   - All 9 chartests pass: dayCutoff, deviceLabel, knotDiff, knotSummary, locateFailure (12), mergeMessage, randomKnot (16), router (24), syncPlan. The timezone proptest passes.
   - SW ASSETS has 42 entries, none missing.
@@ -221,9 +274,8 @@ Audit findings (Claude): the Knot theme was half-applied. The nav, list and cale
   - Both empty-state toasts appear.
   - Random is hidden in select mode.
   - The combobox highlight is `rgba(76,175,118,0.18)` in dark mode.
-- **Suggested commit message:** "Fix Settings toggle overflow (toggle-switch display:block); tell 'Location is off' apart from 'blocked for this site' via Permissions API; add Sharing setting hint; add Random knot (Knots header + Another random knot, #/random/{id}); move 'Show N checked-off knots' to the top of the list; dark-mode combobox highlight token; update Kiro spec and README".
 - **Pending verification (user, on a phone):**
-  - Location off → "Location is off" copy; turn Location on → tap retry works.
+  - ~~Location off → "Location is off" copy; turn Location on → tap retry works.~~ **Superseded 2026-10-05:** Location off now shows "Location unavailable — tap to retry" (see the 2026-10-05 status).
   - The Settings toggle sits inside its row.
   - Random knot and Another.
   - The checked-off toggle at the top.
@@ -425,17 +477,17 @@ Audit findings (Claude): the Knot theme was half-applied. The nav, list and cale
 - **Location retry tapped repeatedly, or a slow first fix arriving after a retry:** taps while loading are ignored, and a request counter means only the newest request can set `location`, render, or apply its reverse-geocoded address. Browser-checked with a stubbed `navigator.geolocation` (code 1 → blocked copy, code 2 → unavailable copy, then success → coordinates).
 - **Location result arrives after leaving Capture:** a `disposed` flag set in cleanup means nothing renders.
 - **Knot saved before any location fix:** it saves with `location: null`, same as before.
-- **Location blocked for the site:** a retry fails immediately until the user allows it in browser settings, which the copy says. The browser won't prompt again, so a retry can't re-prompt. *(Refined 2026-10-04: this copy is now shown only when the Permissions API confirms the site is `denied`; see below.)*
+- **Location blocked for the site:** a retry fails immediately until the user allows it in browser settings, which the copy says. The browser won't prompt again, so a retry can't re-prompt. *(Refined 2026-10-04: this copy is now shown only when the Permissions API confirms the site is `denied`; see below.)* **Superseded 2026-10-05:** there is no "blocked" copy any more. A blocked site shows "Location unavailable — tap to retry", and a retry still fails immediately until the user allows it.
 - **Tapping a plain toast:** it dismisses immediately and its timer is cleared, so nothing is removed twice. The Undo toast's button keeps its own behaviour. Browser-checked.
 - **"+" ring in dark mode:** primary-dark #2d7a4f with a #1e1e1e gap and a #4caf76 ring. Browser-checked (computed styles).
 - **Checked-off pill:** it appears on check-off and disappears on Undo, re-rendered by `knot:checkedOff`. The time shows in the user's zone. Browser-checked (SGT).
 
 ### Edge cases added 2026-10-04 (toggle overflow / location off vs blocked / Random knot / toggle at top)
 - **Location off on the phone, site still allowed (code 1 + `granted`):** Capture shows "Location is off — turn it on, then tap to retry". Covered by `locateFailure.chartest.ts`.
-- **Site blocked (code 1 + `denied`):** Capture shows "Location blocked for this site — allow it in browser settings, then tap to retry". Covered by `locateFailure.chartest.ts`.
-- **Permission state `prompt` or unreadable (code 1 + `prompt`/null):** the combined "Location is off or blocked — turn it on or allow it for this site, then tap to retry". Covered by `locateFailure.chartest.ts`.
+- ~~**Site blocked (code 1 + `denied`):** Capture shows "Location blocked for this site — allow it in browser settings, then tap to retry". Covered by `locateFailure.chartest.ts`.~~ **Superseded 2026-10-05:** code 1 + `denied` now gives the generic "Location unavailable — tap to retry" (see the 2026-10-05 edge cases).
+- ~~**Permission state `prompt` or unreadable (code 1 + `prompt`/null):** the combined "Location is off or blocked — turn it on or allow it for this site, then tap to retry". Covered by `locateFailure.chartest.ts`.~~ **Superseded 2026-10-05:** these now give "Location unavailable — tap to retry".
 - **Other errors (codes 2/3, or no code) whatever the permission state:** "Location unavailable — tap to retry". Covered by `locateFailure.chartest.ts`.
-- **Permissions API hangs, throws or is missing:** the lookup is capped at 1 s and gives null, so the result is `unknown` (the combined copy) rather than a stuck "Getting location…". Browser-checked with a stubbed `permissions.query` (hang and throw → combined copy).
+- ~~**Permissions API hangs, throws or is missing:** the lookup is capped at 1 s and gives null, so the result is `unknown` (the combined copy) rather than a stuck "Getting location…". Browser-checked with a stubbed `permissions.query` (hang and throw → combined copy).~~ **Superseded 2026-10-05:** the 1 s cap still applies (so there is no stuck "Getting location…"), but the null result now gives "Location unavailable — tap to retry".
 - **Error arrives, then the 10 s guard would fire:** the guard is cleared on the error and `finish()` ignores late callers (`settled` flag), so `locate()` resolves exactly once. Manual test only.
 - **All knots are checked off, then 🎲 Random:** toast "No unchecked knots yet", no navigation. Browser-checked.
 - **One unchecked knot, on its `#/random/` page, tap "Another random knot":** toast "This is your only unchecked knot", stays put. Browser-checked.
@@ -448,6 +500,20 @@ Audit findings (Claude): the Knot theme was half-applied. The nav, list and cale
 - **Another random knot while editing:** the button is gone in edit mode (`renderEditMode` empties the actions row) and comes back after Save/Cancel. Browser-checked.
 - **Settings toggle row, notification permission granted:** the toggle's 44×26 switch stays inside the row (no spill to the right). Browser-checked at 320×640. Light and dark; all four toggle rows (Transcription, Email, Sharing, Notifications) with `Notification.permission` stubbed to granted; document width 320.
 - **Checked-off toggle when every knot is hidden:** the "Show N checked-off knots" button sits at the top, above "All your knots are checked off.". Browser-checked.
+
+### Edge cases added 2026-10-05
+- **Code 1 with `denied`, `prompt` or `null`, or a hung or missing Permissions API:** the generic "Location unavailable — tap to retry". Covered by `locateFailure.chartest.ts`. Code 1 + `granted` gives "Location is off"; other codes give "unavailable".
+- **`.m4a` file with an empty, `application/octet-stream`, `video/mp4` or `audio/mp4a-latm` type:** classified as audio, stored as `audio/mp4`. Covered by `mediaImport.chartest.ts` (23 cases).
+- **`audio/mpeg` (`.mp3`):** rejected with "Unsupported file format. Please use JPEG, PNG, GIF, WEBP, MP4, MOV, or M4A." Covered by `mediaImport.chartest.ts`.
+- **An `.m4a` picked through the Photo or Video button:** rejected (those pickers allow photo and video only). Manual test only.
+- **Duration unreadable** (metadata fails or takes more than 3 s): the item is added with duration `0`. Manual test only.
+- **m4a over the Groq file limit (25 MB on the free tier):** the existing transcription error toast appears; there is no client-side check. Manual test only.
+- **An imported item removed from the draft before saving:** not counted for the post-save toast. Manual test only.
+- **`serviceWorker.ready` hangs:** `ensureShown` returns `failed` after 5 s with "service worker not ready", and Settings shows the failure line. Manual test only.
+- **`showNotification` throws:** `failed` with `name: message`, logged with `console.error`. Manual test only.
+- **Notification not listed after showing** (`getNotifications` returns nothing): `failed` with "not listed after showing". Manual test only.
+- **`getNotifications` itself throws:** treated as `shown` (best effort), with a `console.warn`. Manual test only.
+- **Settings closed before `ensureShown` resolves:** the result is ignored (`notifDisposed`). Manual test only.
 
 ## Refactoring Standard Operating Procedure (SOP)
 When instructed to refactor code, adopt the role of a principal software engineer and execute in four strict phases:

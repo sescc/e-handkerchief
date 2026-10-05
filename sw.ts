@@ -37,6 +37,7 @@ const ASSETS: string[] = [
   'src/geoService.js',
   'src/locateFailure.js',
   'src/mediaService.js',
+  'src/mediaImport.js',
   'src/transcriptionService.js',
   'src/notificationService.js',
   'src/cloudSyncService.js',

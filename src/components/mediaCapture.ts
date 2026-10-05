@@ -65,6 +65,11 @@ export interface CapturedMedia {
   transcriptionDeferred: boolean;
   /** Last live-recognition error code, if any. */
   liveTranscriptionError: string | null;
+  /**
+   * Ids of audio items attached from a library file (not recorded here).
+   * Not persisted; lets the host word its post-save toast correctly.
+   */
+  importedAudioIds: string[];
 }
 
 export interface MediaCaptureHandle {
@@ -105,6 +110,8 @@ export function renderMediaCapture(
    */
   let pendingRecordingPromise: Promise<void> | null = null;
   let micDisabled = false;
+  /** Ids of audio items imported from the library (see CapturedMedia.importedAudioIds). */
+  const importedAudioIds = new Set<string>();
 
   // ---- Dictation state (live Web Speech → text-only item, no audio blob) ----
   /** True while a dictation (live speech → text) session is active. */
@@ -318,7 +325,7 @@ export function renderMediaCapture(
       setMediaError('File exceeds the 100 MB size limit. Please choose a smaller file.');
     } else if (err instanceof UnsupportedFormatError) {
       setMediaError(
-        'Unsupported file format. Please use JPEG, PNG, GIF, WEBP, MP4, or MOV.'
+        'Unsupported file format. Please use JPEG, PNG, GIF, WEBP, MP4, MOV, or M4A.'
       );
     } else if (err instanceof MediaUnsupportedError) {
       setMediaError('Media capture is not supported in this browser.');
@@ -704,6 +711,27 @@ export function renderMediaCapture(
     clearMediaError();
     try {
       const blob = await mediaService.pickFromLibrary();
+
+      // Audio (e.g. an .m4a from an external recorder) has no thumbnail, so it
+      // is handled before generateThumbnail (which would fail on audio).
+      if (blob.type.startsWith('audio/')) {
+        const durationSeconds = await getAudioDuration(blob);
+        const item: AudioMediaItem = {
+          id: crypto.randomUUID(),
+          type: 'audio',
+          createdAt: Date.now(),
+          blob,
+          durationSeconds,
+          transcriptionStatus: settingsStore.getCurrent().transcriptionEnabled
+            ? 'pending'
+            : 'none',
+        };
+        importedAudioIds.add(item.id);
+        draftItems.push({ item, previewUrl: trackUrl(URL.createObjectURL(blob)) });
+        refreshPreviewList();
+        return;
+      }
+
       const thumbBlob = await mediaService.generateThumbnail(blob);
       const thumbUrl = trackUrl(URL.createObjectURL(thumbBlob));
 
@@ -749,6 +777,10 @@ export function renderMediaCapture(
       transcript: recordedTranscript,
       transcriptionDeferred,
       liveTranscriptionError,
+      // Only ids still in the draft (a removed import must not be reported).
+      importedAudioIds: draftItems
+        .map((d) => d.item.id)
+        .filter((id) => importedAudioIds.has(id)),
     };
   }
 
@@ -806,6 +838,32 @@ export function renderMediaCapture(
   }
 
   return { getCaptured, finalizePendingRecording, isRecording, destroy };
+}
+
+/**
+ * Read an audio Blob's duration in whole seconds via a detached <audio>.
+ * Resolves 0 on error, NaN/Infinity, or after a 3 s cap.
+ */
+function getAudioDuration(blob: Blob): Promise<number> {
+  return new Promise((resolve) => {
+    const url = URL.createObjectURL(blob);
+    const audio = document.createElement('audio');
+    let done = false;
+    const finish = (seconds: number): void => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      audio.removeAttribute('src');
+      audio.load();
+      URL.revokeObjectURL(url);
+      resolve(Number.isFinite(seconds) && seconds > 0 ? Math.round(seconds) : 0);
+    };
+    const timer = setTimeout(() => finish(0), 3000);
+    audio.preload = 'metadata';
+    audio.onloadedmetadata = () => finish(audio.duration);
+    audio.onerror = () => finish(0);
+    audio.src = url;
+  });
 }
 
 /** Resolve the pixel dimensions of an image Blob. */
