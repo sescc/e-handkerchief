@@ -933,7 +933,7 @@ The panel calls `cloudSyncService.listBackups()` on open and renders one `.backu
 
 ### Service Worker (`sw.ts` → `sw.js`)
 
-Hand-written, no Workbox dependency. The precache list, copied verbatim from `sw.ts`:
+Hand-written, no Workbox dependency. **`sw.js` is a classic script**: `app.ts` registers it without `type: 'module'` (module workers aren't universal, for example older Firefox), so `sw.ts` must contain no `import` or `export`. A stray `export {};` once made `sw.js` a SyntaxError, so no service worker ever ran; the deploy workflow now guards this by parsing the built file with `node -e "new Function(require('fs').readFileSync('sw.js','utf8'))"` and failing the build on error. The precache list, copied verbatim from `sw.ts`:
 
 ```typescript
 const ASSETS: string[] = [
@@ -992,7 +992,7 @@ const ASSETS: string[] = [
 
 **Fetch handler:**
 1. Requests to the Nominatim host: network-first with a 5-second timeout; successful responses are cached with 50-entry FIFO eviction.
-2. Requests that are a navigation, the base/index path, or match `.js|.css|.html|.webmanifest`: network-first (so a normal online reload always picks up fresh app code), falling back to cache, then to the cached index shell for navigations.
+2. Requests that are a navigation, the base/index path, or match `.js|.css|.html|.webmanifest`: network-first (so a normal online reload always picks up fresh app code), falling back to cache, then to the cached index shell for navigations. A response is **not** written to the cache when the request URL has a query string: the OAuth return (`/?code=…`, `?error=…`) carries a single-use authorisation code that must not sit in Cache Storage, and one-off query URLs would only fill the cache. The offline fallback is unchanged (a navigation still falls back to the cached index).
 3. Everything else (icons, images): cache-first, falling back to network.
 4. Any offline miss returns a synthetic `503 Response`, never a browser error page.
 
@@ -1000,7 +1000,7 @@ const ASSETS: string[] = [
 
 **Notification click:** `notificationclick` closes the notification and, for the `capture-shortcut` tag, focuses an already-open app window (posting it a `{ type: "NAVIGATE", to: "#/" }` message) or otherwise opens `new URL('./#/', sw.registration.scope)`. Resolving against the SW registration scope fixes the earlier bug where a bare `'/#/'` opened the origin root instead of the app's GitHub Pages subpath. After opening, the handler **re-posts** the notification (same title, body "Tap to tie a knot", `tag: "capture-shortcut"`, `silent: true`, `requireInteraction: true`), because a tap removes it and the notification should stay available. The same post is made by `notificationService.ensureShown()` at every app launch; the shared tag makes a repeat post replace rather than stack.
 
-**Update banner:** When a new SW installs while an old one is active, posts `{ type: "SW_WAITING" }` to all clients. `app.ts` listens for this message and renders a "New version available — tap to reload" banner. Tapping it posts `{ type: "SKIP_WAITING" }` back to the SW, which calls `self.skipWaiting()`; then `app.ts` calls `location.reload()`.
+**Update banner:** When a new SW installs while an old one is active (`sw.registration.active` is already set at install time), posts `{ type: "SW_WAITING" }` to all clients. The very first install has no active worker and posts nothing, so the banner never appears for the initial install. `app.ts` listens for this message and renders a "New version available — tap to reload" banner. Tapping it posts `{ type: "SKIP_WAITING" }` back to the SW, which calls `self.skipWaiting()`; then `app.ts` calls `location.reload()`.
 
 `ASSETS` must be kept in sync manually with the compiled JS file list (a small maintenance cost that replaces Workbox's build-time manifest injection).
 

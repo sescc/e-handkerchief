@@ -230,7 +230,19 @@ Audit findings (Claude): the Knot theme was half-applied. The nav, list and cale
 - **Decision (Claude):** the Photo, Video and Library pickers limit the kinds they accept (Photo and Video: photo or video only; Library: also audio), so an `.m4a` picked through Photo or Video is rejected, not turned into a broken photo.
 - **Spec reconciled:** requirements.md Req 1.4/1.5/1.9 (location), 2.8 (Mic), 3.4/3.7 (formats; the coordinator's "Req 4.4/4.7" is Photo and Video Input, Requirement 3 in the file), 9.8 (notification failure line), 11.11 (explanation placement); design.md (GeoService/LocateFailure, MediaService, new MediaImport section and Property 14, NotificationService, Settings layout, precache list, test list, file-type rule); README.
 
+### 2026-10-05 (round 2) — Service worker never registered
+- **Bug (reported by user, on a phone):** Settings showed "Couldn't show the notification (service worker not ready)", even after switching the toggle off and on many times.
+- **Root cause (Claude, verified):** `sw.ts` had `export {};` since the initial commit `edf2e59`, so the compiled `sw.js` ended with `export {};`. `app.ts` registers `sw.js` as a classic script, where `export` is a SyntaxError, so evaluation failed and **no service worker has ever run**: no notification, no offline precache, no update toast, no notification tap handling, no Background Sync message. The app could still be installed because Chrome no longer requires a service worker for that. `node -e "new Function(…sw.js…)"` on the old file gives `SyntaxError: Unexpected token 'export'`.
+- **Decision (Claude, plan approved):** remove `export {};` and keep `sw.js` a classic script (a comment in `sw.ts` says so). Module registration (`type: 'module'`) was rejected because it isn't universal (older Firefox). A CI guard in `deploy.yml` ("Inject build version into service worker" step) parses the built file with `new Function` and fails the build if it isn't a valid classic script.
+- **Latent bugs fixed (Claude, plan approved):**
+  - `SW_WAITING` was posted on every install, including the first, so the first install would have shown "New version available — tap to reload". It is now posted only when `sw.registration.active` already exists (an update over a running version).
+  - `networkFirst` cached every successful same-origin response, including the OAuth return `/?code=…` (a single-use auth code) and one-off query URLs. It now skips `cache.put` when the URL has a query string; the offline fallback is unchanged.
+- **Finding (Claude):** the in-app browser pane can't register service workers at all (the same "unknown error when fetching the script" even with the fixed `sw.js`), so service-worker checks use headless Edge over CDP against a fresh profile and the local server. The script lives in the session scratchpad, not in the repo.
+- **Verification (Claude, headless Edge):** registered; `ready` true; controller true; cache `e-hk-__BUILD_VERSION__` with 43 precached entries; a fetch of `index.html?code=secret123` through the SW left 0 query-string entries; no `SW_WAITING` message on first install. `tsc` (app + SW) exits 0, and the rebuilt `sw.js` parses as a classic script with no `export`.
+- **Note:** every earlier "pending verification" item that involves the service worker (offline cold start, the quick-capture notification and its tap, the update toast, the Background Sync message) was never testable before this fix.
+
 ## Session status (as of 2026-10-05)
+- **Round 2 (service worker fix, see the round-2 section above):** implemented, reviewed and verified in headless Edge; not committed. It changes `sw.ts` (no `export`, `SW_WAITING` only on an update, no query-string caching) and `.github/workflows/deploy.yml` (classic-script parse guard); design.md and README are updated.
 - **Implemented, reviewed and browser-checked; not committed.**
   - `tsc` (app + SW) exits 0.
   - All 10 chartests pass: dayCutoff, deviceLabel, knotDiff, knotSummary, locateFailure (12), mediaImport (23), mergeMessage, randomKnot, router, syncPlan. The timezone proptest passes.
@@ -244,16 +256,16 @@ Audit findings (Claude): the Knot theme was half-applied. The nav, list and cale
     - `.mp3` and an m4a through the Photo button are rejected with the new copy. Document width stays 320.
   - Mic (getUserMedia stubbed): the processing-off constraints are passed and the recording is `audio/webm;codecs=opus`. OverconstrainedError → retries with `{audio:true}`; NotAllowedError → rethrown, with no retry.
   - Settings: the Cloud Backup order is Drive row → Merge with Cloud → description → Last merged → Manage backups → explanation → hint.
-  - Notification line: a `showNotification` throw shows "(TypeError: …)", "not listed after showing" shows that reason, success hides the line, and switching off hides it. In the in-app browser `serviceWorker.register` failed with "An unknown error occurred when fetching the script", even though `sw.js` returns 200. That is **unexplained**: the 2026-10-04 session had a working SW at the same origin. That path showed "(service worker not ready)" after 5 s. **Leading suspect for the phone:** no active service worker. Then `serviceWorker.ready` never resolves, the old `ensureShown` waited forever and posted nothing, and Android would say "hasn't received any notifications yet". Claude ruled out one cause: all 43 deployed precache URLs (from the deployed `sw.js` list) return 200 on GitHub Pages, so `cache.addAll` shouldn't fail on a missing file. The toggle stays inside the row (right edge 287 of 320).
+  - Notification line: a `showNotification` throw shows "(TypeError: …)", "not listed after showing" shows that reason, success hides the line, and switching off hides it. ~~In the in-app browser `serviceWorker.register` failed with "An unknown error occurred when fetching the script", even though `sw.js` returns 200. That is **unexplained**: the 2026-10-04 session had a working SW at the same origin. That path showed "(service worker not ready)" after 5 s. **Leading suspect for the phone:** no active service worker. Then `serviceWorker.ready` never resolves, the old `ensureShown` waited forever and posted nothing, and Android would say "hasn't received any notifications yet".~~ **Superseded 2026-10-05 (round 2):** the suspect is confirmed (the phone had no active service worker) and the cause is `export {};` in `sw.ts`; the in-app browser pane's registration failure is that pane's own limitation (see the round-2 section). Claude ruled out one cause: all 43 deployed precache URLs (from the deployed `sw.js` list) return 200 on GitHub Pages, so `cache.addAll` shouldn't fail on a missing file. The toggle stays inside the row (right edge 287 of 320).
 - **Pending verification (user, on the phone, after deploy):**
   - Location off → "Location unavailable — tap to retry"; turn Location on, then tap retry → resolves.
   - A Mic recording: no hiccups, and a comfortable level (AGC is off).
   - An m4a from the recorder app via Library: it plays and transcribes.
   - Photo or video via Library is still convenient; if not, use the named in-app menu fallback.
-  - Notification: switch Settings › Notifications off and on. Either "Tap to tie a knot" appears, or report the reason Settings shows.
-  - The earlier phone and real-Google-account checks still apply.
+  - **Service worker and notification (do this first, after deploy):** open the app online once, fully close and reopen it; check that the Settings notification line is gone and "Tap to tie a knot" is in the notification drawer; tap it to open Capture; then switch on airplane mode → the app loads offline. If a Settings line still shows a reason, report it.
+  - The earlier phone and real-Google-account checks still apply; the ones that involve the service worker were never testable before round 2.
 - **Open items:**
-  - The root cause of the missing notification (awaiting the reason from the phone).
+  - The missing notification: the fix (a working service worker) is implemented; pending the phone check after deploy.
   - Claude-invented copy needing user review: the notification failure line, the m4a import toast, "This is your only unchecked knot" and "Could not load knots".
   - The Photo/Video unsupported-format error lists M4A even though those buttons don't accept it (minor).
   - P2 daily email digest: deferred. P3 supercharge scaffold: KIV.
@@ -514,6 +526,11 @@ Audit findings (Claude): the Knot theme was half-applied. The nav, list and cale
 - **Notification not listed after showing** (`getNotifications` returns nothing): `failed` with "not listed after showing". Manual test only.
 - **`getNotifications` itself throws:** treated as `shown` (best effort), with a `console.warn`. Manual test only.
 - **Settings closed before `ensureShown` resolves:** the result is ignored (`notifDisposed`). Manual test only.
+- **First install of the service worker:** no "New version available" toast, because there is no active worker yet. Verified in headless Edge.
+- **A later deploy:** the toast shows once (`SW_WAITING` is posted because an active worker exists). Manual test only.
+- **OAuth return `/?code=…` or `?error=…`:** never written to Cache Storage (`networkFirst` skips URLs with a query string). Verified in headless Edge with `index.html?code=secret123` (0 query-string cache entries).
+- **A precache file missing on deploy:** `cache.addAll` fails, so the install fails and Settings shows "(service worker not ready)". Manual test only; all 43 URLs return 200 on GitHub Pages.
+- **`sw.js` with module syntax** (for example a stray `export {}`): the deploy fails at the `new Function` parse guard. Verified on the old `sw.js` (`SyntaxError: Unexpected token 'export'`).
 
 ## Refactoring Standard Operating Procedure (SOP)
 When instructed to refactor code, adopt the role of a principal software engineer and execute in four strict phases:

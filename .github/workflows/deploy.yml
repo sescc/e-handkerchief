@@ -45,6 +45,8 @@ jobs:
             echo "ERROR: build version placeholder not replaced" >&2
             exit 1
           fi
+          # sw.js is registered as a classic script: fail if it can't parse as one (e.g. a stray `export {}`).
+          node -e "new Function(require('fs').readFileSync('sw.js','utf8'))"
 
       - name: Prepare deploy directory
         run: |

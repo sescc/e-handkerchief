@@ -34,6 +34,14 @@ node src/components/timezoneCombobox.proptest.js
 Each prints one PASS/FAIL line per case and exits non-zero on failure. You need Node on
 your PATH to run them (the same Node that provides `tsc`); no other setup is required.
 
+**Service worker note:** `sw.js` is registered as a classic script, so `sw.ts` must not contain any
+`import` or `export`. After `npx tsc -p tsconfig.sw.json`, check that it still parses as one (CI
+runs the same check and fails the deploy if it doesn't):
+
+```sh
+node -e "new Function(require('fs').readFileSync('sw.js','utf8'))"
+```
+
 ## Serve (local preview only)
 
 This step is for **local development/preview on your own machine**. End users never
