@@ -12,7 +12,7 @@ The working tree also still holds the uncommitted 2026-10-04 end-handoff edit to
 
 The decision and edge-case log is in `CLAUDE.md` › "2026-10-05". The status is in "Session status (as of 2026-10-05)". The plan is `~/.claude/plans/p0-location-message-wise-kahn.md`.
 
-**Next step:** the user commits, pushes (deploy) and runs the phone checks in §6. The notification fix depends on the reason Settings shows on the phone.
+**Next step:** the user commits, pushes (deploy) and runs the phone checks in §6. **Round 2 (§11) found the real cause of the missing notification: `sw.ts` had `export {};`, so no service worker had ever run; it is fixed in `sw.ts` and guarded in CI.** The first phone check is now: open the app online once, fully close and reopen, and confirm the Settings notification line is gone and "Tap to tie a knot" is in the drawer.
 
 **Resume command/check:** `wsl -e bash -c 'cd /mnt/c/FMW/Code/Kiro/e-Handkerchief && git status --short && git log --oneline -3'`, then `CLAUDE.md` › "Session status (as of 2026-10-05)".
 
@@ -52,7 +52,7 @@ The decision and edge-case log is in `CLAUDE.md` › "2026-10-05". The status is
 | Browser: real AAC clip via Library (`audio/mp4`, `audio/x-m4a`, empty type) | pass | Preview plays; stored as `audio/mp4`, duration 2. The knot page plays it and shows Transcribe; Transcribe uploads `audio.m4a`; `.mp3` rejected; Photo + m4a rejected. |
 | Browser: Mic constraints (stubbed getUserMedia) | pass | Processing-off constraints; Overconstrained → `{audio:true}`; NotAllowed rethrown. |
 | Browser: Settings order and notification line | pass | Throw, not-listed and SW-not-ready reasons shown; success and off hide the line; no overflow. |
-| In-app browser `serviceWorker.register` | failed: "unknown error when fetching the script", although `sw.js` returns 200 | Unexplained (it worked on 2026-10-04). It points to the leading phone suspect: no active SW, so `ready` never resolves. |
+| In-app browser `serviceWorker.register` | failed: "unknown error when fetching the script", although `sw.js` returns 200 | ~~Unexplained (it worked on 2026-10-04). It points to the leading phone suspect: no active SW, so `ready` never resolves.~~ Superseded by §11: the suspect is confirmed (`export {};` in `sw.ts`); the pane failure is that pane's own limitation. |
 | HEAD all 43 deployed precache URLs (deployed `sw.js` list + `sw.js`) | all 200 | A missing precache file is not why install would fail. |
 | `drift-check.ps1 .` | `0 dead / 0 refs` | No dead doc references. |
 | Real phone | not run | See §6. |
@@ -72,7 +72,7 @@ The decision and edge-case log is in `CLAUDE.md` › "2026-10-05". The status is
 ## 6. Open items
 | Priority | Item | Doc/code reference | Next action | Done when |
 | --- | --- | --- | --- | --- |
-| P0 | Notification root cause | `src/notificationService.ts`, `src/screens/settingsScreen.ts` | After deploy, switch Settings › Notifications off and on, and report the reason shown. | "Tap to tie a knot" appears on the phone. |
+| P0 | Quick-capture notification (root cause fixed in round 2: SW never registered) | `sw.ts`, `.github/workflows/deploy.yml` | After deploy: open the app online once, fully close and reopen it; the Settings line is gone, "Tap to tie a knot" is in the drawer, and tapping it opens Capture; airplane mode → the app loads offline. | All four hold on the phone. |
 | P0 | Phone checks | `CLAUDE.md` › Session status (as of 2026-10-05) | Location off → unavailable, then retry; Mic quality and level; m4a via Library plays and transcribes; photo picking still convenient. | All behave as browser-checked. |
 | P1 | Claude-invented copy | the notification failure line, the m4a import toast, "This is your only unchecked knot", "Could not load knots" | The user reviews the wording. | Approved. |
 | P2 | The Photo/Video unsupported-format error mentions M4A | `src/components/mediaCapture.ts` `handleMediaError` | Optional per-button copy. | Decided. |
@@ -100,3 +100,9 @@ The decision and edge-case log is in `CLAUDE.md` › "2026-10-05". The status is
 - **Modified:** `.kiro/specs/e-handkerchief/{design,requirements}.md`, `README.md`, `CLAUDE.md`, `sw.ts`, `src/{geoService,locateFailure,locateFailure.chartest,mediaService,notificationService,remoteTranscribe}.ts`, `src/components/mediaCapture.ts`, `src/screens/{captureScreen,settingsScreen}.ts`.
 - **New:** `src/mediaImport.ts`, `src/mediaImport.chartest.ts`, this log.
 - **Not from this session's agents** (both confirmed): `src/screens/knotDetailScreen.ts` ("🎲 Another random knot"). It's unexplained, left as is, and the user was asked. Also the uncommitted `docs/sessions/2026-10-04-end-handoff.md`.
+
+## 11. Round 2 — service worker fix
+- **Root cause (verified):** `sw.ts` had `export {};` since the initial commit `edf2e59`, so `sw.js` ended with `export {};`. `app.ts` registers it as a classic script, so evaluation threw a SyntaxError and **no service worker has ever run** (no notification, offline precache, update toast, notification tap, or Background Sync message). `serviceWorker.ready` never resolved, hence "Couldn't show the notification (service worker not ready)" on the phone.
+- **Changes:** `sw.ts` drops `export {};` (comment: must stay a classic script); `SW_WAITING` is posted only when `sw.registration.active` exists (update, not first install); `networkFirst` skips `cache.put` for URLs with a query string (keeps the OAuth `?code=` out of Cache Storage); `.github/workflows/deploy.yml` parses `sw.js` with `new Function` after injection and fails on error. design.md (Service Worker section) and README (dev note) are updated; `CLAUDE.md` has the round-2 decision section, edge cases and status.
+- **Verification:** `tsc` app + SW exit 0; the rebuilt `sw.js` parses and has no `export` (the old one gave `SyntaxError: Unexpected token 'export'`). Headless Edge over CDP, fresh profile, local server: registered, `ready` true, controller true, cache `e-hk-__BUILD_VERSION__` with 43 precached entries, `index.html?code=secret123` fetched through the SW left 0 query-string entries, no `SW_WAITING` on first install. The in-app browser pane cannot register any SW (environment limit), so use headless Edge for SW checks (script in the session scratchpad, not in the repo).
+- **Updated P0 next action:** after deploy, on the phone: open the app online once, fully close and reopen; the Settings notification line should be gone and "Tap to tie a knot" in the drawer; tap it to open Capture; then airplane mode → the app loads offline. If a reason still shows in Settings, report it. All earlier SW-dependent pending checks were never testable before this fix.

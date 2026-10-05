@@ -4,7 +4,8 @@
 // ============================================================
 
 /// <reference lib="webworker" />
-export {};
+// sw.js must stay a classic script (app.ts registers it without `type: 'module'`),
+// so this file must contain no ES module syntax at all.
 
 // The WebWorker lib types `self` as WorkerGlobalScope, which lacks the
 // ServiceWorker-specific members. Alias a correctly-typed reference.
@@ -146,7 +147,10 @@ async function networkFirst(req: Request): Promise<Response> {
   const cache = await caches.open(CACHE_NAME);
   try {
     const fresh = await fetch(req);
-    if (fresh && fresh.ok) {
+    // Skip URLs with a query string: the OAuth return (`/?code=…`, `?error=…`)
+    // carries a single-use auth code that must not sit in Cache Storage, and
+    // one-off query URLs would only fill the cache.
+    if (fresh && fresh.ok && new URL(req.url).search === '') {
       cache.put(req, fresh.clone());
     }
     return fresh;
@@ -290,6 +294,10 @@ sw.addEventListener('message', (event: ExtendableMessageEvent) => {
 // Notify clients when a new SW is waiting (update-available banner)
 // ------------------------------------------------------------
 sw.addEventListener('install', () => {
-  // After install, if there is already an active worker, this SW is "waiting".
-  void messageClients({ type: 'SW_WAITING' });
+  // Only an update over a running version is "new version available". On the
+  // very first install there is no active worker, and the page must not show
+  // the reload banner for what is just the initial install.
+  if (sw.registration.active) {
+    void messageClients({ type: 'SW_WAITING' });
+  }
 });
