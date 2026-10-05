@@ -154,7 +154,7 @@ export function renderKnotDetail(
     if (params['random'] === '1') {
       const anotherBtn = document.createElement('button');
       anotherBtn.className = 'btn btn-ghost btn-sm';
-      anotherBtn.textContent = 'Another random knot';
+      anotherBtn.textContent = '🎲 Another random knot';
       anotherBtn.addEventListener('click', () => {
         void (async () => {
           try {

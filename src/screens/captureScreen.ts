@@ -144,14 +144,12 @@ export function renderCapture(container: HTMLElement): () => void {
     metaLocation.replaceChildren(spinner);
   }
 
-  function renderLocationFailure(reason: 'denied' | 'off' | 'unknown' | 'unavailable'): void {
+  function renderLocationFailure(reason: 'off' | 'unavailable'): void {
     const retryBtn = document.createElement('button');
     retryBtn.type = 'button';
     retryBtn.className = 'location-retry';
     const copy: Record<typeof reason, string> = {
-      denied: 'Location blocked for this site — allow it in browser settings, then tap to retry',
       off: 'Location is off — turn it on, then tap to retry',
-      unknown: 'Location is off or blocked — turn it on or allow it for this site, then tap to retry',
       unavailable: 'Location unavailable — tap to retry',
     };
     retryBtn.textContent = copy[reason];
@@ -265,7 +263,18 @@ export function renderCapture(container: HTMLElement): () => void {
     // Emit saved event so Knots refreshes
     eventBus.emit('knot:saved', knot);
 
-    if (hasAudio && hasPendingAudio) {
+    // Audio attached from a library file was never live-transcribed, so the
+    // "live transcription" messages below would be misleading for it.
+    const importedIds = new Set(captured.importedAudioIds);
+    const onlyImportedPending = allItems
+      .filter((m) => m.type === 'audio' && m.transcriptionStatus === 'pending')
+      .every((m) => importedIds.has(m.id));
+
+    if (hasAudio && hasPendingAudio && onlyImportedPending) {
+      toastService.show(
+        "Saved. To transcribe the audio file, open the knot and tap 'Transcribe voice'."
+      );
+    } else if (hasAudio && hasPendingAudio) {
       // Craft a message that reflects WHY live transcription didn't produce text.
       let deferredMsg: string;
       if (captured.liveTranscriptionError === 'not-allowed') {

@@ -25,7 +25,7 @@ export async function remoteTranscribe(blob: Blob, language?: string): Promise<R
   try {
     const form = new FormData();
     // Give the file a sensible name/extension based on the blob type.
-    const ext = blob.type.includes('ogg') ? 'ogg' : blob.type.includes('mp4') ? 'mp4' : 'webm';
+    const ext = blob.type.includes('ogg') ? 'ogg' : blob.type.includes('mp4') ? 'm4a' : 'webm';
     form.append('file', blob, `audio.${ext}`);
     if (language) form.append('language', language);
 

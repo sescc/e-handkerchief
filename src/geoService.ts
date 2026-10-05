@@ -20,8 +20,8 @@ export interface GeoServiceAPI {
 
   /**
    * Like getCurrentPosition(), but reports why a failure happened:
-   * 'denied' (site blocked), 'off' (device Location off), 'unknown'
-   * (permission denied, cause unclear) or 'unavailable' (anything else).
+   * 'off' (the site is still allowed, so the device's Location is off) or
+   * 'unavailable' (anything else, including every ambiguous case).
    * Never rejects.
    */
   locate(): Promise<LocateResult>;
@@ -36,10 +36,11 @@ export interface GeoServiceAPI {
 
 /**
  * Outcome of a location request. On failure, `reason` is one of:
- * - 'denied':      the site is blocked in the browser settings.
  * - 'off':         the site is allowed, so the device's own Location is off.
- * - 'unknown':     permission was denied but the cause (site vs device) can't be told.
- * - 'unavailable': any other failure (no fix, timeout, no geolocation support).
+ * - 'unavailable': any other failure, including every ambiguous one (no fix,
+ *                  timeout, no geolocation support, or permission denied —
+ *                  Android reports a blocked site, device Location off and
+ *                  missing Chrome-app permission alike as 'denied').
  */
 export type LocateResult =
   | { ok: true; coords: KnotLocation }
@@ -78,10 +79,13 @@ async function queryGeolocationPermission(): Promise<'granted' | 'denied' | 'pro
  * lookup after an error) — never rejects, and resolves exactly once.
  *
  * Failure reasons: PERMISSION_DENIED (code 1) is refined with the Permissions
- * API, queried after the error fires so the state is fresh — site blocked ->
- * 'denied', site allowed -> 'off' (device Location is off; Android Chrome also
- * reports that as code 1), state unknown -> 'unknown'. POSITION_UNAVAILABLE,
- * TIMEOUT, the guard timeout, or no geolocation support -> 'unavailable'.
+ * API, queried after the error fires so the state is fresh. Only 'granted' is
+ * conclusive: the site is allowed, so the device's Location must be off
+ * ('off'; Android Chrome reports that as code 1). A 'denied' state is not
+ * trusted, because Android also uses it when the device Location is off or
+ * Chrome lacks Android's location permission, so it gives 'unavailable', as do
+ * a 'prompt' or unknown state, POSITION_UNAVAILABLE, TIMEOUT, the guard
+ * timeout, and no geolocation support.
  */
 export function locate(): Promise<LocateResult> {
   return new Promise((resolve) => {

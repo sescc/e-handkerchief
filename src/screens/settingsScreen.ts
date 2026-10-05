@@ -11,6 +11,7 @@ import { mergeResultMessage } from '../mergeMessage.js';
 import { formatKnotTimestamp, getTimezoneOptions } from '../dateFormat.js';
 import { createTimezoneCombobox } from '../components/timezoneCombobox.js';
 import { notificationService } from '../notificationService.js';
+import type { ShowResult } from '../notificationService.js';
 import type { AppSettings } from '../types.js';
 
 // RFC 5321-compatible email regex (local-part@domain)
@@ -464,9 +465,30 @@ export function renderSettings(container: HTMLElement): () => void {
   notifDesc.className = 'settings-row-desc';
   notifDesc.textContent =
     "Keeps a 'Tap to tie a knot' notification in your notification drawer. On Android you can still swipe it away; it comes back the next time you open the app.";
+  // Shown only when posting the notification failed, so the cause isn't silent.
+  const notifStatusEl = document.createElement('div');
+  notifStatusEl.className = 'settings-row-desc mt-sm';
+  notifStatusEl.style.display = 'none';
   notifLabelWrap.appendChild(notifLabel);
   notifLabelWrap.appendChild(notifDesc);
+  notifLabelWrap.appendChild(notifStatusEl);
   notifRow.appendChild(notifLabelWrap);
+
+  /** Set when the screen is torn down, so late async results are ignored. */
+  let notifDisposed = false;
+  listenerCleanups.push(() => { notifDisposed = true; });
+
+  /** Show the failure line for a failed result; hide it for anything else. */
+  function showNotifResult(show: ShowResult | undefined): void {
+    if (notifDisposed) return;
+    if (show && show.status === 'failed') {
+      notifStatusEl.textContent =
+        `Couldn't show the notification (${show.reason}). Switch this off and on to try again.`;
+      notifStatusEl.style.display = '';
+    } else {
+      notifStatusEl.style.display = 'none';
+    }
+  }
 
   const notifControlEl = document.createElement('div');
   notifControlEl.className = 'settings-row-control';
@@ -483,6 +505,8 @@ export function renderSettings(container: HTMLElement): () => void {
 
     const permission = notificationService.permission();
     notifSection.style.display = permission === 'unsupported' ? 'none' : '';
+    // A failure only makes sense while permission is granted.
+    if (permission !== 'granted') showNotifResult(undefined);
 
     if (permission === 'granted') {
       const toggle = buildToggle(settingsStore.getCurrent().quickCaptureNotification !== false);
@@ -493,9 +517,11 @@ export function renderSettings(container: HTMLElement): () => void {
             if (toggle.input.checked) {
               // enable() re-checks permission; if it was revoked meanwhile, re-render.
               const result = await notificationService.enable();
-              if (result !== 'granted') renderNotificationControl();
+              if (result.permission !== 'granted') renderNotificationControl();
+              showNotifResult(result.show);
             } else {
               await notificationService.disable();
+              showNotifResult(undefined);
             }
           } catch {
             toggle.input.checked = !toggle.input.checked;
@@ -512,8 +538,14 @@ export function renderSettings(container: HTMLElement): () => void {
       allowBtn.addEventListener('click', () => {
         void notificationService
           .enable()
-          .catch(() => toastService.show('Could not save setting'))
-          .finally(() => renderNotificationControl());
+          .then((result) => {
+            renderNotificationControl();
+            showNotifResult(result.show);
+          })
+          .catch(() => {
+            toastService.show('Could not save setting');
+            renderNotificationControl();
+          });
       });
       notifControlEl.appendChild(allowBtn);
     } else if (permission === 'denied') {
@@ -524,6 +556,14 @@ export function renderSettings(container: HTMLElement): () => void {
     }
   }
   renderNotificationControl();
+
+  // On mount, re-post once (when granted and on) so a silent failure shows up here.
+  if (
+    notificationService.permission() === 'granted' &&
+    settingsStore.getCurrent().quickCaptureNotification !== false
+  ) {
+    void notificationService.ensureShown().then(showNotifResult).catch(() => { /* ensureShown never rejects */ });
+  }
 
   // =========================================================
   // Section: Cloud Backup
@@ -556,33 +596,6 @@ export function renderSettings(container: HTMLElement): () => void {
 
   cloudSection.appendChild(cloudRow);
 
-  // --- Explanatory copy: what each delete action does, in plain words.
-  // Built with DOM APIs / textContent (never innerHTML) even though the
-  // text itself is static, per the project's no-innerHTML-with-content rule. ---
-  const explainEl = document.createElement('div');
-  explainEl.className = 'settings-row-desc mt-sm';
-
-  const explainPara1 = document.createElement('p');
-  appendBoldSentence(explainPara1, [
-    { text: 'Deleting a knot', bold: true },
-    { text: ' (from Knots or its detail page) removes it from ', bold: false },
-    { text: 'this device only', bold: true },
-    { text: '. Its cloud backup is kept, and your other devices keep their copies.', bold: false },
-  ]);
-  explainEl.appendChild(explainPara1);
-
-  const explainPara2 = document.createElement('p');
-  explainPara2.className = 'mt-sm';
-  appendBoldSentence(explainPara2, [
-    { text: 'Manage backups', bold: true },
-    { text: " deletes a knot's ", bold: false },
-    { text: 'cloud backup', bold: true },
-    { text: ". Copies already on your devices are not deleted, and they won't be backed up again unless you edit them.", bold: false },
-  ]);
-  explainEl.appendChild(explainPara2);
-
-  cloudSection.appendChild(explainEl);
-
   // --- Merge with Cloud button ---
   const syncBtn = document.createElement('button');
   syncBtn.className = 'btn btn-ghost btn-full mt-sm';
@@ -614,6 +627,34 @@ export function renderSettings(container: HTMLElement): () => void {
   manageBtn.className = 'btn btn-ghost btn-full mt-sm';
   manageBtn.textContent = 'Manage backups';
   cloudSection.appendChild(manageBtn);
+
+  // --- Explanatory copy: what each delete action does, in plain words. Placed
+  // right under the Manage backups button it describes, with the Manage backups
+  // paragraph first. Built with DOM APIs / textContent (never innerHTML) even
+  // though the text itself is static, per the project's no-innerHTML-with-content rule. ---
+  const explainEl = document.createElement('div');
+  explainEl.className = 'settings-row-desc mt-sm';
+
+  const explainPara1 = document.createElement('p');
+  appendBoldSentence(explainPara1, [
+    { text: 'Manage backups', bold: true },
+    { text: " deletes a knot's ", bold: false },
+    { text: 'cloud backup', bold: true },
+    { text: ". Copies already on your devices are not deleted, and they won't be backed up again unless you edit them.", bold: false },
+  ]);
+  explainEl.appendChild(explainPara1);
+
+  const explainPara2 = document.createElement('p');
+  explainPara2.className = 'mt-sm';
+  appendBoldSentence(explainPara2, [
+    { text: 'Deleting a knot', bold: true },
+    { text: ' (from Knots or its detail page) removes it from ', bold: false },
+    { text: 'this device only', bold: true },
+    { text: '. Its cloud backup is kept, and your other devices keep their copies.', bold: false },
+  ]);
+  explainEl.appendChild(explainPara2);
+
+  cloudSection.appendChild(explainEl);
 
   const backupHint = document.createElement('div');
   backupHint.className = 'settings-row-desc mt-sm';
