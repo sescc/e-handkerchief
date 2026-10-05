@@ -214,9 +214,31 @@ export function renderMediaCapture(
   libraryBtn.className = 'btn btn-ghost';
   libraryBtn.setAttribute('aria-label', 'Pick from library');
   libraryBtn.textContent = '🖼️ Library';
+  libraryBtn.setAttribute('aria-expanded', 'false');
   controls.appendChild(libraryBtn);
 
   root.appendChild(controls);
+
+  // Library menu (hidden until the Library button is tapped). Two buttons so
+  // each opens its own picker: Android shows a photo picker for photo/video
+  // types, which a mixed accept list (with audio) would prevent.
+  const libraryMenu = document.createElement('div');
+  libraryMenu.className = 'media-library-menu';
+  libraryMenu.hidden = true;
+
+  const libraryPhotoVideoBtn = document.createElement('button');
+  libraryPhotoVideoBtn.className = 'btn btn-ghost btn-sm';
+  libraryPhotoVideoBtn.setAttribute('aria-label', 'Pick a photo or video from your library');
+  libraryPhotoVideoBtn.textContent = '🖼️ Photo or video';
+  libraryMenu.appendChild(libraryPhotoVideoBtn);
+
+  const libraryAudioBtn = document.createElement('button');
+  libraryAudioBtn.className = 'btn btn-ghost btn-sm';
+  libraryAudioBtn.setAttribute('aria-label', 'Pick an audio file');
+  libraryAudioBtn.textContent = '🎵 Audio file';
+  libraryMenu.appendChild(libraryAudioBtn);
+
+  root.appendChild(libraryMenu);
 
   // Recording indicator (hidden by default)
   const recordingIndicator = document.createElement('div');
@@ -253,6 +275,16 @@ export function renderMediaCapture(
 
   function clearMediaError(): void {
     mediaErrorEl.style.display = 'none';
+  }
+
+  function openLibraryMenu(): void {
+    libraryMenu.hidden = false;
+    libraryBtn.setAttribute('aria-expanded', 'true');
+  }
+
+  function closeLibraryMenu(): void {
+    libraryMenu.hidden = true;
+    libraryBtn.setAttribute('aria-expanded', 'false');
   }
 
   function formatElapsed(sec: number): string {
@@ -325,7 +357,7 @@ export function renderMediaCapture(
       setMediaError('File exceeds the 100 MB size limit. Please choose a smaller file.');
     } else if (err instanceof UnsupportedFormatError) {
       setMediaError(
-        'Unsupported file format. Please use JPEG, PNG, GIF, WEBP, MP4, MOV, or M4A.'
+        'Unsupported file format. Please use JPEG, PNG, GIF, WEBP, MP4, MOV, or an audio file (MP3, M4A, WAV, OGG, FLAC, WEBM).'
       );
     } else if (err instanceof MediaUnsupportedError) {
       setMediaError('Media capture is not supported in this browser.');
@@ -337,6 +369,7 @@ export function renderMediaCapture(
 
   // ---- Recording ----
   const onMicClick = async (): Promise<void> => {
+    closeLibraryMenu();
     if (micDisabled) return;
     clearMediaError();
 
@@ -589,6 +622,7 @@ export function renderMediaCapture(
   }
 
   const onDictateClick = (): void => {
+    closeLibraryMenu();
     clearMediaError();
 
     // Not supported: message on click but keep the button usable.
@@ -653,6 +687,7 @@ export function renderMediaCapture(
 
   // ---- Photo ----
   const onPhotoClick = async (): Promise<void> => {
+    closeLibraryMenu();
     clearMediaError();
     try {
       const blob = await mediaService.capturePhoto();
@@ -682,6 +717,7 @@ export function renderMediaCapture(
 
   // ---- Video ----
   const onVideoClick = async (): Promise<void> => {
+    closeLibraryMenu();
     clearMediaError();
     try {
       const blob = await mediaService.captureVideo();
@@ -707,31 +743,37 @@ export function renderMediaCapture(
   listenerCleanups.push(() => videoBtn.removeEventListener('click', videoClickHandler));
 
   // ---- Library ----
-  const onLibraryClick = async (): Promise<void> => {
+  // The picker promise is created by the caller (synchronously inside the
+  // menu button's click handler) so the user gesture is kept; these helpers
+  // only await the result and build the draft item.
+  const attachAudioFile = async (picked: Promise<Blob>): Promise<void> => {
     clearMediaError();
     try {
-      const blob = await mediaService.pickFromLibrary();
+      const blob = await picked;
+      // Audio (e.g. an m4a/mp3 from an external recorder) has no thumbnail.
+      const durationSeconds = await getAudioDuration(blob);
+      const item: AudioMediaItem = {
+        id: crypto.randomUUID(),
+        type: 'audio',
+        createdAt: Date.now(),
+        blob,
+        durationSeconds,
+        transcriptionStatus: settingsStore.getCurrent().transcriptionEnabled
+          ? 'pending'
+          : 'none',
+      };
+      importedAudioIds.add(item.id);
+      draftItems.push({ item, previewUrl: trackUrl(URL.createObjectURL(blob)) });
+      refreshPreviewList();
+    } catch (err) {
+      handleMediaError(err);
+    }
+  };
 
-      // Audio (e.g. an .m4a from an external recorder) has no thumbnail, so it
-      // is handled before generateThumbnail (which would fail on audio).
-      if (blob.type.startsWith('audio/')) {
-        const durationSeconds = await getAudioDuration(blob);
-        const item: AudioMediaItem = {
-          id: crypto.randomUUID(),
-          type: 'audio',
-          createdAt: Date.now(),
-          blob,
-          durationSeconds,
-          transcriptionStatus: settingsStore.getCurrent().transcriptionEnabled
-            ? 'pending'
-            : 'none',
-        };
-        importedAudioIds.add(item.id);
-        draftItems.push({ item, previewUrl: trackUrl(URL.createObjectURL(blob)) });
-        refreshPreviewList();
-        return;
-      }
-
+  const attachPhotoOrVideo = async (picked: Promise<Blob>): Promise<void> => {
+    clearMediaError();
+    try {
+      const blob = await picked;
       const thumbBlob = await mediaService.generateThumbnail(blob);
       const thumbUrl = trackUrl(URL.createObjectURL(thumbBlob));
 
@@ -764,11 +806,42 @@ export function renderMediaCapture(
     }
   };
 
-  const libraryClickHandler = (): void => void onLibraryClick();
+  // Library button toggles the inline menu; each menu button opens its picker
+  // directly in its own click handler (keeps the user gesture), then closes it.
+  const libraryClickHandler = (): void => {
+    if (libraryMenu.hidden) openLibraryMenu();
+    else closeLibraryMenu();
+  };
   libraryBtn.addEventListener('click', libraryClickHandler);
   listenerCleanups.push(() =>
     libraryBtn.removeEventListener('click', libraryClickHandler)
   );
+
+  const photoVideoMenuHandler = (): void => {
+    const picked = mediaService.pickPhotoOrVideo();
+    closeLibraryMenu();
+    void attachPhotoOrVideo(picked);
+  };
+  libraryPhotoVideoBtn.addEventListener('click', photoVideoMenuHandler);
+  listenerCleanups.push(() =>
+    libraryPhotoVideoBtn.removeEventListener('click', photoVideoMenuHandler)
+  );
+
+  const audioMenuHandler = (): void => {
+    const picked = mediaService.pickAudioFile();
+    closeLibraryMenu();
+    void attachAudioFile(picked);
+  };
+  libraryAudioBtn.addEventListener('click', audioMenuHandler);
+  listenerCleanups.push(() =>
+    libraryAudioBtn.removeEventListener('click', audioMenuHandler)
+  );
+
+  const menuKeyHandler = (e: KeyboardEvent): void => {
+    if (e.key === 'Escape' && !libraryMenu.hidden) closeLibraryMenu();
+  };
+  document.addEventListener('keydown', menuKeyHandler);
+  listenerCleanups.push(() => document.removeEventListener('keydown', menuKeyHandler));
 
   // ---- Public API ----
   function getCaptured(): CapturedMedia {

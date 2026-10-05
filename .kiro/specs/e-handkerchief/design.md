@@ -82,12 +82,13 @@ The architecture is intentionally flat: a thin vanilla-JS UI layer built from Ty
 | **router.ts** | Hash-based single-page routing (`#/`, `#/knots`, `#/calendar`, `#/knot/:id`, `#/random/:id`, `#/conflict/:id`, `#/settings`). Calls screen `render`/cleanup functions. An unrecognised hash falls back to `#/`. |
 | **KnotStore** | CRUD on Knots in IndexedDB using hand-written Promise wrappers from `db.ts`. `delete()` also writes a local delete tombstone and drops any recorded conflict; `saveFromSync()` is a plain save used by sync pulls that deliberately does not emit events. Also reads and writes the per-knot sync bookkeeping (`syncState`). |
 | **SettingsStore** | Reads/writes app settings to IndexedDB with an in-memory reactive cache using a custom event-emitter pattern. |
-| **MediaService** | Wraps MediaRecorder API (audio) and HTML Media Capture (photo/video). Returns Blobs. Records without call-style processing; the Library picker also accepts M4A audio; `validateMedia` classifies a picked file via *MediaImport*. |
-| **MediaImport** | Pure module (`mediaImport.ts`): `classifyImport(type, name)` decides whether a picked file is a photo, video or (normalised `audio/mp4`) M4A audio, or unsupported. |
+| **MediaService** | Wraps MediaRecorder API (audio) and HTML Media Capture (photo/video). Returns Blobs. Records without call-style processing; two Library pickers (`pickPhotoOrVideo`, `pickAudioFile`); `validateMedia` classifies a picked file via *MediaImport*. |
+| **MediaImport** | Pure module (`mediaImport.ts`): `classifyImport(type, name)` decides whether a picked file is a photo, video, or audio in any Whisper-supported format (stored under one normalised MIME type each), or unsupported. |
+| **TranscriptMerge** | Pure module (`transcriptMerge.ts`): the word-level merge rules for live speech recognition text (`mergeFinalPieces`, `appendSegment` within one recognition instance; `foldSegment` across instances). |
 | **GeoService** | Wraps `navigator.geolocation`, enforces 10-second timeout, resolves reverse-geocoding via Nominatim; `locate()` also says why a failure happened (using the pure *LocateFailure* classifier). |
 | **LocateFailure** | Pure module (`locateFailure.ts`): `classifyLocateFailure(code, permState)` maps a geolocation error code plus the Permissions API state to `'off'` (code 1 with the site still `granted`) or `'unavailable'` (everything else, including `'denied'`). |
 | **RandomKnot** | Pure module (`randomKnot.ts`): `pickRandomKnot(knots, excludeId, rand)` picks a random knot that is not checked off, optionally excluding one id. |
-| **TranscriptionService** | Wraps Web Speech API for live transcription while recording; `remoteTranscribe.ts` handles deferred transcription of a saved recording via the user's own Worker. |
+| **TranscriptionService** | Wraps Web Speech API for live transcription while recording (joining text through *TranscriptMerge*); `remoteTranscribe.ts` handles deferred transcription of a saved recording via the user's own Worker. |
 | **KnotSummary** | Pure module (`knotSummary.ts`, no DOM, no settingsStore/db imports): builds the plain-text share summary for one knot or several (with the optional attribution footer) and the filename for each media attachment. Used by ShareService and imported by KnotsScreen for `collectTranscripts`. |
 | **ShareService** | Wraps the Web Share API (`navigator.share`) for one or several knots (`shareKnots`; `shareKnot` delegates to it), with a clipboard fallback when it's unavailable. |
 | **SyncPlan** | Pure module (`syncPlan.ts`, no DOM, no imports beyond its own types): given local knots, remote Drive entries, local/cloud tombstones, per-knot base versions, pending-job ids and already-conflicted ids, decides what to push, pull, de-duplicate, record as a conflict, and reconcile as check-off state. |
@@ -334,12 +335,21 @@ interface MediaServiceAPI {
   captureVideo(): Promise<Blob>;
 
   /**
-   * Open file picker for an existing photo, video or M4A audio file from the
-   * device library. accept = JPEG/PNG/GIF/WEBP, MP4/MOV, and audio/mp4,
-   * audio/x-m4a, audio/m4a, audio/mp4a-latm, .m4a. The returned Blob is re-typed
-   * to the normalised type (an M4A becomes audio/mp4).
+   * Open the file picker for an existing photo or video from the device library.
+   * accept = image/jpeg, image/png, image/gif, image/webp, video/mp4, video/quicktime
+   * only (no audio types), so Android opens its photo picker directly.
+   * Photo and video results only.
    */
-  pickFromLibrary(): Promise<Blob>;
+  pickPhotoOrVideo(): Promise<Blob>;
+
+  /**
+   * Open the file picker for an existing audio file. accept = `audio/*` (one
+   * filter entry, because Android maps audio extensions inconsistently and a
+   * narrower list could grey out real files); unsupported audio is rejected
+   * after picking by classifyImport. The returned Blob is re-typed to the
+   * normalised type (for example an .m4a becomes audio/mp4). Audio results only.
+   */
+  pickAudioFile(): Promise<Blob>;
 
   /** Generate an 80×80 JPEG thumbnail from an image or video Blob. */
   generateThumbnail(source: Blob): Promise<Blob>;
@@ -556,7 +566,7 @@ function showAction(message: string, actionLabel: string, onAction: () => void, 
 |---|---|
 | `navigator.geolocation.getCurrentPosition` | GPS location on knot creation |
 | `MediaRecorder` | Audio recording |
-| `<input type="file" accept="..." capture="...">` | Photo/video capture and library pick (photo, video, M4A audio) |
+| `<input type="file" accept="..." capture="...">` | Photo/video capture, library pick (photo or video), and library audio pick (`audio/*`) |
 | `SpeechRecognition` / `webkitSpeechRecognition` | Live voice transcription |
 | `navigator.share` / `navigator.canShare` | Sharing one or several knots (Web Share API) |
 | `navigator.clipboard.writeText` | Clipboard fallback when Web Share is unavailable, or after a share failure |
@@ -590,12 +600,14 @@ e-Handkerchief/
 │   ├── locateFailure.ts          # Pure: why a location request failed (off / unavailable)
 │   ├── locateFailure.chartest.ts # Characterization test for locateFailure
 │   ├── mediaService.ts         # Audio/photo/video capture
-│   ├── mediaImport.ts            # Pure: classify a picked file (photo / video / M4A audio)
+│   ├── mediaImport.ts            # Pure: classify a picked file (photo / video / Whisper-supported audio)
 │   ├── mediaImport.chartest.ts   # Characterization test for mediaImport
 │   ├── mapsLink.ts             # Google Maps URL builder (pure)
 │   ├── dateFormat.ts           # Date/time formatting helpers
 │   ├── remoteTranscribe.ts     # Deferred transcription via the user's own Worker
 │   ├── transcriptionService.ts # Web Speech API (live) wrapper
+│   ├── transcriptMerge.ts        # Pure: word-level merge of live speech text (within / across instances)
+│   ├── transcriptMerge.chartest.ts # Characterization test for transcriptMerge
 │   ├── knotSummary.ts            # Pure: share summary text (one or several knots) + media filenames
 │   ├── knotSummary.chartest.ts   # Characterization test for knotSummary
 │   ├── randomKnot.ts             # Pure: pick a random unchecked knot
@@ -802,7 +814,7 @@ Default landing view rendered at route `#/`. Title "Tie a Knot"; Save button "Ti
      - `unavailable` (everything else, including a Permissions API state of `denied`) — "Location unavailable — tap to retry".
 
      There is deliberately no "blocked for this site" message: Android folds a blocked site, the device's Location being off, and Chrome lacking Android's location permission into the same `denied`, so it can't be told reliably. Tapping it shows "Getting location…" with the spinner and asks again; taps while a request is loading are ignored. A request counter (`locationRequestId`) guarantees only the **latest** request can set `location` or render, and a `disposed` flag stops anything rendering after the user leaves the screen. The knot saves with whatever location is known at save time (`null` if none yet).
-2. The shared `mediaCapture` component (mic/photo/video/library, live transcript, previews, errors) is mounted between the textarea and the Save button; it owns the draft media items. A Library pick that classifies as audio becomes an `AudioMediaItem` (duration read from `<audio>` metadata with a 3 s cap, `0` on failure; `transcriptionStatus` `pending` when transcription is enabled, else `none`), playable through `<audio controls>` and transcribed from the detail page's existing "🎧 Transcribe voice" panel. The Photo and Video controls accept photo/video only. The unsupported-format error reads "Unsupported file format. Please use JPEG, PNG, GIF, WEBP, MP4, MOV, or M4A."
+2. The shared `mediaCapture` component (mic/photo/video/library, live transcript, previews, errors) is mounted between the textarea and the Save button; it owns the draft media items. **Library menu:** tapping "🖼️ Library" toggles an inline `.media-library-menu` (`aria-expanded` on the Library button follows it) with two buttons: "🖼️ Photo or video" (aria-label "Pick a photo or video from your library") calls `mediaService.pickPhotoOrVideo()`, and "🎵 Audio file" (aria-label "Pick an audio file") calls `pickAudioFile()`. Two separate pickers because a mixed accept list stops Android opening its photo picker. The menu closes on a second Library tap, on Escape, after a pick, and when Mic, Dictate, Photo or Video is tapped. A Library pick that classifies as audio (any Whisper-supported format, see *MediaImport*) becomes an `AudioMediaItem` (duration read from `<audio>` metadata with a 3 s cap, `0` on failure; `transcriptionStatus` `pending` when transcription is enabled, else `none`), playable through `<audio controls>` and transcribed from the detail page's existing "🎧 Transcribe voice" panel. The Photo and Video controls accept photo/video only. The unsupported-format error reads "Unsupported file format. Please use JPEG, PNG, GIF, WEBP, MP4, MOV, or an audio file (MP3, M4A, WAV, OGG, FLAC, WEBM)."
 3. On Save: validate at least one media item is present; build the `Knot` and call `KnotStore.save()`; on success, emit `knot:saved` via `eventBus` — the app-level listener in `app.ts` (not this screen) triggers the cloud upload; navigate to `#/knots`. When every pending audio item was imported from the Library (not recorded), the post-save toast is "Saved. To transcribe the audio file, open the knot and tap 'Transcribe voice'." instead of the live-transcription messages; an imported item removed from the draft before saving is not counted.
 
 **Validation:**
@@ -954,6 +966,7 @@ const ASSETS: string[] = [
   'src/mediaService.js',
   'src/mediaImport.js',
   'src/transcriptionService.js',
+  'src/transcriptMerge.js',
   'src/notificationService.js',
   'src/cloudSyncService.js',
   'src/syncPlan.js',
@@ -1055,7 +1068,7 @@ Wraps `MediaRecorder` and the HTML Media Capture API. Returns raw `Blob` values;
 **Contracts:**
 - Files larger than 100 MB or of unsupported type are rejected before any blob is written to IndexedDB.
 - `validateMedia(blob | file)` throws `FileSizeError` / `UnsupportedFormatError`, otherwise returns the `ImportClassification` (`{ kind, mimeType }`) from `classifyImport(blob.type, file.name)` — the file name is passed because external recorders' `.m4a` files often carry a wrong or empty type.
-- `pickFromLibrary` accepts `image/jpeg,image/png,image/gif,image/webp,video/mp4,video/quicktime,audio/mp4,audio/x-m4a,audio/m4a,audio/mp4a-latm,.m4a` and allows photo, video and audio results; the chosen file is returned re-typed to the normalised `mimeType` when it differs (so an M4A is stored as `audio/mp4`). `capturePhoto` / `captureVideo` allow photo and video results only, so an `.m4a` picked through them is rejected rather than stored as a broken photo.
+- There are two Library pickers, because a single mixed accept list (photo/video plus audio) stops Android from opening its photo picker, and one `audio/*` entry is the only reliable desktop filter. `pickPhotoOrVideo` accepts `image/jpeg,image/png,image/gif,image/webp,video/mp4,video/quicktime` and allows photo and video results only; `pickAudioFile` accepts `audio/*` and allows audio results only. (The earlier combined `pickFromLibrary` is removed.) The chosen file is returned re-typed to the normalised `mimeType` when it differs (so an `.m4a` is stored as `audio/mp4`). `capturePhoto` / `captureVideo` allow photo and video results only, so an audio file picked through them is rejected rather than stored as a broken photo.
 - `startAudioRecording` calls `getUserMedia` with `echoCancellation`, `noiseSuppression` and `autoGainControl` all `false` and `channelCount: 1`: call-style processing degrades a voice memo, and on Android `echoCancellation` also selects the voice-call microphone path. A `NotAllowedError` / `SecurityError` propagates unchanged; any other error retries once with `{ audio: true }`. (Risk: with automatic gain control off some phones may record quietly; reverting is a one-line change to `{ audio: true }`.) The recorder uses `audio/webm;codecs=opus` if supported, else `audio/mp4`, at `audioBitsPerSecond: 128000`, falling back to a plain `new MediaRecorder(stream)` if those options are rejected. Live speech recognition is unchanged.
 - `generateThumbnail` always returns an 80×80 JPEG blob (rendered via an offscreen `<canvas>`).
 - If `MediaRecorder` is unsupported, `startAudioRecording` throws `MediaUnsupportedError`.
@@ -1065,10 +1078,52 @@ Wraps `MediaRecorder` and the HTML Media Capture API. Returns raw `Blob` values;
 
 ### MediaImport (`src/mediaImport.ts`)
 
-Pure — no DOM — so it runs under plain `node` (`mediaImport.chartest.ts`, 23 cases). `classifyImport(type, name)` returns `{ kind: 'photo' | 'video' | 'audio', mimeType }` or `null`:
-- A name ending in `.m4a` (case-insensitive) is **always** audio stored as `audio/mp4`, whatever the reported type: Android providers report m4a files as `audio/mp4a-latm`, `audio/aac`, `video/mp4`, `''` or `application/octet-stream`.
-- Otherwise the type (lower-cased, `;codecs=…` stripped) maps: `audio/mp4`, `audio/x-m4a`, `audio/m4a`, `audio/mp4a-latm` → audio as `audio/mp4`; `image/jpeg|png|gif|webp` → photo; `video/mp4`, `video/quicktime` → video; anything else (for example `audio/mpeg`) → `null`.
-- `remoteTranscribe` uploads `audio/mp4` as `audio.m4a`. No client-side size check is made against the transcription provider's file limit (Groq's free tier is 25 MB); an over-limit file surfaces as the existing transcription error toast.
+Pure — no DOM — so it runs under plain `node` (`mediaImport.chartest.ts`, 65 cases). `classifyImport(type, name)` returns `{ kind: 'photo' | 'video' | 'audio', mimeType }` or `null`. It accepts every audio format Whisper (Groq) can transcribe — flac, mp3, mp4, mpeg, mpga, m4a, ogg, wav, webm — and deliberately rejects raw AAC, WMA and AMR.
+- **A known extension always wins** over the reported type (case-insensitive): Android providers report files inconsistently (for example an `.m4a` as `audio/mp4a-latm`, `audio/aac`, `video/mp4`, `''` or `application/octet-stream`).
+
+  | Extension | Stored as |
+  |---|---|
+  | `m4a` | `audio/mp4` |
+  | `mp3`, `mpga`, `mpeg` | `audio/mpeg` |
+  | `wav` | `audio/wav` |
+  | `ogg`, `oga`, `opus` | `audio/ogg` |
+  | `flac` | `audio/flac` |
+  | `weba` | `audio/webm` |
+
+- Otherwise the type (lower-cased, `;codecs=…` stripped) maps through the alias table below; `image/jpeg|png|gif|webp` → photo; `video/mp4`, `video/quicktime` → video; anything else → `null`.
+
+  | Reported types | Stored as |
+  |---|---|
+  | `audio/mp4`, `audio/x-m4a`, `audio/m4a`, `audio/mp4a-latm` | `audio/mp4` |
+  | `audio/mpeg`, `audio/mp3`, `audio/x-mp3`, `audio/x-mpeg` | `audio/mpeg` |
+  | `audio/wav`, `audio/x-wav`, `audio/wave`, `audio/vnd.wave` | `audio/wav` |
+  | `audio/ogg`, `audio/opus` | `audio/ogg` |
+  | `audio/flac`, `audio/x-flac` | `audio/flac` |
+  | `audio/webm` | `audio/webm` |
+
+- Rejected (→ `null`): `audio/aac` and `.aac`, `.wma`, `.amr`, and any other type. The error copy is "Unsupported file format. Please use JPEG, PNG, GIF, WEBP, MP4, MOV, or an audio file (MP3, M4A, WAV, OGG, FLAC, WEBM)." (The Photo and Video buttons show the same copy for a rejected audio file.)
+- The **single MIME→extension table** is `extensionForMimeType` in `knotSummary.ts` (exported; WAV and FLAC added): `mediaFileName` uses it for share filenames, and `remoteTranscribe` uses it for the upload name `audio.<ext>`, falling back to `webm` for an unknown type. So a stored `audio/wav` uploads as `audio.wav`, `audio/mpeg` as `audio.mp3`, `audio/mp4` as `audio.m4a`.
+- No client-side size check is made against the transcription provider's file limit (Groq's free tier is 25 MB). A large WAV or FLAC over the limit surfaces as the existing transcription error toast; the audio is still saved and playable.
+
+---
+
+### TranscriptMerge (`src/transcriptMerge.ts`)
+
+Pure — no DOM or `window` — so it runs under plain `node` (`transcriptMerge.chartest.ts`, 40 cases). Android Chrome delivers **cumulative** finals and, when the user speaks fast, **revises** earlier words inside them (`["I wanna go", "I want to go to the shop"]); after an automatic restart a new recognition instance may also re-deliver all or part of the previous tail. The old joiner collapsed pieces only on a strict prefix, so a revision was joined and the phrase repeated, and across restarts only an exact tail was caught. All comparison is on normalised **words** (lower-cased, punctuation stripped, inner apostrophes kept), while output uses the original text, single-spaced.
+
+**Shared rules** (both merges): an empty side gives the other; if `next` starts with all of `acc` the result is `next` (cumulative growth); if `acc` starts or ends with all of `next` the result is `acc` (stale or re-delivered).
+
+- **`mergeFinalPieces(pieces)`** joins the final pieces of **one** recognition instance (index order): trims, drops empties, folds left with `appendSegment`. `["1","1 2","1 2 3"]` → `1 2 3`.
+- **`appendSegment(acc, next)`** (within one instance) adds the **revision** rule: `next` re-says the tail of `acc` with some words changed. Candidate tails are `acc[s..]` where `acc[s]` equals `next`'s first word and the tail has `m >= 2` words (a 1-word tail never merges, so "no" + "no thanks" survives). With `l` = LCS of the tail against the first `min(len(next), m+2)` words of `next`, a candidate is valid only if `l >= ceil(0.6·m)` **and** either `next` is strictly longer than the tail, or `next` is the same length with `l >= 0.8·m`; a shorter `next` never revises. The best-scoring valid candidate (`2l − m`, ties to the shorter tail, so the least deletion) has its tail replaced by `next`. Anything else is appended.
+- **`foldSegment(acc, next)`** (across instances: the running `committed` buffer, `finish()` and the live text) **never revises**. Rules: the shared ones; an exact word-level suffix/prefix overlap of `k >= 2` words is merged (`"buy milk and eggs"` + `"and eggs then bread"` → `"buy milk and eggs then bread"`); otherwise a plain append. A 1-word overlap is kept.
+
+**Why two merges (review fix).** The first version used the revising merge everywhere and could **drop a sentence**: "I need to buy milk" + pause + "I need to call mom" lost the first sentence, because the second starts like the first. Cross-instance text now uses the never-revising `foldSegment`, and the revision thresholds were tightened. Losing text is worse than a repeat, so every ambiguous case keeps text.
+
+**Known limits:**
+- A deliberate repeat of two or more words across a restart boundary ("thank you" + "thank you") collapses into one.
+- Within one instance, an equal-length, near-identical sentence ("I went to the store" then "I went to the park") counts as a revision and replaces the previous one.
+- A short revision of a short tail ("…bought apples" → "bought oranges and pears") is appended rather than replaced, because the overlap is too small to trust.
+- A revision that changes the **first** word of the revised tail is not detected unless the tail starts at a matching word.
 
 ---
 
@@ -1096,7 +1151,7 @@ Wraps `SpeechRecognition` / `webkitSpeechRecognition` for **live** transcription
 
 **Contracts:**
 - `startLive()` returns a no-op "unsupported"/"start-failed" handle rather than throwing when the API is missing or fails to start.
-- Handles auto-restart transparently on mobile browsers that end recognition after a short silence, folding finalized text into a running `committed` buffer so restarts don't duplicate text.
+- Handles auto-restart transparently on mobile browsers that end recognition after a short silence, folding finalized text into a running `committed` buffer so restarts don't duplicate text. Text is joined through the pure *TranscriptMerge* module: within one recognition instance the final pieces are merged with `mergeFinalPieces` (cumulative growth replaces, a re-delivery is ignored, a revision of the tail replaces the old wording); across instances (the fold into `committed`, `finish()`, and the live text shown while recording) `foldSegment` is used, which never revises, so no previously recognised sentence can be dropped. Interim text only ever replaces the latest partial and never reaches `committed`.
 - **Stop safety cap.** `stop()` relies on the engine firing `onend` to resolve the handle's `result` promise, and some engines never do. So `stop()` also starts a `STOP_SAFETY_MS` (3000 ms) timer. If `result` is still unresolved when it fires, the service calls `recognition.abort()` (in a try/catch) and resolves `result` with the text collected so far (`null` if none) — the same shape as a normal resolve. `stopped` is already set, so no auto-restart can begin; a normal `onend` clears the timer; `result` never resolves twice. Without the cap, `MediaCapture`'s `await liveTranscription.result` would hang and block finishing the recording. An empty result flows into the existing deferred path (`transcriptionStatus: 'pending'`).
 - **Late events are ignored.** Once the session has finished, `recognition.onerror` returns immediately — for example the `aborted` error that engines dispatch asynchronously after the cap's `abort()` — so it can't overwrite the live transcript box or `getError()` after the recording was finalized.
 - Only invoked when `transcriptionEnabled` is `true` in settings and the device is online.
@@ -1113,7 +1168,7 @@ Pure text-building module with no DOM and no `settingsStore`/`db` imports, so it
 - `knotSummaryText(knot, formatTimestamp, opts?)` assembles, in order: the formatted timestamp; the place (a `📍` line with the resolved address or `lat, lng` to 5 decimal places, plus a Google Maps URL line, when `location` is set; otherwise a `📍` line with `manualLabel` if set; otherwise nothing); every text item's content (blank-line separated); every transcript from `collectTranscripts`, each prefixed `🎙 `; and a trailing `(N photo(s), N video(s), N voice recording(s) attached in e-Handkerchief)` line, omitting any zero count and pluralising correctly. Sections are joined with exactly one blank line each — the result never has a doubled blank line — and trailing whitespace is trimmed.
 - With `opts.attribution` set, `knotSummaryText` appends the footer as its own section, once, at the end: `— Shared from e-Handkerchief`, a newline, then `opts.attribution.appUrl`. Without it, the output is byte-for-byte what it was before attribution existed.
 - `knotsSummaryText(knots, formatTimestamp, opts?)` returns `""` for no knots and the same text as `knotSummaryText` for exactly one. For several it emits a header line (`N knots from e-Handkerchief` with attribution, plain `N knots` without), each knot's body (no footer) joined by a `———` line (with a blank line either side), and the footer **once** at the end when attribution is on. It too never produces a doubled blank line.
-- `mediaFileName(item, index, prefix = 'knot')` maps the item's blob MIME type (stripped of any `;codecs=…` parameter) to a file extension via a fixed table (JPEG→jpg, PNG→png, GIF→gif, WEBP→webp, MP4 video→mp4, QuickTime→mov, WebM video or audio→webm, AAC/MP4 audio→m4a, MP3→mp3, OGG→ogg; anything else→bin), producing `{prefix}-{type}-{index}.{ext}`. The caller decides how `index` is numbered — `ShareService` numbers 1-based, separately per media type — and passes a per-knot `prefix` (`knot1`, `knot2`, …) in a multi-knot share so two knots' files never collide.
+- `mediaFileName(item, index, prefix = 'knot')` maps the item's blob MIME type (stripped of any `;codecs=…` parameter) to a file extension via the fixed table behind the exported `extensionForMimeType(mimeType)` (JPEG→jpg, PNG→png, GIF→gif, WEBP→webp, MP4 video→mp4, QuickTime→mov, WebM video or audio→webm, AAC/MP4 audio→m4a, MP3→mp3, OGG→ogg, WAV→wav, FLAC→flac; anything else→bin — the single MIME→extension table, also used by `remoteTranscribe` for its upload name), producing `{prefix}-{type}-{index}.{ext}`. The caller decides how `index` is numbered — `ShareService` numbers 1-based, separately per media type — and passes a per-knot `prefix` (`knot1`, `knot2`, …) in a multi-knot share so two knots' files never collide.
 
 ---
 
@@ -1409,6 +1464,7 @@ node src/mergeMessage.chartest.js
 node src/locateFailure.chartest.js
 node src/randomKnot.chartest.js
 node src/mediaImport.chartest.js
+node src/transcriptMerge.chartest.js
 node src/components/timezoneCombobox.proptest.js
 ```
 
@@ -1571,15 +1627,23 @@ Identical knots report `identical` with nothing else; changed text is reported w
 
 ### Property 14: MediaImport — what a picked file is (`mediaImport.chartest.ts`)
 
-`classifyImport(type, name)` must treat a `.m4a` name as audio stored as `audio/mp4` whatever the type (including `''`, `application/octet-stream`, `video/mp4` and `audio/mp4a-latm`); map `audio/mp4`, `audio/x-m4a`, `audio/m4a` and `audio/mp4a-latm` to audio; leave the JPEG/PNG/GIF/WEBP and MP4/MOV mappings unchanged; and return `null` for anything else, including `audio/mpeg` (`.mp3`). Twenty-three cases.
+`classifyImport(type, name)` must let a known audio extension decide the type whatever the reported type is (`.m4a` → `audio/mp4`; `.mp3`/`.mpga`/`.mpeg` → `audio/mpeg`; `.wav` → `audio/wav`; `.ogg`/`.oga`/`.opus` → `audio/ogg`; `.flac` → `audio/flac`; `.weba` → `audio/webm`; case-insensitive, including with an empty, `application/octet-stream`, `video/mp4` or `audio/mp4a-latm` type); normalise the MIME aliases to the same stored types; leave the JPEG/PNG/GIF/WEBP and MP4/MOV mappings unchanged; and return `null` for `audio/aac`, `.aac`, `.wma`, `.amr` and anything else. Sixty-five cases. The shared `extensionForMimeType` table is covered in `knotSummary.chartest.ts` (Whisper audio types, codecs stripped, unknown → `bin`).
 
 **Validates: Requirement 3.4, 3.7** — `mediaImport.ts`. **Automated** — `node src/mediaImport.chartest.js`.
 
 ---
 
+### Property 15: TranscriptMerge — live text without repeats or losses (`transcriptMerge.chartest.ts`)
+
+`mergeFinalPieces` / `appendSegment` (within one instance) must collapse cumulative finals (`["1","1 2","1 2 3"]` → `1 2 3`), ignore stale or re-delivered text, replace the tail on an anchored revision (`["I wanna go","I want to go to the shop"]`), keep positional distinct segments, keep a 1-word repeat ("I said no" + "no thanks"), and never revise with a shorter or weakly overlapping `next`. `foldSegment` (across instances) must never revise: it ignores an exact re-delivery, takes cumulative growth, merges an overlap of two or more words, keeps a 1-word overlap, and keeps both of two sentences that start alike ("I need to buy milk" + "I need to call mom" — the review-fix regression). Comparison ignores case and punctuation, apostrophes inside words are kept, and the documented known limits are pinned as tests. Forty cases. The `SpeechRecognition` wiring and the fast-speech behaviour on a real phone need a browser and are verified by hand.
+
+**Validates: Requirement 7.1, 7.5** — `transcriptMerge.ts`. **Automated** — `node src/transcriptMerge.chartest.js`.
+
+---
+
 ### Drive and Share behaviour: verified by hand
 
-Everything that requires a real Google account, a real Drive app-data folder, a real platform share sheet, or a real notification drawer — connecting, the full `syncAll` pass against live Drive data, `pushCheckOff` and `resolveConflict` against live files, `listBackups`/`deleteBackup` against live files, `navigator.share`/`navigator.canShare`, and the quick-capture notification's permission, tap, and relaunch behaviour — is **verified manually** against a real deployment, not by an automated test. `syncPlan.ts`, `knotSummary.ts`, `dayCutoff.ts`, `knotDiff.ts`, `deviceLabel.ts`, `mergeMessage.ts`, `locateFailure.ts`, `randomKnot.ts`, and `mediaImport.ts` are deliberately factored out as pure modules specifically so the *decision logic* each of those features depends on can still be tested automatically, even though the I/O around them cannot be. Pending real-device checks: a check-off syncs to a second device without a content re-upload and shows in Manage backups; a check-off on one device followed by a content edit on another keeps the check-off (this is also the check for the per-key `appProperties` merge); editing the same knot on two offline devices and then syncing gives a review prompt, and all three choices work; the Merge toast counts after an offline save; the notification survives a tap and a relaunch and opens Capture under the subpath; multi-share with media opens the native sheet.
+Everything that requires a real Google account, a real Drive app-data folder, a real platform share sheet, or a real notification drawer — connecting, the full `syncAll` pass against live Drive data, `pushCheckOff` and `resolveConflict` against live files, `listBackups`/`deleteBackup` against live files, `navigator.share`/`navigator.canShare`, and the quick-capture notification's permission, tap, and relaunch behaviour — is **verified manually** against a real deployment, not by an automated test. `syncPlan.ts`, `knotSummary.ts`, `dayCutoff.ts`, `knotDiff.ts`, `deviceLabel.ts`, `mergeMessage.ts`, `locateFailure.ts`, `randomKnot.ts`, `mediaImport.ts`, and `transcriptMerge.ts` are deliberately factored out as pure modules specifically so the *decision logic* each of those features depends on can still be tested automatically, even though the I/O around them cannot be. Pending real-device checks: a check-off syncs to a second device without a content re-upload and shows in Manage backups; a check-off on one device followed by a content edit on another keeps the check-off (this is also the check for the per-key `appProperties` merge); editing the same knot on two offline devices and then syncing gives a review prompt, and all three choices work; the Merge toast counts after an offline save; the notification survives a tap and a relaunch and opens Capture under the subpath; multi-share with media opens the native sheet.
 
 ---
 
@@ -1683,7 +1747,7 @@ worker-src 'self';
 
 ### Input Validation
 - Text input is bounded at 2 000 characters client-side; the raw string is stored as-is (no HTML interpretation). The Knots list and Knot Detail screens set text via `element.textContent`, not `innerHTML`, preventing XSS. The Settings screen's explanatory copy uses the same rule even though the text itself is static — no `innerHTML` with content, ever.
-- File type and size limits (100 MB; JPEG/PNG/GIF/WEBP/MP4/MOV, plus M4A audio from the Library) are enforced before any blob is written to IndexedDB.
+- File type and size limits (100 MB; JPEG/PNG/GIF/WEBP/MP4/MOV, plus MP3/M4A/WAV/OGG/FLAC/WEBM audio from the Library; no AAC, WMA or AMR) are enforced before any blob is written to IndexedDB.
 - Email addresses (for the Daily Email Summary recipient) are validated against a standard RFC 5321 format regex before being stored.
 
 ### Service Worker Scope

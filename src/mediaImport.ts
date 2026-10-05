@@ -14,25 +14,67 @@ export interface ImportClassification {
 
 const PHOTO_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
 const VIDEO_TYPES = ['video/mp4', 'video/quicktime'];
-// Types that external recorder apps / Android providers report for m4a audio.
-const M4A_TYPES = ['audio/mp4', 'audio/x-m4a', 'audio/m4a', 'audio/mp4a-latm'];
+
+// Audio formats Whisper (Groq) can transcribe: flac, mp3, mp4, mpeg, mpga,
+// m4a, ogg, wav, webm. Raw AAC, WMA and AMR are deliberately not accepted.
+//
+// A known extension always wins over the reported type: Android providers
+// report e.g. .m4a as audio/mp4a-latm, audio/aac, video/mp4, '' or
+// application/octet-stream.
+const AUDIO_EXTENSIONS: Record<string, string> = {
+  m4a: 'audio/mp4',
+  mp3: 'audio/mpeg',
+  mpga: 'audio/mpeg',
+  mpeg: 'audio/mpeg',
+  wav: 'audio/wav',
+  ogg: 'audio/ogg',
+  oga: 'audio/ogg',
+  opus: 'audio/ogg',
+  flac: 'audio/flac',
+  weba: 'audio/webm',
+};
+
+// MIME aliases (base type) -> the normalised stored type.
+const AUDIO_MIME_ALIASES: Record<string, string> = {
+  'audio/mp4': 'audio/mp4',
+  'audio/x-m4a': 'audio/mp4',
+  'audio/m4a': 'audio/mp4',
+  'audio/mp4a-latm': 'audio/mp4',
+  'audio/mpeg': 'audio/mpeg',
+  'audio/mp3': 'audio/mpeg',
+  'audio/x-mp3': 'audio/mpeg',
+  'audio/x-mpeg': 'audio/mpeg',
+  'audio/wav': 'audio/wav',
+  'audio/x-wav': 'audio/wav',
+  'audio/wave': 'audio/wav',
+  'audio/vnd.wave': 'audio/wav',
+  'audio/ogg': 'audio/ogg',
+  'audio/opus': 'audio/ogg',
+  'audio/flac': 'audio/flac',
+  'audio/x-flac': 'audio/flac',
+  'audio/webm': 'audio/webm',
+};
 
 /** Lowercase and strip any `;codecs=…` style parameters. */
 function baseType(type: string): string {
   return (type || '').split(';')[0].trim().toLowerCase();
 }
 
+/** Lowercased extension after the last dot, or '' if none. */
+function extensionOf(name: string): string {
+  const dot = (name || '').lastIndexOf('.');
+  return dot < 0 ? '' : name.slice(dot + 1).toLowerCase();
+}
+
 /**
  * Decide what kind of media a picked file is, or null if it isn't supported.
- * A `.m4a` file name always wins: Android providers report that file as
- * audio/mp4a-latm, audio/aac, video/mp4, '' or application/octet-stream.
  */
 export function classifyImport(type: string, name: string): ImportClassification | null {
-  if ((name || '').toLowerCase().endsWith('.m4a')) {
-    return { kind: 'audio', mimeType: 'audio/mp4' };
-  }
+  const byExt = AUDIO_EXTENSIONS[extensionOf(name)];
+  if (byExt) return { kind: 'audio', mimeType: byExt };
   const t = baseType(type);
-  if (M4A_TYPES.includes(t)) return { kind: 'audio', mimeType: 'audio/mp4' };
+  const byMime = AUDIO_MIME_ALIASES[t];
+  if (byMime) return { kind: 'audio', mimeType: byMime };
   if (PHOTO_TYPES.includes(t)) return { kind: 'photo', mimeType: t };
   if (VIDEO_TYPES.includes(t)) return { kind: 'video', mimeType: t };
   return null;

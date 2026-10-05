@@ -658,6 +658,18 @@ main {
   margin-bottom: var(--space-md);
 }
 
+/* Inline menu opened by the Library button (Photo or video / Audio file). */
+.media-library-menu {
+  display: flex;
+  gap: var(--space-sm);
+  flex-wrap: wrap;
+  margin: calc(-1 * var(--space-xs)) 0 var(--space-md);
+}
+
+.media-library-menu[hidden] {
+  display: none;
+}
+
 .media-preview-list {
   display: flex;
   flex-wrap: wrap;

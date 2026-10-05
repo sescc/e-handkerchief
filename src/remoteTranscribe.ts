@@ -5,6 +5,7 @@
 // ============================================================
 
 import { settingsStore } from './settingsStore.js';
+import { extensionForMimeType } from './knotSummary.js';
 
 export interface RemoteTranscribeResult {
   ok: boolean;
@@ -25,8 +26,10 @@ export async function remoteTranscribe(blob: Blob, language?: string): Promise<R
   try {
     const form = new FormData();
     // Give the file a sensible name/extension based on the blob type.
-    const ext = blob.type.includes('ogg') ? 'ogg' : blob.type.includes('mp4') ? 'm4a' : 'webm';
-    form.append('file', blob, `audio.${ext}`);
+    // Shared MIME->extension table; unknown types fall back to webm (the
+    // recorder's usual output) rather than 'bin'.
+    const ext = extensionForMimeType(blob.type);
+    form.append('file', blob, `audio.${ext === 'bin' ? 'webm' : ext}`);
     if (language) form.append('language', language);
 
     const res = await fetch(url, { method: 'POST', body: form });

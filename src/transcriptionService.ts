@@ -5,8 +5,13 @@
 // not pre-recorded Blobs), accumulating final results until stopped.
 // Interim (partial) results stream to an optional onText listener so
 // callers can show live feedback; the last error code is surfaced so
-// callers can craft accurate messaging.
+// callers can craft accurate messaging. Final pieces are merged with the
+// pure word-level helpers in transcriptMerge.ts: within one recognition instance
+// engine revisions of earlier words are absorbed; across auto-restarts the join
+// is conservative (never revises) so a new sentence is never lost.
 // ============================================================
+
+import { foldSegment, mergeFinalPieces } from './transcriptMerge.js';
 
 export interface LiveTranscriptionHandle {
   /** Resolves with the accumulated FINAL transcript when stopped (or null if none). */
@@ -87,63 +92,6 @@ const SpeechRecognitionCtor: (new () => SpeechRecognitionLike) | undefined =
   ).webkitSpeechRecognition;
 
 /**
- * Normalize a string for prefix comparison: lowercase and collapse runs of
- * whitespace to a single space, trimmed. Used only for detecting the
- * cumulative-growth pattern, never for the emitted text.
- */
-function normalizeForPrefix(s: string): string {
-  return s.toLowerCase().replace(/\s+/g, ' ').trim();
-}
-
-/**
- * Assemble the finalized transcript from the FINAL pieces of one recognition
- * instance (in index order, each already trimmed & non-empty).
- *
- * Two cases:
- *  - Cumulative/growing finals (this device): the engine delivers finals like
- *    ["1", "1 2", "1 2 3"] where each successive piece startsWith the previous
- *    one. Joining them would duplicate ("1 1 2 1 2 3"), so we collapse to the
- *    single LONGEST (last) piece.
- *  - Positional/non-overlapping finals (well-behaved engines): e.g.
- *    ["Hello", "world"] — these are distinct segments, so we space-join them.
- */
-function assembleFinal(finalPieces: string[]): string {
-  if (finalPieces.length === 0) return '';
-  if (finalPieces.length === 1) return finalPieces[0] ?? '';
-
-  // Detect cumulative growth: each piece must start with the previous piece
-  // (comparing normalized forms, so extra spaces / case don't defeat it).
-  let cumulative = true;
-  for (let i = 1; i < finalPieces.length; i++) {
-    const prev = normalizeForPrefix(finalPieces[i - 1] ?? '');
-    const curr = normalizeForPrefix(finalPieces[i] ?? '');
-    if (!curr.startsWith(prev)) {
-      cumulative = false;
-      break;
-    }
-  }
-
-  if (cumulative) {
-    // Every piece is a growing prefix of the next → use only the last (longest).
-    return finalPieces[finalPieces.length - 1] ?? '';
-  }
-  // Distinct segments → join with single spaces.
-  return finalPieces.join(' ');
-}
-
-/**
- * Conservative check: does `committed` already end with `segment`
- * (comparing normalized forms so trailing/extra spaces & case don't defeat
- * it)? Used to avoid double-appending finalized text on restart/finish.
- */
-function endsWithSegment(committed: string, segment: string): boolean {
-  const c = normalizeForPrefix(committed);
-  const s = normalizeForPrefix(segment);
-  if (!s) return false;
-  return c === s || c.endsWith(' ' + s) || c.endsWith(s);
-}
-
-/**
  * A no-op handle used when recognition is unsupported or fails to start.
  * @param errorCode surfaced via getError() so callers can craft messaging.
  */
@@ -208,14 +156,10 @@ export const transcriptionService: TranscriptionServiceAPI = {
         clearTimeout(stopSafetyTimer);
         stopSafetyTimer = null;
       }
-      // Apply the same "don't double-append" guard as folding so the SAVED
-      // text has no trailing duplication when committed already ends with the
-      // current instance's finalized text.
-      const parts =
-        instanceFinal && !endsWithSegment(committed, instanceFinal)
-          ? [committed, instanceFinal]
-          : [committed];
-      const text = parts.filter(Boolean).join(' ').trim();
+      // Same conservative cross-instance merge as folding, so the SAVED text has no
+      // duplication when committed already holds (part of) the current
+      // instance's finalized text.
+      const text = foldSegment(committed, instanceFinal).trim();
       resolveResult(text.length > 0 ? text : null);
       for (const cb of endListeners) cb();
     };
@@ -223,13 +167,10 @@ export const transcriptionService: TranscriptionServiceAPI = {
     // Fold the current instance's finalized text into the committed buffer,
     // then reset per-instance state for the next recognition instance.
     // Only instanceFinal is ever folded (interim must never leak into
-    // committed). Conservative dedup guard: if committed already ends with
-    // instanceFinal (e.g. a restart re-delivered the same finalized text),
-    // skip appending so committed doesn't get a duplicate tail.
+    // committed). foldSegment absorbs re-delivered / partly overlapping /
+    // revised tails so committed doesn't get duplicated words.
     const foldInstanceIntoCommitted = (): void => {
-      if (instanceFinal && !endsWithSegment(committed, instanceFinal)) {
-        committed = [committed, instanceFinal].filter(Boolean).join(' ');
-      }
+      committed = foldSegment(committed, instanceFinal);
       instanceFinal = '';
       instanceInterim = '';
     };
@@ -272,12 +213,13 @@ export const transcriptionService: TranscriptionServiceAPI = {
           }
         }
 
-        // Assemble finalized text, collapsing the cumulative-final case.
-        instanceFinal = assembleFinal(finalPieces);
+        // Merge finalized pieces: cumulative growth collapses to the longest,
+        // revised earlier words replace the old wording, distinct segments join.
+        instanceFinal = mergeFinalPieces(finalPieces);
         // Interim is ONLY the latest partial (replaces, never accumulates).
         instanceInterim = lastInterim;
 
-        const liveText = [committed, instanceFinal, instanceInterim]
+        const liveText = [foldSegment(committed, instanceFinal), instanceInterim]
           .filter(Boolean)
           .join(' ')
           .trim();
