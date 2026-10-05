@@ -40,6 +40,7 @@ const ASSETS: string[] = [
   'src/mediaService.js',
   'src/mediaImport.js',
   'src/transcriptionService.js',
+  'src/transcriptMerge.js',
   'src/notificationService.js',
   'src/cloudSyncService.js',
   'src/syncPlan.js',

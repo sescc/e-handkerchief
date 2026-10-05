@@ -28,6 +28,7 @@ node src/mergeMessage.chartest.js
 node src/locateFailure.chartest.js
 node src/randomKnot.chartest.js
 node src/mediaImport.chartest.js
+node src/transcriptMerge.chartest.js
 node src/components/timezoneCombobox.proptest.js
 ```
 
@@ -67,16 +68,24 @@ A knot's voice recording can be turned into text in two ways.
 
 ### How transcription works (two modes)
 
-- **Live (online):** When "Voice Transcription" is enabled in Settings and you record a voice recording while online in a supporting browser (Chrome on Android), it's transcribed live on-device via the Web Speech API as you speak. The audio is also saved. Mic recordings are made without call-style processing (echo cancellation, noise suppression and automatic gain control are off), which keeps them clean; if a phone records too quietly, that is a one-line change in `mediaService.ts`.
+- **Live (online):** When "Voice Transcription" is enabled in Settings and you record a voice recording while online in a supporting browser (Chrome on Android), it's transcribed live on-device via the Web Speech API as you speak. The audio is also saved. When the browser revises or re-delivers words (Android does this with fast speech, and after a restart following a pause), the app merges them so text isn't repeated or lost; rare known limits (for example a deliberate repeat of two or more words across a pause collapsing into one) are listed in `design.md`. Mic recordings are made without call-style processing (echo cancellation, noise suppression and automatic gain control are off), which keeps them clean; if a phone records too quietly, that is a one-line change in `mediaService.ts`.
 - **Deferred (offline / later):** If you record while offline (or live transcription isn't available), the audio is saved and marked "transcription pending." Later, when online, open the knot and tap "🎧 Transcribe voice" to transcribe the saved audio via your transcription server (Groq Whisper via a Cloudflare Worker). The transcript is appended to that recording.
 
-### Attaching an existing audio file (m4a)
+### Attaching an existing audio file
 
-The **Library** button picks photos and videos (JPEG, PNG, GIF, WEBP, MP4, MOV) and also **M4A
-audio**, for example a recording made with your phone's recorder app. A picked m4a becomes a voice
-recording on the knot: you can play it, and transcribe it later with **🎧 Transcribe voice**
-(this needs the transcription server below). The **Photo** and **Video** buttons accept photos
-and videos only. Other audio formats, such as MP3, aren't supported.
+Tap **🖼️ Library** and choose from the small menu that opens under the buttons:
+
+- **🖼️ Photo or video** opens your phone's photo picker (JPEG, PNG, GIF, WEBP, MP4, MOV).
+- **🎵 Audio file** opens a file picker for audio, for example a recording made with your phone's
+  recorder app. Supported formats are the ones the transcription service understands: **MP3, M4A,
+  WAV, OGG (including Opus), FLAC and WEBM audio**. Raw AAC, WMA and AMR aren't supported.
+
+The menu closes when you tap Library again, press Escape, pick a file, or use another button. A
+picked audio file becomes a voice recording on the knot: you can play it, and transcribe it later
+with **🎧 Transcribe voice** (this needs the transcription server below). The **Photo** and
+**Video** buttons accept photos and videos only. Very large files such as long WAV or FLAC
+recordings can exceed the transcription provider's size limit (25 MB on Groq's free tier); the
+audio is still saved and playable, but "Transcribe voice" will report an error.
 
 ### Setting up the transcription server (optional)
 
@@ -438,12 +447,14 @@ e-Handkerchief/
 │   ├── locateFailure.ts    # Pure: why a location request failed (off / unavailable)
 │   ├── locateFailure.chartest.ts # Test: classifyLocateFailure
 │   ├── mediaService.ts     # Audio/photo/video capture
-│   ├── mediaImport.ts      # Pure: classify a picked file (photo / video / m4a audio)
+│   ├── mediaImport.ts      # Pure: classify a picked file (photo / video / Whisper-supported audio)
 │   ├── mediaImport.chartest.ts # Test: classifyImport
 │   ├── mapsLink.ts         # Maps link builder
 │   ├── dateFormat.ts       # Date/time formatting helpers
 │   ├── remoteTranscribe.ts # Deferred transcription via Worker
 │   ├── transcriptionService.ts
+│   ├── transcriptMerge.ts  # Pure: merge live speech text without repeats or losses
+│   ├── transcriptMerge.chartest.ts # Test: appendSegment / foldSegment / mergeFinalPieces
 │   ├── knotSummary.ts      # Pure: share summary text + media filenames
 │   ├── knotSummary.chartest.ts # Test: knotSummaryText / mediaFileName
 │   ├── randomKnot.ts       # Pure: pick a random unchecked knot

@@ -144,10 +144,16 @@ const MIME_EXTENSIONS: Record<string, string> = {
   'audio/mp4': 'm4a',
   'audio/mpeg': 'mp3',
   'audio/ogg': 'ogg',
+  'audio/wav': 'wav',
+  'audio/flac': 'flac',
 };
 
-/** Look up a file extension for a MIME type, stripping any `;codecs=…` suffix first. */
-function extensionForMimeType(mimeType: string): string {
+/**
+ * Look up a file extension for a MIME type, stripping any `;codecs=…` suffix
+ * first ('bin' if unknown). The single MIME->extension table: also used by
+ * remoteTranscribe for the upload filename.
+ */
+export function extensionForMimeType(mimeType: string): string {
   const base = (mimeType.split(';')[0] ?? '').trim().toLowerCase();
   return MIME_EXTENSIONS[base] ?? 'bin';
 }

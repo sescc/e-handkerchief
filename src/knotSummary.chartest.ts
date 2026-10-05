@@ -12,7 +12,7 @@
 // ============================================================
 
 // Note the `.js` extension per the project's ES2020 module setup.
-import { knotSummaryText, knotsSummaryText, mediaFileName } from './knotSummary.js';
+import { knotSummaryText, knotsSummaryText, mediaFileName, extensionForMimeType } from './knotSummary.js';
 import { googleMapsUrl } from './mapsLink.js';
 import type { Knot, TextMediaItem, AudioMediaItem, PhotoMediaItem, VideoMediaItem } from './types.js';
 
@@ -219,6 +219,8 @@ const SCENARIOS: Scenario[] = [
         { blobType: 'audio/mp4', expectedExt: 'm4a' },
         { blobType: 'audio/mpeg', expectedExt: 'mp3' },
         { blobType: 'audio/ogg', expectedExt: 'ogg' },
+        { blobType: 'audio/wav', expectedExt: 'wav' },
+        { blobType: 'audio/flac', expectedExt: 'flac' },
       ];
       for (const { blobType, expectedExt } of cases) {
         const item = photoItem({ blobType });
@@ -227,6 +229,25 @@ const SCENARIOS: Scenario[] = [
           name === `knot-photo-1.${expectedExt}`,
           `${blobType} should map to .${expectedExt}, got ${JSON.stringify(name)}`
         );
+      }
+    },
+  },
+  {
+    label: 'extensionForMimeType: Whisper audio types, codecs stripped, unknown -> bin',
+    run: () => {
+      const cases: Array<[string, string]> = [
+        ['audio/mp4', 'm4a'],
+        ['audio/mpeg', 'mp3'],
+        ['audio/wav', 'wav'],
+        ['audio/ogg; codecs=opus', 'ogg'],
+        ['audio/flac', 'flac'],
+        ['AUDIO/WEBM;codecs=opus', 'webm'],
+        ['audio/aac', 'bin'],
+        ['', 'bin'],
+      ];
+      for (const [type, ext] of cases) {
+        const got = extensionForMimeType(type);
+        assert(got === ext, `${JSON.stringify(type)} should map to ${ext}, got ${got}`);
       }
     },
   },

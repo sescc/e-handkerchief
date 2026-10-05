@@ -66,7 +66,10 @@ export interface MediaServiceAPI {
   startAudioRecording(): Promise<AudioRecordingHandle>;
   capturePhoto(): Promise<Blob>;
   captureVideo(): Promise<Blob>;
-  pickFromLibrary(): Promise<Blob>;
+  /** Library picker limited to photos and videos. */
+  pickPhotoOrVideo(): Promise<Blob>;
+  /** File picker limited to audio files Whisper can transcribe. */
+  pickAudioFile(): Promise<Blob>;
   generateThumbnail(source: Blob): Promise<Blob>;
 }
 
@@ -179,12 +182,19 @@ export const mediaService: MediaServiceAPI = {
     return pickFile('video/*', PHOTO_VIDEO, 'environment');
   },
 
-  pickFromLibrary(): Promise<Blob> {
+  pickPhotoOrVideo(): Promise<Blob> {
+    // Photo/video types only, so Android opens its photo picker.
     return pickFile(
-      'image/jpeg,image/png,image/gif,image/webp,video/mp4,video/quicktime,' +
-        'audio/mp4,audio/x-m4a,audio/m4a,audio/mp4a-latm,.m4a',
-      ['photo', 'video', 'audio']
+      'image/jpeg,image/png,image/gif,image/webp,video/mp4,video/quicktime',
+      PHOTO_VIDEO
     );
+  },
+
+  pickAudioFile(): Promise<Blob> {
+    // A single `audio/*` filter: Android maps audio extensions inconsistently,
+    // so a narrower list could grey out real files. classifyImport (via
+    // validateMedia) rejects the unsupported ones after picking.
+    return pickFile('audio/*', ['audio']);
   },
 
   generateThumbnail(source: Blob): Promise<Blob> {

@@ -218,7 +218,7 @@ Audit findings (Claude): the Knot theme was half-applied. The nav, list and cale
   - Settings shows "Couldn't show the notification (<reason>). Switch this off and on to try again." under the Notifications description. **Copy invented by Claude, not yet user-approved.** Opening Settings re-posts the notification once (same tag, so it replaces rather than stacks).
   - **Open:** the root cause stays unknown until the user reports the reason shown on the phone.
 - **Decision (user):** the Manage-backups explanation moves directly under the "Manage backups" button. The "Manage backups deletes…" paragraph comes first, then "Deleting a knot…". The wording is unchanged. **Why:** it floated far from the button it explains.
-- **Decision (user):** M4A goes into the existing **Library** button, not a separate one. Android's own chooser decides the branching.
+- **Decision (user):** M4A goes into the existing **Library** button, not a separate one. Android's own chooser decides the branching. **Superseded 2026-10-06:** the Library button now opens a two-button menu (Photo or video / Audio file), and audio accepts all Whisper formats.
   - **Named fallback (Claude, plan approved, not implemented):** an in-app "Photo or video / Audio file" menu, if the phone shows that photo picking has become clunky.
   - **Decision (Claude, after advisor review):** a `.m4a` file name always means audio, stored as `audio/mp4`, because Android providers report m4a as `audio/mp4a-latm`, `audio/aac`, `video/mp4`, `''` or `application/octet-stream`. The pure `src/mediaImport.ts` `classifyImport(type, name)` decides this; `validateMedia` returns the classification and the picked blob is re-typed to the normalised type.
   - A picked m4a becomes an `AudioMediaItem` (duration from `<audio>` metadata, 3 s cap, `0` on failure; `transcriptionStatus` pending if transcription is enabled, else none). It is played with `<audio controls>` and transcribed with the existing "🎧 Transcribe voice" panel; `remoteTranscribe` uploads `audio/mp4` as `audio.m4a`.
@@ -241,9 +241,58 @@ Audit findings (Claude): the Knot theme was half-applied. The nav, list and cale
 - **Verification (Claude, headless Edge):** registered; `ready` true; controller true; cache `e-hk-__BUILD_VERSION__` with 43 precached entries; a fetch of `index.html?code=secret123` through the SW left 0 query-string entries; no `SW_WAITING` message on first install. `tsc` (app + SW) exits 0, and the rebuilt `sw.js` parses as a classic script with no `export`.
 - **Note:** every earlier "pending verification" item that involves the service worker (offline cold start, the quick-capture notification and its tap, the update toast, the Background Sync message) was never testable before this fix.
 
-## Session status (as of 2026-10-05)
-- **Round 2 (service worker fix, see the round-2 section above):** implemented, reviewed and verified in headless Edge; not committed. It changes `sw.ts` (no `export`, `SW_WAITING` only on an update, no query-string caching) and `.github/workflows/deploy.yml` (classic-script parse guard); design.md and README are updated.
-- **Implemented, reviewed and browser-checked; not committed.**
+### 2026-10-06 — Library menu, all Whisper audio formats, Dictate repeat fix
+- **Reported by user (phone, 2026-10-06):** the 2026-10-05 work is generally fine: the service worker and notification work, and Mic quality is fine. Three issues: on desktop the m4a file filter showed `*.m4a` four times; on Android the single Library button made photo picking harder to use; and Dictate repeated words when the user spoke fast.
+- **Decision (user):** the in-app Library menu, which was the named fallback in the 2026-10-05 section (now built). Tapping 🖼️ Library toggles an inline `.media-library-menu` with two buttons:
+  - "🖼️ Photo or video" (aria "Pick a photo or video from your library") → `mediaService.pickPhotoOrVideo()`, accept `image/jpeg,image/png,image/gif,image/webp,video/mp4,video/quicktime`, so Android opens its photo picker directly;
+  - "🎵 Audio file" (aria "Pick an audio file") → `pickAudioFile()`, accept `audio/*` (a single desktop filter entry, which fixes the four `*.m4a` entries).
+  - The menu closes on a second Library tap, Escape, after a pick, or when Mic, Dictate, Photo or Video is tapped. `aria-expanded` follows it. `pickFromLibrary` is removed, and the 2026-10-05 note that Library took m4a is superseded.
+- **Decision (user):** accept **every audio format Whisper (Groq) transcribes**, not only m4a. `classifyImport`:
+  - a known extension wins over the reported type: m4a → `audio/mp4`; mp3, mpga, mpeg → `audio/mpeg`; wav → `audio/wav`; ogg, oga, opus → `audio/ogg`; flac → `audio/flac`; weba → `audio/webm`;
+  - MIME aliases normalise as before, plus the mp3, wav, ogg, flac and webm aliases;
+  - **rejected:** `audio/aac`, `.aac`, `.wma`, `.amr` (not Whisper formats);
+  - the `mediaImport` chartest has 65 cases.
+  - **Decision (Claude):** the single MIME→extension table is the now-exported `knotSummary.extensionForMimeType` (WAV and FLAC added). `remoteTranscribe` uses it for the upload name `audio.<ext>`, with an unknown type falling back to webm. This **supersedes** the 2026-10-05 `audio/mp4` → `audio.m4a` special case.
+  - New error copy: "Unsupported file format. Please use JPEG, PNG, GIF, WEBP, MP4, MOV, or an audio file (MP3, M4A, WAV, OGG, FLAC, WEBM)." **Claude-invented, not yet user-approved.** It supersedes the 2026-10-05 "…MOV, or M4A." copy. The Photo/Video buttons show the same copy (user, 2026-10-06: keep for now).
+- **Bug (reported by user):** Dictate repeats text when the user speaks fast. **Cause (Claude, likely):** Android delivers cumulative finals and revises earlier words when speech is fast. The old `assembleFinal` collapsed pieces only on a strict prefix, so a revision was joined and the phrase repeated. Across silence restarts, `endsWithSegment` caught only an exact tail.
+  - **Fix (Claude):** the new pure `src/transcriptMerge.ts` (40-case chartest), word-level on normalised words:
+    - `mergeFinalPieces` / `appendSegment` within one recognition instance: cumulative growth replaces; stale or re-delivered text is ignored; an anchored revision of `acc`'s tail is accepted only if the LCS is at least 60% of the tail and `next` is longer, or the same length with at least 80%;
+    - `foldSegment` across instances (the fold into `committed`, `finish()` and the live text): it never revises. An exact re-delivery is ignored, an overlap of 2 or more words is merged, otherwise it appends.
+  - **Review fix (Claude):** the first version used the revising merge everywhere and could drop a sentence: "I need to buy milk" + pause + "I need to call mom" lost the first sentence. That led to `foldSegment` plus the tightened thresholds. **Why:** losing text is worse than a repeat.
+  - `sw.ts` ASSETS gains `src/transcriptMerge.js` after `transcriptionService.js` (44 entries).
+- **Known limits (Claude, accepted):**
+  - a deliberate repeat of 2+ words across a boundary ("thank you thank you") collapses;
+  - an equal-length near-identical sentence within one instance ("I went to the store" / "I went to the park") counts as a revision;
+  - a short-tail revision ("…bought apples" → "bought oranges and pears") is appended rather than revised.
+- **Spec reconciled:** requirements.md Req 3.4/3.7 and new Req 7.5; design.md (MediaService API, mediaCapture Library menu, MediaImport tables, new TranscriptMerge section and Property 15, TranscriptionService, `extensionForMimeType`, precache list, test list); README.
+
+## Session status (as of 2026-10-06)
+- **Implemented, reviewed and browser-checked; not committed.** The 2026-10-05 work is committed (`304a492`, `e3110c7`).
+  - `tsc` (app + SW) exits 0.
+  - All 11 chartests and the timezone proptest pass; the SW classic-script parse check passes.
+  - SW ASSETS has 44 entries, all present.
+- **User phone results (2026-10-06) for the 2026-10-05 work:** generally fine. The service worker and notification work, and Mic quality is fine. The issues they reported are fixed in this round: desktop `*.m4a` ×4, the Android picker getting harder to use, and Dictate repeating on fast speech.
+- **Browser-checked at 320×640 (Claude):**
+  - The Library menu opens and closes (second tap, Escape, after a pick, Dictate); `aria-expanded` toggles; the menu's right edge is at 304 and the document width is 320.
+  - Photo or video uses the image/video accept; Audio file uses `audio/*`.
+  - A real WAV (`clip.wav`) and an `.mp3` with an empty type became audio items (wav duration 1 s); `rec.aac` was rejected with the new copy.
+  - Saved; the knot page has 2 players. Transcribe (fetch stubbed) uploaded `audio.wav` and `audio.mp3`, with stored types `audio/wav` and `audio/mpeg`.
+  - A fake SpeechRecognition (Android-style cumulative finals with a revision, 2 restarts) gave "I want to go to the shop and buy milk then call mom I need to call mom": the revision collapsed, the re-delivered "buy milk" wasn't duplicated, and the new sentence was kept.
+- **Pending verification (user, on the phone, after deploy):**
+  - Library › Photo or video opens the photo picker directly.
+  - Library › Audio file finds the recorder app's files.
+  - On desktop, the audio picker shows one filter entry.
+  - Dictate fast, several sentences: no repeats and nothing dropped.
+  - The earlier real-Google-account checks still apply.
+- **Open items:**
+  - The merge known limits (2+ word repeat across a pause collapses; equal-length near-identical sentence in one instance; short-tail revision appended). Revisit only if they show up in real use.
+  - The new unsupported-format copy (Claude-invented) is not yet approved; the Photo/Video buttons show it too (user: keep for now).
+  - P2 daily email digest: KIV. P3 supercharge scaffold: KIV.
+  - The sync race window: accepted. `appProperties` per-key merge: unconfirmed.
+
+## Session status (as of 2026-10-05) — superseded by 2026-10-06 above
+- **Round 2 (service worker fix, see the round-2 section above):** implemented, reviewed and verified in headless Edge. Committed and pushed by the user as **`e3110c7`**. It changes `sw.ts` (no `export`, `SW_WAITING` only on an update, no query-string caching) and `.github/workflows/deploy.yml` (classic-script parse guard); design.md and README are updated.
+- **Round 1:** implemented, reviewed and browser-checked. Committed and pushed by the user as **`304a492`**, together with the 2026-10-04 end-handoff log and the "🎲 Another random knot" label.
   - `tsc` (app + SW) exits 0.
   - All 10 chartests pass: dayCutoff, deviceLabel, knotDiff, knotSummary, locateFailure (12), mediaImport (23), mergeMessage, randomKnot, router, syncPlan. The timezone proptest passes.
   - SW ASSETS has 43 entries, all present.
@@ -262,11 +311,11 @@ Audit findings (Claude): the Knot theme was half-applied. The nav, list and cale
   - A Mic recording: no hiccups, and a comfortable level (AGC is off).
   - An m4a from the recorder app via Library: it plays and transcribes.
   - Photo or video via Library is still convenient; if not, use the named in-app menu fallback.
-  - **Service worker and notification (do this first, after deploy):** open the app online once, fully close and reopen it; check that the Settings notification line is gone and "Tap to tie a knot" is in the notification drawer; tap it to open Capture; then switch on airplane mode → the app loads offline. If a Settings line still shows a reason, report it.
+  - ~~**Service worker and notification (do this first, after deploy):** open the app online once, fully close and reopen it; check that the Settings notification line is gone and "Tap to tie a knot" is in the notification drawer; tap it to open Capture; then switch on airplane mode → the app loads offline. If a Settings line still shows a reason, report it.~~ **Done (user, 2026-10-06):** the service worker and the notification work on the phone.
   - The earlier phone and real-Google-account checks still apply; the ones that involve the service worker were never testable before round 2.
 - **Open items:**
-  - The missing notification: the fix (a working service worker) is implemented; pending the phone check after deploy.
-  - Claude-invented copy needing user review: the notification failure line, the m4a import toast, "This is your only unchecked knot" and "Could not load knots".
+  - ~~The missing notification: the fix (a working service worker) is implemented; pending the phone check after deploy.~~ **Resolved (user, 2026-10-06):** confirmed working on the phone.
+  - ~~Claude-invented copy needing user review: the notification failure line, the m4a import toast, "This is your only unchecked knot" and "Could not load knots".~~ **Resolved (user approved, 2026-10-06):** all four are kept as they are.
   - The Photo/Video unsupported-format error lists M4A even though those buttons don't accept it (minor).
   - P2 daily email digest: deferred. P3 supercharge scaffold: KIV.
   - The sync race window: accepted. `appProperties` per-key merge: unconfirmed.
@@ -531,6 +580,23 @@ Audit findings (Claude): the Knot theme was half-applied. The nav, list and cale
 - **OAuth return `/?code=…` or `?error=…`:** never written to Cache Storage (`networkFirst` skips URLs with a query string). Verified in headless Edge with `index.html?code=secret123` (0 query-string cache entries).
 - **A precache file missing on deploy:** `cache.addAll` fails, so the install fails and Settings shows "(service worker not ready)". Manual test only; all 43 URLs return 200 on GitHub Pages.
 - **`sw.js` with module syntax** (for example a stray `export {}`): the deploy fails at the `new Function` parse guard. Verified on the old `sw.js` (`SyntaxError: Unexpected token 'export'`).
+
+### Edge cases added 2026-10-06
+- **Desktop audio picker:** a single `audio/*` filter entry (the old list of audio MIME types and `.m4a` showed `*.m4a` four times). Manual test only.
+- **Android photo picker:** Library › Photo or video passes only image/video types, so Android opens its photo picker directly. Manual test only.
+- **Audio file outcomes:** `.mp3` (even with an empty type) → audio stored as `audio/mpeg`; `.wav` → `audio/wav`; `.ogg`/`.opus` → `audio/ogg`; `.flac` → `audio/flac`; `.aac`, `.wma`, `.amr` and `audio/aac` → rejected with the new copy. Covered by `mediaImport.chartest.ts` (65 cases); browser-checked with a real WAV, an `.mp3` and a `.aac`.
+- **Large WAV or FLAC over the Groq limit (25 MB on the free tier):** the audio is saved and playable; "Transcribe voice" shows the existing transcription error toast. There is no client-side size check. Manual test only.
+- **Upload filename:** `audio.<ext>` comes from `extensionForMimeType` (`audio/wav` → `audio.wav`, `audio/mpeg` → `audio.mp3`, unknown → `audio.webm`). Covered by `knotSummary.chartest.ts` for the table; browser-checked with a stubbed fetch.
+- **Library menu closing:** it closes on a second Library tap, Escape, after a pick, and when Mic, Dictate, Photo or Video is tapped; `aria-expanded` follows it. Browser-checked.
+- **An audio file picked through the Photo or Video button:** still rejected (those pickers allow photo and video only). Manual test only.
+- **Dictate: fast speech with a revised word** (`"I wanna go"` → `"I want to go to the shop"`): the revision replaces the tail instead of repeating. Covered by `transcriptMerge.chartest.ts`.
+- **Dictate: a restart re-delivers the previous tail:** nothing is added (`foldSegment`). Covered by `transcriptMerge.chartest.ts`.
+- **Dictate: two sentences that start alike across a pause** ("I need to buy milk" / "I need to call mom"): both kept. This was the review-fix regression. Covered by `transcriptMerge.chartest.ts`.
+- **Cross-restart text is never revised:** `foldSegment` only ignores, merges an exact 2+ word overlap, or appends. Covered by `transcriptMerge.chartest.ts`.
+- **Known merge limit 1:** a deliberate repeat of 2+ words across a boundary ("thank you thank you") collapses. Pinned in `transcriptMerge.chartest.ts`.
+- **Known merge limit 2:** an equal-length near-identical sentence within one instance ("I went to the store" / "I went to the park") counts as a revision. Pinned in `transcriptMerge.chartest.ts`.
+- **Known merge limit 3:** a short-tail revision ("…bought apples" → "bought oranges and pears") is appended rather than revised. Pinned in `transcriptMerge.chartest.ts`.
+- **A 1-word repeat across a boundary** ("I said no" / "no thanks"): kept. Covered by `transcriptMerge.chartest.ts`.
 
 ## Refactoring Standard Operating Procedure (SOP)
 When instructed to refactor code, adopt the role of a principal software engineer and execute in four strict phases:
