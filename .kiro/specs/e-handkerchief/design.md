@@ -83,10 +83,13 @@ The architecture is intentionally flat: a thin vanilla-JS UI layer built from Ty
 | **KnotStore** | CRUD on Knots in IndexedDB using hand-written Promise wrappers from `db.ts`. `delete()` also writes a local delete tombstone and drops any recorded conflict; `saveFromSync()` is a plain save used by sync pulls that deliberately does not emit events. Also reads and writes the per-knot sync bookkeeping (`syncState`). |
 | **SettingsStore** | Reads/writes app settings to IndexedDB with an in-memory reactive cache using a custom event-emitter pattern. |
 | **MediaService** | Wraps MediaRecorder API (audio) and HTML Media Capture (photo/video). Returns Blobs. Records without call-style processing; two Library pickers (`pickPhotoOrVideo`, `pickAudioFile`); `validateMedia` classifies a picked file via *MediaImport*. |
+| **MediaSummary** | Pure module (`mediaSummary.ts`): `summarizeMedia(items)` (one entry per media type present, fixed order photo / video / audio) and `describeMediaSummary(entries)` (accessible text such as "3 photos, 1 video, 1 voice recording"), used by the Calendar day list. |
 | **MediaImport** | Pure module (`mediaImport.ts`): `classifyImport(type, name)` decides whether a picked file is a photo, video, or audio in any Whisper-supported format (stored under one normalised MIME type each), or unsupported. |
 | **TranscriptMerge** | Pure module (`transcriptMerge.ts`): the word-level merge rules for live speech recognition text (`mergeFinalPieces`, `appendSegment` within one recognition instance; `foldSegment` across instances). |
+| **SaveError** | Pure module (`saveError.ts`): `isMediaWriteError(err)` and `saveErrorMessage(prefix, err)` turn a failed knot save into the toast text; a media blob that IndexedDB could not write gets a "remove it and pick it again" message instead of the raw browser error. |
 | **GeoService** | Wraps `navigator.geolocation`, enforces 10-second timeout, resolves reverse-geocoding via Nominatim; `locate()` also says why a failure happened (using the pure *LocateFailure* classifier). |
 | **LocateFailure** | Pure module (`locateFailure.ts`): `classifyLocateFailure(code, permState)` maps a geolocation error code plus the Permissions API state to `'off'` (code 1 with the site still `granted`) or `'unavailable'` (everything else, including `'denied'`). |
+| **AddressBackfill** | Pure module (`addressBackfill.ts`: `needsAddress`, `addPending`, `removePending`) plus a service (`addressBackfillService.ts`: `fillPendingAddresses()`) that fills in the address of knots tied offline once the device is back online. |
 | **RandomKnot** | Pure module (`randomKnot.ts`): `pickRandomKnot(knots, excludeId, rand)` picks a random knot that is not checked off, optionally excluding one id. |
 | **TranscriptionService** | Wraps Web Speech API for live transcription while recording (joining text through *TranscriptMerge*); `remoteTranscribe.ts` handles deferred transcription of a saved recording via the user's own Worker. |
 | **KnotSummary** | Pure module (`knotSummary.ts`, no DOM, no settingsStore/db imports): builds the plain-text share summary for one knot or several (with the optional attribution footer) and the filename for each media attachment. Used by ShareService and imported by KnotsScreen for `collectTranscripts`. |
@@ -100,7 +103,8 @@ The architecture is intentionally flat: a thin vanilla-JS UI layer built from Ty
 | **CloudSyncService** | Authenticates with Google Drive OAuth2 PKCE flow (token exchange and refresh via `oauth-worker`); upserts each knot's single backup file behind a conflict guard; runs the full two-way sync (via SyncPlan); pushes check-off state as metadata; lists and resolves conflicts; lists and deletes individual backups; manages local/cloud delete tombstones. |
 | **oauth-worker** | Owner-operated Cloudflare Worker (`oauth-worker/src/index.js`). `POST /token` and `POST /refresh` add the Google client secret (a Wrangler secret) and relay Google's token endpoint. CORS is locked to `ALLOWED_ORIGIN`. |
 | **NotificationService** | The quick-capture notification: reports the permission state, posts it on launch (`ensureShown`, which reports `shown` / `skipped` / `failed` with a reason), turns it on from a user gesture (`enable`, which is where the permission prompt happens) and off (`disable`). |
-| **EventBus** | Lightweight publish/subscribe module; decouples service events (`knot:saved`, `knot:deleted`, `knot:checkedOff`, `knots:synced`, `knots:conflicts`, `settings:changed`, `sw:waiting`) from screen renders. |
+| **EventBus** | Lightweight publish/subscribe module; decouples service events (`knot:saved`, `knot:deleted`, `knot:checkedOff`, `knots:synced`, `knots:conflicts`, `backup:changed`, `settings:changed`, `sw:waiting`) from screen renders. |
+| **BackupStatus** | Pure module (`backupStatus.ts`): `backupStatus(input)` decides whether a knot shows "☁ Not backed up", "☁ Backup deleted" or nothing, from the connection state, an in-flight upload, its `syncState` record and any unfinished upload job. Fed by `CloudSyncService.getBackupStatuses`. |
 | **Service Worker** | Hand-written `sw.ts` compiled to `sw.js` (via `tsconfig.sw.json`); precaches all static assets; relays the `cloud-sync` Background Sync tag to the page as `FLUSH_CLOUD`; opens Capture from the quick-capture notification and re-posts it. |
 
 ---
@@ -202,6 +206,7 @@ interface AppSettings {
   dayCutoff: string;                      // default: '03:00' — "HH:MM" local time at which a new day starts; checked-off knots leave the Knots list then
   shareAttribution: boolean;              // default: true — append the "Shared from e-Handkerchief" footer to shared text
   quickCaptureNotification: boolean;      // default: true — keep the quick-capture notification posted (only takes effect once permission is granted)
+  pendingAddressKnotIds?: string[];       // optional, no default (absent = none) — local-only: knots tied on THIS device whose address still needs looking up (see AddressBackfill)
 }
 
 interface OAuthToken {
@@ -248,10 +253,11 @@ interface SyncStateRecord {
     fileId: string;              // Drive file id of the newest cloud copy when the conflict was recorded
     remoteUpdatedAt: number;     // that cloud copy's content updatedAt
   };
+  backupDeletedAt?: number;      // when this device learned the knot's Drive backup was deleted via Manage backups
 }
 ```
 
-Local-only bookkeeping (IndexedDB store `syncState`, keyed on `knotId`; never uploaded). `baseUpdatedAt` is the **base version** of a three-way comparison: it lets sync distinguish "only one side changed" (safe to push or pull) from "both sides changed" (a conflict). It is set after every successful push or upsert (to the local `updatedAt`), after every pull (to the remote `updatedAt`), and whenever a sync finds local and remote equal. Setting a base always clears `conflict`. A local delete clears `conflict` but leaves the base in place (harmless: it is never consulted for a knot that doesn't exist locally).
+Local-only bookkeeping (IndexedDB store `syncState`, keyed on `knotId`; never uploaded). `baseUpdatedAt` is the **base version** of a three-way comparison: it lets sync distinguish "only one side changed" (safe to push or pull) from "both sides changed" (a conflict). It is set after every successful push or upsert (to the local `updatedAt`), after every pull (to the remote `updatedAt`), and whenever a sync finds local and remote equal. Setting a base always clears `conflict` — and `backupDeletedAt`, because `setBase` writes a fresh record (a later push or pull means the backup exists again). `backupDeletedAt` is set by `deleteBackup` (this device) and by `doSyncAll` step 7d2 (a cloud tombstone seen during a sync); it only feeds the "Backup deleted" badge (*BackupStatus*). A local delete clears `conflict` but leaves the base in place (harmless: it is never consulted for a knot that doesn't exist locally).
 
 There is no longer an `EmailJob` type or `emailJobs` store — save-and-send email was retired in favor of the per-knot Share button (Requirement 8); see *IndexedDB Schema* below for how the store was removed.
 
@@ -351,7 +357,14 @@ interface MediaServiceAPI {
    */
   pickAudioFile(): Promise<Blob>;
 
-  /** Generate an 80×80 JPEG thumbnail from an image or video Blob. */
+  /**
+   * Generate an 80×80 JPEG thumbnail from an image or video Blob. The source is
+   * centre-cropped to a square ("cover": side = min(w, h), taken from the middle)
+   * before being drawn, so it is not squashed; if the natural size is unknown (0)
+   * it falls back to the old stretch. Thumbnails stored before this change were
+   * stretched and are not regenerated, which is why the Calendar draws photos
+   * from the full blob.
+   */
   generateThumbnail(source: Blob): Promise<Blob>;
 }
 
@@ -382,7 +395,7 @@ interface GeoServiceAPI {
    *                 a blocked site, device Location off and Chrome lacking Android's location
    *                 permission alike as `denied`, so `denied` is not trusted).
    */
-  locate(): Promise<LocateResult>;
+  locate(deadlineMs?: number): Promise<LocateResult>; // deadlineMs default 10 000; Capture passes 120 000 offline
 
   /** Attempt reverse geocoding. Returns address string (≤ 100 chars) or null. */
   reverseGeocode(lat: number, lng: number): Promise<string | null>;
@@ -496,6 +509,9 @@ interface CloudSyncServiceAPI {
 
   /** The plain-language confirm() text for a LOCAL delete, based on connection status. */
   localDeleteConfirmText(): string;
+
+  /** Which knots are not in Drive (for the list badge / page pill). All 'none' when not connected. Never touches the network. */
+  getBackupStatuses(knots: Knot[]): Promise<Map<string, BackupBadge>>;
 }
 ```
 
@@ -599,9 +615,16 @@ e-Handkerchief/
 │   ├── geoService.ts           # Geolocation + reverse geocoding
 │   ├── locateFailure.ts          # Pure: why a location request failed (off / unavailable)
 │   ├── locateFailure.chartest.ts # Characterization test for locateFailure
+│   ├── addressBackfill.ts        # Pure: needsAddress / addPending / removePending
+│   ├── addressBackfill.chartest.ts # Characterization test for addressBackfill
+│   ├── addressBackfillService.ts # fillPendingAddresses(): fill in addresses of knots tied offline
 │   ├── mediaService.ts         # Audio/photo/video capture
 │   ├── mediaImport.ts            # Pure: classify a picked file (photo / video / Whisper-supported audio)
 │   ├── mediaImport.chartest.ts   # Characterization test for mediaImport
+│   ├── mediaSummary.ts           # Pure: per-type media summary for the Calendar day list
+│   ├── mediaSummary.chartest.ts  # Characterization test for mediaSummary
+│   ├── saveError.ts              # Pure: user-facing message for a failed knot save (media write errors)
+│   ├── saveError.chartest.ts     # Characterization test for saveError
 │   ├── mapsLink.ts             # Google Maps URL builder (pure)
 │   ├── dateFormat.ts           # Date/time formatting helpers
 │   ├── remoteTranscribe.ts     # Deferred transcription via the user's own Worker
@@ -615,6 +638,8 @@ e-Handkerchief/
 │   ├── shareService.ts         # Web Share API wrapper (one or several knots) + clipboard fallback
 │   ├── syncPlan.ts               # Pure: base-aware push/pull/conflict/check-off/dedupe decisions
 │   ├── syncPlan.chartest.ts      # Characterization test for planSync
+│   ├── backupStatus.ts           # Pure: which knots show "Not backed up" / "Backup deleted"
+│   ├── backupStatus.chartest.ts  # Characterization test for backupStatus
 │   ├── checkOffActions.ts        # Check off / uncheck / Undo, shared by the Knots list and detail screen
 │   ├── dayCutoff.ts              # Pure: when a checked-off knot leaves the Knots list
 │   ├── dayCutoff.chartest.ts     # Characterization test for dayCutoff
@@ -733,7 +758,7 @@ tsc -p tsconfig.sw.json
 - The router calls the current screen's cleanup function, clears the container, then calls the new screen's `render`.
 - All DOM manipulation uses `document.createElement`, `element.textContent`, or `element.innerHTML` only with static/sanitized markup — never with raw user data.
 - No virtual DOM, no reactive framework — the DOM is updated imperatively when state changes (e.g. a counter element's `textContent` is set directly on input events).
-- The `eventBus.ts` module is a lightweight typed pub/sub; services emit named events (`knot:saved`, `knot:deleted`, `knot:checkedOff`, `knots:synced`, `knots:conflicts`, `settings:changed`, `sw:waiting`) that screens subscribe to and unsubscribe from in their cleanup functions.
+- The `eventBus.ts` module is a lightweight typed pub/sub; services emit named events (`knot:saved`, `knot:deleted`, `knot:checkedOff`, `knots:synced`, `knots:conflicts`, `backup:changed`, `settings:changed`, `sw:waiting`) that screens subscribe to and unsubscribe from in their cleanup functions.
 
 ### IndexedDB Implementation (`db.ts`)
 
@@ -808,14 +833,14 @@ function initRouter(container: HTMLElement): void
 Default landing view rendered at route `#/`. Title "Tie a Knot"; Save button "Tie Knot"; textarea placeholder "What do you want to remember?".
 
 **Lifecycle:**
-1. On `render`, record a `KnotTimestamp` immediately (local ISO string + UTC offset) and call `GeoService.locate()` with a 10-second deadline; a spinner and "Getting location…" show while location resolves.
+1. On `render`, record a `KnotTimestamp` immediately (local ISO string + UTC offset) and call `GeoService.locate(deadlineMs)`; a spinner and "Getting location…" show while location resolves. **Offline** (`!navigator.onLine` when the request starts, including a retry) the deadline is 120 000 ms and the text is "Getting location (no internet — GPS can take a minute or two)…", because a cold GPS fix without assisted GPS can take minutes and coordinates need no internet; online the deadline stays 10 000 ms. Failure copy is the same in both cases.
    - **Location retry.** On failure the location line becomes a link-styled `button.location-retry` whose text depends on the `LocateResult` reason, reading exactly:
      - `off` (site still allowed, so the device's Location is off) — "Location is off — turn it on, then tap to retry";
      - `unavailable` (everything else, including a Permissions API state of `denied`) — "Location unavailable — tap to retry".
 
      There is deliberately no "blocked for this site" message: Android folds a blocked site, the device's Location being off, and Chrome lacking Android's location permission into the same `denied`, so it can't be told reliably. Tapping it shows "Getting location…" with the spinner and asks again; taps while a request is loading are ignored. A request counter (`locationRequestId`) guarantees only the **latest** request can set `location` or render, and a `disposed` flag stops anything rendering after the user leaves the screen. The knot saves with whatever location is known at save time (`null` if none yet).
 2. The shared `mediaCapture` component (mic/photo/video/library, live transcript, previews, errors) is mounted between the textarea and the Save button; it owns the draft media items. **Library menu:** tapping "🖼️ Library" toggles an inline `.media-library-menu` (`aria-expanded` on the Library button follows it) with two buttons: "🖼️ Photo or video" (aria-label "Pick a photo or video from your library") calls `mediaService.pickPhotoOrVideo()`, and "🎵 Audio file" (aria-label "Pick an audio file") calls `pickAudioFile()`. Two separate pickers because a mixed accept list stops Android opening its photo picker. The menu closes on a second Library tap, on Escape, after a pick, and when Mic, Dictate, Photo or Video is tapped. A Library pick that classifies as audio (any Whisper-supported format, see *MediaImport*) becomes an `AudioMediaItem` (duration read from `<audio>` metadata with a 3 s cap, `0` on failure; `transcriptionStatus` `pending` when transcription is enabled, else `none`), playable through `<audio controls>` and transcribed from the detail page's existing "🎧 Transcribe voice" panel. The Photo and Video controls accept photo/video only. The unsupported-format error reads "Unsupported file format. Please use JPEG, PNG, GIF, WEBP, MP4, MOV, or an audio file (MP3, M4A, WAV, OGG, FLAC, WEBM)."
-3. On Save: validate at least one media item is present; build the `Knot` and call `KnotStore.save()`; on success, emit `knot:saved` via `eventBus` — the app-level listener in `app.ts` (not this screen) triggers the cloud upload; navigate to `#/knots`. When every pending audio item was imported from the Library (not recorded), the post-save toast is "Saved. To transcribe the audio file, open the knot and tap 'Transcribe voice'." instead of the live-transcription messages; an imported item removed from the draft before saving is not counted.
+3. On Save: validate at least one media item is present; build the `Knot` and call `KnotStore.save()`; on success, emit `knot:saved` via `eventBus` — the app-level listener in `app.ts` (not this screen) triggers the cloud upload; navigate to `#/knots`. If the knot has coordinates but `needsAddress`, its id is added to `AppSettings.pendingAddressKnotIds` (a failure here is only logged and never blocks the save); the backfill is deliberately **not** triggered from here (see *AddressBackfill*). When every pending audio item was imported from the Library (not recorded), the post-save toast is "Saved. To transcribe the audio file, open the knot and tap 'Transcribe voice'." instead of the live-transcription messages; an imported item removed from the draft before saving is not counted.
 
 **Validation:**
 - No media items → "Please add at least one item before saving."
@@ -828,7 +853,7 @@ Default landing view rendered at route `#/`. Title "Tie a Knot"; Save button "Ti
 
 Route `#/knots`. Displays all knots as an inline, scrollable feed, newest first.
 
-**Data loading:** Calls `KnotStore.listAll()` on every `render`. Subscribes to `knot:saved`, `knot:deleted`, `knot:checkedOff`, `knots:synced`, and `knots:conflicts` via `eventBus` to reload without a full re-route (`knots:synced` is how a knot pulled from another device shows up here; `knots:conflicts` refreshes the conflict badge). Cleans up all the subscriptions.
+**Data loading:** Calls `KnotStore.listAll()` on every `render`. Subscribes to `knot:saved`, `knot:deleted`, `knot:checkedOff`, `knots:synced`, and `knots:conflicts` via `eventBus` to reload without a full re-route (`knots:synced` is how a knot pulled from another device shows up here; `knots:conflicts` refreshes the conflict badge), and to `backup:changed` to refresh just the backup badges (see below). Cleans up all the subscriptions.
 
 **Checked-off knots:** each entry has a check-off button (`.knot-check-btn`) showing **✓** (aria-label "Check off knot"), or **↩** (aria-label "Uncheck knot") when the knot is already checked off; it stops propagation so it never navigates. It calls `toggleCheckOff(knot.id)` from *CheckOffActions* (which saves without touching `updatedAt`, emits `knot:checkedOff`, and shows the "Checked off · Undo" / "Unchecked · Undo" toast). A checked-off entry is drawn faded and struck through (`.knot-entry--checked-off`) while `isCheckedOffVisible(checkedOffAt, now, settings.dayCutoff, resolveTimeZone(settings.timezone))` is true; once it is false the entry is omitted from the list. When any knots are hidden that way, a toggle "Show N checked-off knot(s)" / "Hide checked-off knots" reveals them; it is the **first child of the list** (above the empty-state message and the entries, so it stays reachable in a long list), and its CSS spacing is `margin-bottom`. Visibility is derived at render time — nothing is stored and there is no persistent background job. The list re-renders (a) on `visibilitychange` when the app becomes visible, and (b) on a **timer** set to the earliest upcoming cutoff among the visible checked-off knots (`nextCutoffAfter`, plus 500 ms, capped at 24 hours), so a knot disappears while the list is open. The timer is cleared on every render and on cleanup. Empty states: "No knots yet — tap + to tie your first." when there are no knots at all, and "All your knots are checked off." when every knot is hidden.
 
@@ -837,6 +862,8 @@ Route `#/knots`. Displays all knots as an inline, scrollable feed, newest first.
 **Select mode:** a "Select" header button (hidden when there is nothing to select) turns entries into checkbox rows and shows a sticky bar with "Cancel" and "Share (N)" (disabled while N is 0). The selection survives re-renders while in select mode, and entries that leave the screen are dropped from it. In select mode a tap on an entry — including on its **location link**, whose default action is suppressed — toggles its selection instead of opening the knot or Maps; the per-entry check-off/delete buttons and conflict badge are not shown. Share (N) builds the list from the in-memory knots and calls `shareKnots(chosen)` synchronously from the click handler, then leaves select mode. Long-press is not used because it clashes with the media controls.
 
 **Conflict badge:** an entry whose knot is in conflict (from `cloudSyncService.listConflicts()`, refreshed on `knots:conflicts`) shows a button "⚠ Also edited on another device" that navigates to `#/conflict/{id}`.
+
+**Backup badge:** `loadAndRender` also calls `cloudSyncService.getBackupStatuses(knots)` (a failure just means no backup badges). An entry whose status is `not-backed-up` or `backup-deleted` gets a non-interactive `.backup-status-badge` (`display: block; width: fit-content; max-width: 100%`, warning tint like the conflict badge, text wraps) on its own line directly under the entry header, reading "☁ Not backed up" or "☁ Backup deleted". Entries carry `data-knot-id`. On `backup:changed` the screen fetches fresh statuses and **updates the badges in place** (`applyBackupBadges`, with a sequence guard against stale lookups) instead of re-rendering the list, so select mode, scroll position and the checked-off toggle are untouched; each full load bumps the guard so an older lookup can't overwrite it. The badge is also shown in select mode. It never appears together with the conflict badge (BackupStatus rule 3).
 
 **Each entry renders (via `createElement` / DOM manipulation):**
 - Timestamp formatted per the user's Date Format / Time Format settings.
@@ -864,7 +891,17 @@ Route `#/calendar`. A scrollable, reverse-chronological month grid.
 
 **Day-detail panel:** Tapping a day with knots toggles an inline panel below the grid listing that day's knots (newest first): each row shows the formatted time and a short preview (first text item's leading ~60 characters, or "🎤 Voice" / "📷 Photo" / "🎬 Video" for a media-only knot), and navigates to `#/knot/{id}` on click/Enter/Space. Tapping the same day again closes the panel; tapping a different day replaces it.
 
-**Cleanup function:** unsubscribes all event listeners.
+**Thumbnail strip (Requirement 13.13):** a row is a flex row: a `.calendar-day-detail-text` column (`flex: 1; min-width: 0`) holding the time, the preview and a visually hidden `.sr-only` span with `describeMediaSummary(...)`, then a right-aligned `.calendar-day-detail-thumbs` strip (`flex: none`, `aria-hidden="true"`) that exists only when `summarizeMedia(knot.mediaItems)` is non-empty. The strip has one 40×40 tile per type present (at most three), in the order photo, video, audio:
+- **Photo:** an `<img>` of the *full* photo blob with `object-fit: cover`. The stored 80×80 `thumbnailBlob` is not used for photos because thumbnails generated before the `generateThumbnail` centre-crop were stretched to fit.
+- **Video:** an `<img>` of the video's `thumbnailBlob` with a ▶ disc overlay.
+- **Audio:** a neutral tile (`--color-primary-soft`) with ▶.
+- A `.calendar-thumb-count` pill (bottom right) shows the count only when it is above 1.
+- If an `<img>` fires `error`, the tile's content is replaced by a neutral tile with 📷 or 🎬.
+A checked-off row's existing fade (`opacity`) fades its thumbnails too.
+
+**Object-URL lifecycle:** every `URL.createObjectURL` made for the panel is pushed onto `panelUrls`; `clearPanelUrls()` revokes them all and runs at the start of every `renderDayDetail`, when the open day is tapped closed, in `loadAndRender` (explicitly when no day is open; an open day goes through `renderDayDetail`), and in the cleanup function.
+
+**Cleanup function:** unsubscribes all event listeners and revokes the panel's object URLs.
 
 ### KnotDetailScreen (`src/screens/knotDetailScreen.ts`)
 
@@ -878,6 +915,7 @@ Routes `#/knot/:id` and `#/random/:id` (the latter parses to the same screen wit
 - **Checked-off pill.** While the knot is checked off, a green pill `span.knot-checked-off-pill` reads "✓ Checked off · {`formatKnotTimestamp(checkedOffAt)`}" (so it follows the user's time zone and date/time format). It sits on its own line under the timestamp + tick row. The tick is unchanged, and the detail page deliberately does **not** fade or strike through a checked-off knot (that is the Knots list's job). The pill's background is the `--color-primary-soft` token (light `rgba(45,122,79,0.15)`, dark `rgba(76,175,118,0.18)`), which `.knot-check-btn` hover/focus and `.backup-badge` also use.
 - It calls `toggleCheckOff(knot.id)` — the same change as the Knots list (no `updatedAt` bump, `knot:checkedOff` event, "Checked off · Undo" / "Unchecked · Undo" toast). The screen does not update itself directly: it re-renders from the `knot:checkedOff` event. A checked-off knot stays viewable here after it leaves the Knots list, and this is where it can be unchecked.
 - **Conflict banner:** a `.conflict-banner` at the top of the content, filled asynchronously from `cloudSyncService.listConflicts()` and refreshed on `knots:conflicts`. While the knot is in conflict it reads "This knot also has edits from another device." and offers a **Review** button that navigates to `#/conflict/{id}`; otherwise it is hidden.
+- **Backup pill:** a placeholder `div` after the checked-off pill row, filled asynchronously by `updateBackupPill()` from `getBackupStatuses([knot])`. For `not-backed-up` it holds a `.knot-backup-pill` reading "☁ Not backed up yet — it backs up automatically when you're online."; for `backup-deleted`, "☁ Backup deleted — this knot is only on this device. Edit it to back it up again."; otherwise (or if the lookup fails) it stays empty. Same warning tint as the list badge, but `display: inline-block` with a medium radius so the long text wraps at 320 px. The placeholder is dropped in edit mode and on the not-found view (`backupPillEl = null`), so a late lookup does nothing; it is rebuilt by `renderKnot`.
 - **Share** calls `shareKnot(knot)` directly and synchronously from the click handler (see *ShareService* — this preserves the click's user-gesture window).
 - **Edit** switches to an inline edit form (location label, one textarea per existing text item plus an "add text" box, existing non-text media with per-item Remove, and the shared media-capture component for adding more). Saving rebuilds the knot's `mediaItems`, bumps `updatedAt`, calls `withLatestCheckOff` (the form was built from a possibly stale copy, so the latest stored check-off state is taken rather than written back over), calls `KnotStore.save`, and emits `knot:saved`. **Cancel** tears down the media-capture component and **re-reads the knot from the store** before leaving edit mode, because its check-off state may have changed while editing. Transcript saves also call `withLatestCheckOff` before saving.
 - **Delete** confirms via `cloudSyncService.localDeleteConfirmText()` (its wording depends on whether Google Drive is connected — see *CloudSyncService*), then calls `KnotStore.delete(knot.id)` (which also records the local tombstone), emits `knot:deleted`, shows "Knot deleted", and navigates to `#/knots`.
@@ -886,7 +924,7 @@ Routes `#/knot/:id` and `#/random/:id` (the latter parses to the same screen wit
 
 **Not-found state:** heading "Knot not found", body "This knot isn't on this device.", and a "Go to Knots" button.
 
-**Reactivity:** subscribes to `knots:synced`, `knot:checkedOff`, and `knots:conflicts`. While **not** editing, `knots:synced` re-fetches and re-renders the current knot so a pulled update from another device appears, and `knot:checkedOff` for **this** knot re-renders it so the tick's glyph and the faded state are current (for example after Undo from the toast, or a change made in the Knots list). While editing, both handlers are no-ops, so an in-progress edit is never clobbered; the edit's Save then merges the latest check-off state via `withLatestCheckOff`, so nothing is lost. `knots:conflicts` just refreshes the banner.
+**Reactivity:** subscribes to `knots:synced`, `knot:checkedOff`, `knots:conflicts`, and `backup:changed` (which only refreshes the backup pill). While **not** editing, `knots:synced` re-fetches and re-renders the current knot so a pulled update from another device appears, and `knot:checkedOff` for **this** knot re-renders it so the tick's glyph and the faded state are current (for example after Undo from the toast, or a change made in the Knots list). While editing, both handlers are no-ops, so an in-progress edit is never clobbered; the edit's Save then merges the latest check-off state via `withLatestCheckOff`, so nothing is lost. `knots:conflicts` just refreshes the banner.
 
 **Navigation:** "← Back to Knots" button calls `navigate('#/knots')`.
 
@@ -963,13 +1001,18 @@ const ASSETS: string[] = [
   'src/toastService.js',
   'src/geoService.js',
   'src/locateFailure.js',
+  'src/addressBackfill.js',
+  'src/addressBackfillService.js',
   'src/mediaService.js',
   'src/mediaImport.js',
+  'src/mediaSummary.js',
+  'src/saveError.js',
   'src/transcriptionService.js',
   'src/transcriptMerge.js',
   'src/notificationService.js',
   'src/cloudSyncService.js',
   'src/syncPlan.js',
+  'src/backupStatus.js',
   'src/knotSummary.js',
   'src/randomKnot.js',
   'src/knotDiff.js',
@@ -1070,6 +1113,7 @@ Wraps `MediaRecorder` and the HTML Media Capture API. Returns raw `Blob` values;
 - `validateMedia(blob | file)` throws `FileSizeError` / `UnsupportedFormatError`, otherwise returns the `ImportClassification` (`{ kind, mimeType }`) from `classifyImport(blob.type, file.name)` — the file name is passed because external recorders' `.m4a` files often carry a wrong or empty type.
 - There are two Library pickers, because a single mixed accept list (photo/video plus audio) stops Android from opening its photo picker, and one `audio/*` entry is the only reliable desktop filter. `pickPhotoOrVideo` accepts `image/jpeg,image/png,image/gif,image/webp,video/mp4,video/quicktime` and allows photo and video results only; `pickAudioFile` accepts `audio/*` and allows audio results only. (The earlier combined `pickFromLibrary` is removed.) The chosen file is returned re-typed to the normalised `mimeType` when it differs (so an `.m4a` is stored as `audio/mp4`). `capturePhoto` / `captureVideo` allow photo and video results only, so an audio file picked through them is rejected rather than stored as a broken photo.
 - `startAudioRecording` calls `getUserMedia` with `echoCancellation`, `noiseSuppression` and `autoGainControl` all `false` and `channelCount: 1`: call-style processing degrades a voice memo, and on Android `echoCancellation` also selects the voice-call microphone path. A `NotAllowedError` / `SecurityError` propagates unchanged; any other error retries once with `{ audio: true }`. (Risk: with automatic gain control off some phones may record quietly; reverting is a one-line change to `{ audio: true }`.) The recorder uses `audio/webm;codecs=opus` if supported, else `audio/mp4`, at `audioBitsPerSecond: 128000`, falling back to a plain `new MediaRecorder(stream)` if those options are rejected. Live speech recognition is unchanged.
+- `pickFile` (behind all four pickers) **reads the picked file fully into memory** with `file.arrayBuffer()` and resolves a fresh `new Blob([buf], { type: mimeType })` — always, even when the type is unchanged. Android's picker and cloud providers (for example a Google Photos item still downloading) hand over lazy, provider-backed `File` objects, and a `new Blob([file])` is still only a reference; IndexedDB would then read the bytes at save time and fail with `Failed to write blobs (InvalidBlob)`. The 100 MB size check and the validation/kind checks run first, so memory use is bounded and unsupported files are never read. If `arrayBuffer()` rejects, `pickFile` rejects with `FileReadError` (message "Could not read the selected file"); `mediaCapture` shows "Couldn't read that file — it may still be downloading to your phone. Wait a moment, then pick it again." and attaches nothing.
 - `generateThumbnail` always returns an 80×80 JPEG blob (rendered via an offscreen `<canvas>`).
 - If `MediaRecorder` is unsupported, `startAudioRecording` throws `MediaUnsupportedError`.
 - `elapsedSeconds` callbacks fire at most every 1 second.
@@ -1107,6 +1151,17 @@ Pure — no DOM — so it runs under plain `node` (`mediaImport.chartest.ts`, 65
 
 ---
 
+### SaveError (`src/saveError.ts`)
+
+Pure — no DOM or IndexedDB imports — so it runs under plain `node` (`saveError.chartest.ts`, 20 checks).
+- `isMediaWriteError(err)`: true when `err` is an object whose `message` matches `/blob/i` (Chrome: "Failed to write blobs (InvalidBlob)") or whose `name` is `NotReadableError`; false for `null`/`undefined`, strings and other errors (for example a quota error).
+- `saveErrorMessage(prefix, err)`: for a media write error, `<prefix> — a photo, video or audio file couldn't be saved. Remove it and pick it again.`; otherwise `<prefix>: <detail>`, where the detail is `err.message` for an error-like object and `String(err)` for anything else (this is what Capture showed before). Prefixes in use: "Could not tie knot" (`CaptureScreen`) and "Could not save changes" (`KnotDetailScreen` edit mode).
+- **Why:** the raw browser message ("Failed to write blobs (InvalidBlob)") tells the user nothing they can act on; the cause is almost always one attached file whose bytes could not be stored, and removing it and picking it again is the fix.
+
+**Edit-save order (`KnotDetailScreen`, Save Changes):** a local `saving` flag makes further Save taps no-ops; while it is set, Save shows "Saving…" and Save and Cancel are disabled. `finalizePendingRecording()` and `getCaptured()` run first, then the knot is built; `withLatestCheckOff` and `knotStore.save` run inside a `try/catch`. On failure the error is logged, the toast is `saveErrorMessage('Could not save changes', err)` (8 s), the buttons are re-enabled, and nothing is re-rendered — the form, the removed-media ids and the draft media panel are left as they were, so the user can remove the offending item or retry. `mediaCapture.destroy()` runs only **after** a successful save (previously it ran before, so a failed save left a dead, panel-less form with no message). The empty-knot validation early-return also restores the buttons.
+
+---
+
 ### TranscriptMerge (`src/transcriptMerge.ts`)
 
 Pure — no DOM or `window` — so it runs under plain `node` (`transcriptMerge.chartest.ts`, 40 cases). Android Chrome delivers **cumulative** finals and, when the user speaks fast, **revises** earlier words inside them (`["I wanna go", "I want to go to the shop"]); after an automatic restart a new recognition instance may also re-deliver all or part of the previous tail. The old joiner collapsed pieces only on a strict prefix, so a revision was joined and the phrase repeated, and across restarts only an exact tail was caught. All comparison is on normalised **words** (lower-cased, punctuation stripped, inner apostrophes kept), while output uses the original text, single-spaced.
@@ -1129,10 +1184,10 @@ Pure — no DOM or `window` — so it runs under plain `node` (`transcriptMerge.
 
 ### GeoService (`src/geoService.ts`)
 
-Wraps `navigator.geolocation.getCurrentPosition` with a 10-second deadline. Optionally resolves coordinates to a human-readable address via Nominatim.
+Wraps `navigator.geolocation.getCurrentPosition` with a configurable deadline (`locate(deadlineMs = 10000)`; Capture passes 120 000 when offline). Optionally resolves coordinates to a human-readable address via Nominatim.
 
 **Contracts:**
-- Must resolve (not reject) within about 11 seconds (the 10 s deadline, plus up to 1 s for the permission lookup after an error) regardless of GPS availability.
+- Must resolve (not reject) within `deadlineMs` (default 10 s) plus up to 1 s for the permission lookup after an error, regardless of GPS availability. `deadlineMs` is used for both the `getCurrentPosition` `timeout` option and the guard timer. `getCurrentPosition()` keeps the default.
 - Returns `null` on permission denial, timeout, or unavailability — never throws to callers.
 - `locate()` is the underlying call and `getCurrentPosition()` is a thin wrapper over it (`ok ? coords : null`). It resolves **exactly once**: a `settled` flag makes every later caller (the 10 s guard, a late error, a late permission answer) a no-op, and the guard is cleared as soon as an error arrives so it cannot fire during the permission lookup.
 - **Why a failure happened.** Android Chrome reports `PERMISSION_DENIED` (code 1) when the site is blocked, when the phone's own Location toggle is off, and when Chrome lacks Android's location permission — and the Permissions API then reports `denied` for all three, so `denied` cannot be trusted to mean "site blocked". Only after a code-1 error does `locate()` query `navigator.permissions.query({ name: 'geolocation' })` — after the error, so the state is fresh — capped at 1 s; a throw, a missing Permissions API, or a timeout gives `null`. The pure `classifyLocateFailure(code, permState)` in `locateFailure.ts` then maps:
@@ -1142,6 +1197,24 @@ Wraps `navigator.geolocation.getCurrentPosition` with a 10-second deadline. Opti
   `CaptureScreen` uses `locate()` so it can show the "Location is off" copy when the cause is certain, and the generic "Location unavailable" copy otherwise. (An earlier design also returned `'denied'` and `'unknown'`; they were removed because the "blocked for this site" claim was shown on phones where Location was simply off.) `classifyLocateFailure` is covered by `locateFailure.chartest.ts`.
 - `resolvedAddress` is capped at 100 characters.
 - No background location tracking.
+
+---
+
+### AddressBackfill (`src/addressBackfill.ts`, `src/addressBackfillService.ts`)
+
+A knot tied offline gets its coordinates (a GPS fix needs no internet) but no address, because the Nominatim lookup does. The backfill fills the address in later.
+
+**Pure module `addressBackfill.ts`** (no DOM or IndexedDB imports; runs under plain node): `needsAddress(knot)` — true iff `location` is non-null, `resolvedAddress` is blank, and `manualLabel` is blank; `addPending(ids, id)` — deduplicated, order-preserving; `removePending(ids, id)`. Covered by `addressBackfill.chartest.ts`.
+
+**Service `addressBackfillService.ts`** — `fillPendingAddresses(): Promise<void>`:
+- Returns immediately when offline or when nothing is pending. **Single-flight:** a module-level in-flight promise, so a second call returns the same promise.
+- At most **10** ids per run, processed one at a time, with at least **1.1 s** between Nominatim calls (usage policy: 1 request/s); no wait before the first call, and none for ids skipped without a network call.
+- Per id: re-read the knot. Missing or no longer `needsAddress` → drop the id, no network call. Otherwise `reverseGeocode`; on a non-null address, re-read the knot **again** (it may have changed during the await) and, if it still `needsAddress`, save it with `resolvedAddress` set and `updatedAt = Date.now()`, emit `knot:saved` (which triggers the cloud upload and screen refresh), and drop the id. A `null` result keeps the id for the next run. If the device goes offline mid-run, the run stops. A per-item error is logged with `console.warn` and the id is kept.
+- The pending list is read fresh from `settingsStore.getCurrent()` and persisted after each change, so ids added by Capture during a run are not lost.
+
+**Triggers:** app start (after settings load) and the `window` `online` event, both in `app.ts` with a logging `.catch`. It is deliberately **not** triggered from Capture's save: the `knot:saved` emit there has just started an upload of the same knot, and a backfill right away would bump `updatedAt` and start a second concurrent upload (a possible duplicate Drive file, or an older base landing after a newer one).
+
+**Local-only state:** `AppSettings.pendingAddressKnotIds` lists the knots tied on **this** device that still need an address. It is never synced, so only the creating device backfills; two devices therefore never both edit the same knot for this, and it cannot cause conflict reviews. Filling in the address counts as a content edit (`updatedAt` changes), so the knot is backed up again.
 
 ---
 
@@ -1182,6 +1255,21 @@ Wraps the Web Share API for one or several knots. `shareKnots(knots)` is the imp
 - Includes the candidate files in the share only when there is at least one AND their **combined** size across all selected knots is ≤ 50 MB AND `navigator.canShare?.({ files })` returns true; otherwise shares `{ title, text }` only.
 - If `navigator.share` doesn't exist, copies the text to the clipboard and toasts "Knot copied to clipboard" ("Knots copied to clipboard" for several); if the clipboard write also fails, toasts "Sharing isn't supported in this browser".
 - On a `navigator.share()` rejection: an `AbortError` (user cancelled) is silent — no toast. Any other error attempts a best-effort clipboard copy, toasting "Couldn't share — knot copied to clipboard" on success or "Couldn't share this knot" if that also fails (plural wording for several knots).
+
+---
+
+### BackupStatus (`src/backupStatus.ts`)
+
+Pure — types-only imports — so it runs under plain `node` (`backupStatus.chartest.ts`, 20 checks). Manage backups lists only files that are in Drive, so a knot that exists only on this device was invisible; this module decides which knots get the "☁ Not backed up" / "☁ Backup deleted" badge. `backupStatus({ connected, uploading, knot: { updatedAt }, state, hasJob })` returns `'none' | 'not-backed-up' | 'backup-deleted'` by these rules, **in order** (first match wins):
+
+1. not `connected` → `none`.
+2. `uploading` (this device is sending the knot right now) → `none`; avoids flashing the badge on a just-tied knot.
+3. `state.conflict` present → `none`; the "⚠ Also edited on another device" badge covers it.
+4. `state.backupDeletedAt` set and `>= knot.updatedAt` → `backup-deleted` (deleted in Manage backups and not edited since; an edit after the deletion falls through).
+5. `state.baseUpdatedAt === knot.updatedAt` and no unfinished upload job (`hasJob` false) → `none` (backed up).
+6. otherwise → `not-backed-up` (saved offline, failed upload, never merged, no base yet, or edited since the base).
+
+Inputs come from `CloudSyncService.getBackupStatuses`, which reads `syncState` records, unfinished upload jobs and the in-memory `uploadingIds` once per call. The badge is a local, best-effort signal derived from bookkeeping; it does not list Drive.
 
 ---
 
@@ -1267,7 +1355,7 @@ Each knot's backup is one Drive file `knot-{id}.json` in the app-data folder (`s
 
 #### uploadKnot / uploadPending / retryFailed
 
-- **`uploadKnot(knot)`** — the per-save path (called by `app.ts`'s `knot:saved` listener whenever Drive is connected). Calls `upsertKnot`; on a `ConflictError` it returns quietly without queueing anything (a retry would only hit the same guard, and the conflict — surfaced through `knots:conflicts` — now owns that edit); on any other failure (HTTP error, offline, or the OAuth broker being unreachable during a token refresh) it queues a `CloudUploadJob` — but only if no `'pending'` job already exists for that knot id — and rethrows. When a job is newly queued, it best-effort registers the `cloud-sync` Background Sync tag (feature-detected, wrapped in try/catch, non-blocking) so the Service Worker can nudge a retry even after the tab closes.
+- **`uploadKnot(knot)`** — the per-save path (called by `app.ts`'s `knot:saved` listener whenever Drive is connected). Calls `upsertKnot`; on a `ConflictError` it returns quietly without queueing anything (a retry would only hit the same guard, and the conflict — surfaced through `knots:conflicts` — now owns that edit); on any other failure (HTTP error, offline, or the OAuth broker being unreachable during a token refresh) it queues a `CloudUploadJob` — but only if no `'pending'` job already exists for that knot id — and rethrows. When a job is newly queued, it best-effort registers the `cloud-sync` Background Sync tag (feature-detected, wrapped in try/catch, non-blocking) so the Service Worker can nudge a retry even after the tab closes. For the duration of the call (a `try/finally`) the knot id is in the in-memory `uploadingIds` set and `backup:changed` is emitted at the start and in the `finally`, so a just-tied knot doesn't flash a "Not backed up" badge while its upload is in flight. `uploadPending` retries do not use `uploadingIds`; such a knot shows the badge (it has an unfinished job) until the retry finishes.
 - **`uploadPending()`** — processes every `'pending'` job: marks it `'in-flight'`, looks up the knot (deleting the job as orphaned if it's gone locally), and calls `upsertKnot` directly (not `uploadKnot`, so a failed retry never enqueues a duplicate job). On success the job is deleted and counted; on a `ConflictError` the job is deleted (the conflict owns it) and not counted; on any other failure, attempts < 3 puts it back to `'pending'`, attempts ≥ 3 marks it `'failed'`. The method **resolves with the number of jobs uploaded successfully in this run** (`Promise<number>`); `doSyncAll` adds it to `pushed`, and `retryFailed` ignores it. At most one toast is shown per `uploadPending` run, regardless of how many jobs newly failed: the exact knot id (first 8 chars) if exactly one failed, or a count if more than one — either way with a "Tap to retry" action wired to `retryFailed()`.
 - **`retryFailed()`** — resets every `'failed'` job to `'pending'` with `attempts: 0`, then calls `syncAll()`.
 
@@ -1282,12 +1370,13 @@ Each knot's backup is one Drive file `knot-{id}.json` in the app-data folder (`s
 5. Deletes each `deleteDupes` file, best-effort — a failure here is logged and counted but does not abort the sync.
 6. Pushes each `plan.push` knot. The plan was built from a listing taken earlier in the pass, so **immediately before each write** it re-lists that knot's files, takes the newest, re-reads the knot's base, and evaluates the same `remoteChangedSinceBase` guard as `upsertKnot`. If the cloud copy changed in the meantime it writes **nothing**: it records a conflict (as `upsertKnot` does), which is counted in the returned `conflicts` / the merge's "need review" count, and its queued upload job is cleared in step 10 (the conflict owns that edit). It is neither counted as pushed nor treated as a failure. Otherwise it pushes via `sendKnotToDrive` onto the **freshly found** file id (not the plan's), and records the base (`baseUpdatedAt = knot.updatedAt`).
 7. Pulls each `plan.pull` entry: downloads with `alt=media`, runs `jsonToKnot`, then sets the check-off fields from the file's `appProperties` **if the remote `checkOffChangedAt` is at least the local one, otherwise keeps the local values** — never trusting the JSON body's check-off fields, which can be stale. It saves via `KnotStore.saveFromSync` — **not** `KnotStore.save`, so a pull never emits `knot:saved` and is never mistaken for a local edit — and records the base (`baseUpdatedAt = remote updatedAt`).
-8. Applies `plan.baseUpdates` (a knot found equal on both sides gets that value as its base, which also clears a recorded conflict), records each `plan.conflicts` entry in `syncState`, and drops a recorded conflict whose knot no longer exists locally or in Drive.
+8. Applies `plan.baseUpdates` (a knot found equal on both sides gets that value as its base, which also clears a recorded conflict), records each `plan.conflicts` entry in `syncState`, and drops a recorded conflict whose knot no longer exists locally or in Drive. **Step 7d2 (backup-deleted marks):** for every local knot that a cloud tombstone blocks from being pushed (`tombstone >= knot.updatedAt`) and that has no file in Drive, it writes `backupDeletedAt = tombstone` onto the knot's `syncState` (preserving base and conflict), only when the stored value differs, best effort per item. This is how a device that did *not* delete the backup learns of it. Pushes, pulls and base updates in the same pass replace the record via `setBase` and so clear the flag; the conflict paths may drop it, and the next pass re-marks it.
 9. Executes `plan.checkOffPush` (a metadata-only `PATCH files/{fileId}` with only the two check-off `appProperties`, `null` clearing `checkedOffAt`) and `plan.checkOffPull` (re-reads the local knot, skips it if it already has an equal-or-newer `checkOffChangedAt`, otherwise updates **only** `checkedOffAt` and `checkOffChangedAt` via `saveFromSync`, with no event). Per-item failures are logged and skipped.
 10. After pushes succeed, deletes any pending/failed `CloudUploadJob` for those knot ids, and for knots now in conflict, including those the step-6 re-check just found conflicted (a knot pushed by the full sync no longer needs its queued retry; a conflicted knot's edit is owned by the conflict).
 11. Saves `lastSyncAt: Date.now()`.
 12. If `pulled > 0` or any check-off was pulled, emits `knots:synced` — this, not `knot:saved`, is how `KnotsScreen`, `CalendarScreen`, and `KnotDetailScreen` learn to reload.
 13. Counts the knots in conflict, and emits `knots:conflicts { count }` when the count is above zero **or** this pass cleared some (so a badge or toast for them can go away). `knots:conflicts` can be emitted more than once per sync (also from the upsert guard), so listeners must treat it as *current state*, not as "show a new toast".
+14. When the pass ends — success **or** failure, via the single-flight `.finally` — emits `backup:changed`, because queued uploads were retried and bases may have changed. (`notifyStatus` emits it too when the connection changes.)
 
 A per-item failure anywhere in steps 5–9 is counted, `console.warn`'d, and the loop continues; a failure in the initial listing (step 2/3) or in an auth call underneath any of these throws and aborts the whole pass.
 
@@ -1318,7 +1407,8 @@ In every case nothing has been deleted, so the review screen's error text ("Coul
 #### listBackups / deleteBackup / localDeleteConfirmText
 
 - **`listBackups()`** lists every app-data file except `deleted-backups.json` (paginated the same way as `syncAll`), classifying each as `kind: 'knot'` (a `knot-` prefixed name with `appProperties.knotId`) or `kind: 'old'` (anything else — e.g. a leftover pre-rename `note-*.json` test file), and sorts newest first by `updatedAt` (falling back to `modifiedTime`). Each `BackupEntry` carries `checkedOffAt: number | null`, parsed from the file's `appProperties` (always `null` for an `'old'` file), which "Manage backups" shows as a "Checked off" badge.
-- **`deleteBackup(fileId, knotId)`** writes the cloud tombstone **before** deleting the Drive file (not after): if the tombstone write fails, the file is left alone and the error propagates so the UI can show it; only once the tombstone is durably written does it send the DELETE. Reversing that order would risk the file being gone with no tombstone recorded, so another device holding that knot would silently re-upload it on its next sync.
+- **`deleteBackup(fileId, knotId)`** writes the cloud tombstone **before** deleting the Drive file (not after): if the tombstone write fails, the file is left alone and the error propagates so the UI can show it; only once the tombstone is durably written does it send the DELETE. Reversing that order would risk the file being gone with no tombstone recorded, so another device holding that knot would silently re-upload it on its next sync. After the Drive delete succeeds it also writes `backupDeletedAt` (the tombstone time) onto the knot's `syncState` record, preserving the other fields — best effort, a failure is only `console.warn`'d because the delete already happened — and emits `backup:changed`.
+- **`getBackupStatuses(knots)`** returns a `Map<knotId, BackupBadge>` for the Knots list and detail page. When not connected every entry is `'none'`. Otherwise it reads `listSyncStates()` and the unfinished upload jobs (`listUnfinishedJobs`) once and applies the pure `backupStatus` rule set per knot (`uploading` comes from the in-memory `uploadingIds` set). It never touches the network, so it is cheap enough to call on every `backup:changed`.
 - **`localDeleteConfirmText()`** returns the plain-language confirm() text for a *local* delete (Requirement 11.11): when connected, *"Delete this knot from this device? Its cloud backup is kept — you can remove it in Settings › Cloud Backup › Manage backups."*; otherwise, *"Delete this knot from this device? This cannot be undone."*
 
 #### Cloud tombstones (`deleted-backups.json`)
@@ -1436,6 +1526,7 @@ type EventMap = {
   "knot:checkedOff": Knot;             // a knot was checked off or unchecked (NOT a content save): triggers pushCheckOff only
   "knots:synced": { pulled: number; pushed: number };
   "knots:conflicts": { count: number };// number of knots currently awaiting conflict review
+  "backup:changed": void;              // a knot's backup status may have changed (upload started/finished, sync pass done, backup deleted, connection changed)
   "settings:changed": AppSettings;
   "sw:waiting": void;
 };
@@ -1444,7 +1535,7 @@ function emit<K extends keyof EventMap>(event: K, data: EventMap[K]): void
 function on<K extends keyof EventMap>(event: K, cb: (data: EventMap[K]) => void): () => void
 ```
 
-All screen `render` functions that subscribe to events store the returned unsubscribe function and call it in their cleanup function. `knots:synced` is emitted by `CloudSyncService.syncAll()` when at least one knot was pulled or a check-off state was pulled, and by `resolveConflict` so screens reload after a resolution. `knots:conflicts` is emitted by the upsert guard, by `syncAll`, and by `resolveConflict`; because it can fire more than once per sync, listeners treat `count` as current state (replace, don't stack). `knot:checkedOff` is emitted by the Knots list and the detail screen, never by sync.
+All screen `render` functions that subscribe to events store the returned unsubscribe function and call it in their cleanup function. `knots:synced` is emitted by `CloudSyncService.syncAll()` when at least one knot was pulled or a check-off state was pulled, and by `resolveConflict` so screens reload after a resolution. `knots:conflicts` is emitted by the upsert guard, by `syncAll`, and by `resolveConflict`; because it can fire more than once per sync, listeners treat `count` as current state (replace, don't stack). `knot:checkedOff` is emitted by the Knots list and the detail screen, never by sync. `backup:changed` is emitted by `CloudSyncService` — when `uploadKnot` starts and finishes (success or failure), after every `syncAll` pass (success or failure), after `deleteBackup`, and whenever the connection status changes — and carries no data: listeners re-query `getBackupStatuses`.
 
 ---
 
@@ -1462,9 +1553,13 @@ node src/knotDiff.chartest.js
 node src/deviceLabel.chartest.js
 node src/mergeMessage.chartest.js
 node src/locateFailure.chartest.js
+node src/addressBackfill.chartest.js
 node src/randomKnot.chartest.js
 node src/mediaImport.chartest.js
+node src/mediaSummary.chartest.js
 node src/transcriptMerge.chartest.js
+node src/saveError.chartest.js
+node src/backupStatus.chartest.js
 node src/components/timezoneCombobox.proptest.js
 ```
 
@@ -1641,9 +1736,41 @@ Identical knots report `identical` with nothing else; changed text is reported w
 
 ---
 
+### Property 16: SaveError — which save failures are media write errors (`saveError.chartest.ts`)
+
+`isMediaWriteError` must be true for Chrome's `{ name: 'UnknownError', message: 'Failed to write blobs (InvalidBlob)' }`, for a lower-case "invalidblob", and for a `NotReadableError` name, and false for a quota error, a plain `Error`, a thrown string, `null`, `undefined`, and an object whose `message` is not a string. `saveErrorMessage(prefix, err)` must give the "Remove it and pick it again" text for media write errors with both prefixes ("Could not tie knot", "Could not save changes"), and `<prefix>: <detail>` (the `message`, or `String(err)`) for everything else. Twenty checks. The IndexedDB write itself, the pick-time read, and the edit-form behaviour after a failed save need a browser and a real file provider and are verified by hand.
+
+**Validates: Requirement 3.8, 5.6, 13.12** — `saveError.ts`. **Automated** — `node src/saveError.chartest.js`.
+
+---
+
+### Property 17: AddressBackfill — which knots need an address (`addressBackfill.chartest.ts`)
+
+`needsAddress(knot)` must be true exactly when `knot.location` is non-null, its `resolvedAddress` is undefined, empty or whitespace, and `knot.manualLabel` is undefined, empty or whitespace. It must be false for a null location (with or without a label), a non-blank address, and a non-blank manual label. `addPending(ids, id)` must dedupe, preserve order, accept `undefined`, and not mutate its input; `removePending(ids, id)` must leave the list unchanged when the id is absent and return `[]` for `undefined`. Fifteen checks. The service (network, timing, settings persistence) needs a browser and is verified by hand.
+
+**Validates: Requirement 1.11** — `addressBackfill.ts`. **Automated** — `node src/addressBackfill.chartest.js`.
+
+---
+
+### Property 18: MediaSummary — one entry per media type, in a fixed order (`mediaSummary.chartest.ts`)
+
+`summarizeMedia(items)` must return an empty array for no items and for text-only items; one entry per type present, always in the order photo, video, audio whatever the input order, with absent types omitted; `count` equal to the number of items of that type; and `first` equal to (the same object as) the first item of that type in array order. `describeMediaSummary(entries)` must return `''` for no entries, use the singular for a count of 1 ("1 photo", "1 video", "1 voice recording") and the plural otherwise, and join entries with ", " (for example "3 photos, 1 video, 1 voice recording"). Seventeen checks. The thumbnail rendering, image-error fallback and object-URL revocation need a browser and are verified by hand.
+
+**Validates: Requirement 13.13** — `mediaSummary.ts`. **Automated** — `node src/mediaSummary.chartest.js`.
+
+---
+
+### Property 19: BackupStatus — which knots are not in Drive (`backupStatus.chartest.ts`)
+
+`backupStatus` must return `none` when Drive is not connected (even with an upload in flight, a job, a conflict or a deletion mark); `none` while uploading, even for a never-synced knot or one marked deleted; `none` for a knot in conflict, even if it is marked deleted or has a job; `backup-deleted` when `backupDeletedAt >= knot.updatedAt` (including equality and `0`/`0`), and it must beat a matching base; `not-backed-up` (not `backup-deleted`) when the knot was edited after the deletion; `none` when `baseUpdatedAt === knot.updatedAt` with no job, but `not-backed-up` when a job exists; and `not-backed-up` for no state at all, a `null` base, and a base older or newer than the knot. Twenty checks. The IndexedDB reads, `uploadingIds`, the `backup:changed` emissions, the step 7d2 marking and the badge/pill rendering need a browser and a real Drive account and are verified by hand.
+
+**Validates: Requirement 6.11, 11.14, 13.14** — `backupStatus.ts`. **Automated** — `node src/backupStatus.chartest.js`.
+
+---
+
 ### Drive and Share behaviour: verified by hand
 
-Everything that requires a real Google account, a real Drive app-data folder, a real platform share sheet, or a real notification drawer — connecting, the full `syncAll` pass against live Drive data, `pushCheckOff` and `resolveConflict` against live files, `listBackups`/`deleteBackup` against live files, `navigator.share`/`navigator.canShare`, and the quick-capture notification's permission, tap, and relaunch behaviour — is **verified manually** against a real deployment, not by an automated test. `syncPlan.ts`, `knotSummary.ts`, `dayCutoff.ts`, `knotDiff.ts`, `deviceLabel.ts`, `mergeMessage.ts`, `locateFailure.ts`, `randomKnot.ts`, `mediaImport.ts`, and `transcriptMerge.ts` are deliberately factored out as pure modules specifically so the *decision logic* each of those features depends on can still be tested automatically, even though the I/O around them cannot be. Pending real-device checks: a check-off syncs to a second device without a content re-upload and shows in Manage backups; a check-off on one device followed by a content edit on another keeps the check-off (this is also the check for the per-key `appProperties` merge); editing the same knot on two offline devices and then syncing gives a review prompt, and all three choices work; the Merge toast counts after an offline save; the notification survives a tap and a relaunch and opens Capture under the subpath; multi-share with media opens the native sheet.
+Everything that requires a real Google account, a real Drive app-data folder, a real platform share sheet, or a real notification drawer — connecting, the full `syncAll` pass against live Drive data, `pushCheckOff` and `resolveConflict` against live files, `listBackups`/`deleteBackup` against live files, `navigator.share`/`navigator.canShare`, and the quick-capture notification's permission, tap, and relaunch behaviour — is **verified manually** against a real deployment, not by an automated test. `syncPlan.ts`, `knotSummary.ts`, `dayCutoff.ts`, `knotDiff.ts`, `deviceLabel.ts`, `mergeMessage.ts`, `locateFailure.ts`, `randomKnot.ts`, `mediaImport.ts`, `mediaSummary.ts`, `transcriptMerge.ts`, `saveError.ts`, and `backupStatus.ts` are deliberately factored out as pure modules specifically so the *decision logic* each of those features depends on can still be tested automatically, even though the I/O around them cannot be. Pending real-device checks: a check-off syncs to a second device without a content re-upload and shows in Manage backups; a check-off on one device followed by a content edit on another keeps the check-off (this is also the check for the per-key `appProperties` merge); editing the same knot on two offline devices and then syncing gives a review prompt, and all three choices work; the Merge toast counts after an offline save; the notification survives a tap and a relaunch and opens Capture under the subpath; multi-share with media opens the native sheet.
 
 ---
 
@@ -1651,12 +1778,15 @@ Everything that requires a real Google account, a real Drive app-data folder, a 
 
 | Failure Scenario | Handling |
 |---|---|
-| Geolocation denied | The location line becomes a retry button. Its text separates the causes browsers report as one error: "Location blocked for this site — allow it in browser settings, then tap to retry" (site blocked), "Location is off — turn it on, then tap to retry" (site allowed, device Location off), or "Location is off or blocked — turn it on or allow it for this site, then tap to retry" (cause unknown). Knot saves without location (or with the fix, if a retry succeeds before saving). |
+| Geolocation denied / failed | The location line becomes a retry button. Android Chrome folds a blocked site, the device's Location being off, and Chrome lacking Android's location permission into one error (code 1), so only one case is told apart: code 1 with the Permissions API state `granted` shows "Location is off — turn it on, then tap to retry"; every other case (code 1 with `denied`, `prompt` or an unreadable state, and all other codes) shows "Location unavailable — tap to retry". Knot saves without location (or with the fix, if a retry succeeds before saving). |
 | Geolocation timeout (10 s) | Save best-available fix; if none, location field marked unavailable. |
 | Microphone denied | Error toast; mic button disabled for remainder of session. |
 | Camera / MediaRecorder unsupported | Error toast; camera/mic button hidden. |
 | File > 100 MB or wrong format | Inline error under the control; file not attached; existing content preserved. |
-| IndexedDB save failure | Error message "Could not save knot — storage may be full." Knot content not discarded. |
+| Picked file cannot be read (pick-time `FileReadError`, e.g. a Google Photos item still downloading) | Inline error under the control: "Couldn't read that file — it may still be downloading to your phone. Wait a moment, then pick it again."; nothing attached; existing content preserved. |
+| IndexedDB save failure (new knot) | Toast (8 s) "Could not tie knot: <detail>" via `saveErrorMessage`; the Capture Screen and its media stay intact, so the user can retry. Knot content not discarded. |
+| IndexedDB save failure (knot edit) | Toast (8 s) "Could not save changes: <detail>"; the edit form, removed-media state and draft media panel are left unchanged (the panel is destroyed only after a successful save); Save is re-enabled. |
+| Media write failure on save (`InvalidBlob` / `NotReadableError`) | Same toasts, but the text is "<prefix> — a photo, video or audio file couldn't be saved. Remove it and pick it again." |
 | IndexedDB settings save failure | Toast; control reverts to previous value. |
 | No live transcript produced (failure, no speech, unsupported, offline) | After saving, a non-blocking toast (`toastService.show`, 5 seconds, or dismissed on tap) that starts "Saved." and gives the reason where known (for example "Live transcription was blocked (mic permission)…"). Audio saved normally and marked `transcriptionStatus: 'pending'` so it can be transcribed later from the knot. |
 | Share: Web Share unsupported | Text copied to clipboard; toast "Knot copied to clipboard" (or "Sharing isn't supported in this browser" if the clipboard write also fails). |

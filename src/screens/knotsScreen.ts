@@ -18,6 +18,7 @@ import { shareKnots } from '../shareService.js';
 import { toggleCheckOff } from '../checkOffActions.js';
 import { pickRandomKnot } from '../randomKnot.js';
 import { isCheckedOff, isCheckedOffVisible, nextCutoffAfter, resolveTimeZone } from '../dayCutoff.js';
+import type { BackupBadge } from '../backupStatus.js';
 import type { Knot, AudioMediaItem, PhotoMediaItem, VideoMediaItem, TextMediaItem } from '../types.js';
 
 /** Longest we wait before re-checking which checked-off knots should now be hidden. */
@@ -39,6 +40,10 @@ export function renderKnots(container: HTMLElement): () => void {
   /** Knots currently rendered in the list (after the check-off cutoff filter). */
   let displayedKnots: Knot[] = [];
   let conflictIds = new Set<string>();
+  /** Which knots are not in Google Drive ('none' / missing = no badge). */
+  let backupBadges = new Map<string, BackupBadge>();
+  /** Guards against an older badge lookup overwriting a newer one. */
+  let badgeSeq = 0;
   /** Reveal checked-off knots that are past the cutoff. */
   let showCheckedOff = false;
   let selectMode = false;
@@ -140,11 +145,45 @@ export function renderKnots(container: HTMLElement): () => void {
     shareSelectedBtn.disabled = selected.size === 0;
   }
 
+  /** A small non-interactive badge for a knot that is not in Google Drive, or null for none. */
+  function createBackupBadge(kind: BackupBadge | undefined): HTMLElement | null {
+    if (kind !== 'not-backed-up' && kind !== 'backup-deleted') return null;
+    const badge = document.createElement('div');
+    badge.className = 'backup-status-badge';
+    badge.textContent = kind === 'not-backed-up' ? '☁ Not backed up' : '☁ Backup deleted';
+    return badge;
+  }
+
+  /** Re-sync the badges on the entries already in the list, without re-rendering them. */
+  function applyBackupBadges(): void {
+    for (const entry of listEl.querySelectorAll<HTMLElement>('.knot-entry[data-knot-id]')) {
+      entry.querySelector('.backup-status-badge')?.remove();
+      const badge = createBackupBadge(backupBadges.get(entry.dataset.knotId ?? ''));
+      if (badge) entry.querySelector('.knot-entry-header')?.after(badge);
+    }
+  }
+
+  /** Fetch fresh backup statuses (never throws) and update the badges in place. */
+  async function refreshBackupBadges(): Promise<void> {
+    const seq = ++badgeSeq;
+    let statuses: Map<string, BackupBadge>;
+    try {
+      statuses = await cloudSyncService.getBackupStatuses(allKnots);
+    } catch (err) {
+      console.warn('Could not load backup statuses:', err);
+      return;
+    }
+    if (seq !== badgeSeq) return;
+    backupBadges = statuses;
+    applyBackupBadges();
+  }
+
   function renderKnotEntry(knot: Knot): HTMLElement {
     // The entry is a div (not an anchor) so we can safely nest a
     // location <a> inside it without producing invalid nested-link HTML.
     const entry = document.createElement('div');
     entry.className = 'knot-entry';
+    entry.dataset.knotId = knot.id;
     if (isCheckedOff(knot)) entry.classList.add('knot-entry--checked-off');
     entry.tabIndex = 0;
 
@@ -248,6 +287,10 @@ export function renderKnots(container: HTMLElement): () => void {
     }
 
     entry.appendChild(entryHeader);
+
+    // "Not backed up" / "Backup deleted" — only when Google Drive is connected
+    const backupBadgeEl = createBackupBadge(backupBadges.get(knot.id));
+    if (backupBadgeEl) entry.appendChild(backupBadgeEl);
 
     // Conflict badge — this knot was edited on another device too
     if (!selectMode && conflictIds.has(knot.id)) {
@@ -513,11 +556,19 @@ export function renderKnots(container: HTMLElement): () => void {
     } catch {
       /* no conflict info available — render without badges */
     }
+    let badges = new Map<string, BackupBadge>();
+    try {
+      badges = await cloudSyncService.getBackupStatuses(knots);
+    } catch {
+      /* no backup info available — render without backup badges */
+    }
     // A newer load started while we were awaiting: let it paint instead.
     if (seq !== loadSeq) return;
 
     allKnots = knots;
     conflictIds = new Set(conflicts.map((c) => c.knotId));
+    backupBadges = badges;
+    badgeSeq++; // any lookup started before this paint is now stale
     renderList();
   }
 
@@ -534,6 +585,10 @@ export function renderKnots(container: HTMLElement): () => void {
   // 'knots:conflicts' can fire several times per sync: it is current state,
   // so just reload the badges.
   unsubscribers.push(eventBus.on('knots:conflicts', reload));
+  // Upload started/finished, sync done, backup deleted, connection changed:
+  // only the badges can change, so update them in place (no list re-render,
+  // which keeps select mode, scroll position and the checked-off toggle as is).
+  unsubscribers.push(eventBus.on('backup:changed', () => void refreshBackupBadges()));
 
   // Coming back to the app may be after a cutoff — re-check what to show.
   const onVisibilityChange = (): void => {

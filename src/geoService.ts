@@ -1,6 +1,6 @@
 // ============================================================
 // e-Handkerchief — GeoService
-// Wraps navigator.geolocation with a 10-second deadline.
+// Wraps navigator.geolocation with a configurable deadline (default 10 s).
 // Optional Nominatim reverse geocoding.
 // ============================================================
 
@@ -13,7 +13,7 @@ export type { LocateFailureReason };
 export interface GeoServiceAPI {
   /**
    * Request the current GPS position.
-   * Always resolves within 10 seconds — never throws.
+   * Always resolves within 10 seconds (the default deadline) — never throws.
    * Returns null on permission denial, timeout, or unavailability.
    */
   getCurrentPosition(): Promise<KnotLocation | null>;
@@ -22,9 +22,9 @@ export interface GeoServiceAPI {
    * Like getCurrentPosition(), but reports why a failure happened:
    * 'off' (the site is still allowed, so the device's Location is off) or
    * 'unavailable' (anything else, including every ambiguous case).
-   * Never rejects.
+   * Never rejects. `deadlineMs` (default 10 000) is how long to wait for a fix.
    */
-  locate(): Promise<LocateResult>;
+  locate(deadlineMs?: number): Promise<LocateResult>;
 
   /**
    * Reverse-geocode a coordinate to a human-readable address via Nominatim.
@@ -75,8 +75,10 @@ async function queryGeolocationPermission(): Promise<'granted' | 'denied' | 'pro
 
 /**
  * Request the current GPS position, reporting why it failed.
- * Always resolves within about 11 seconds (10 s guard, or a 1 s permission
- * lookup after an error) — never rejects, and resolves exactly once.
+ * Always resolves within `deadlineMs` (default 10 s) plus, after a
+ * permission-denied error, up to 1 s for the permission lookup — never
+ * rejects, and resolves exactly once. A longer deadline suits offline use,
+ * where a cold GPS fix without assisted GPS can take minutes.
  *
  * Failure reasons: PERMISSION_DENIED (code 1) is refined with the Permissions
  * API, queried after the error fires so the state is fresh. Only 'granted' is
@@ -87,7 +89,7 @@ async function queryGeolocationPermission(): Promise<'granted' | 'denied' | 'pro
  * a 'prompt' or unknown state, POSITION_UNAVAILABLE, TIMEOUT, the guard
  * timeout, and no geolocation support.
  */
-export function locate(): Promise<LocateResult> {
+export function locate(deadlineMs = 10000): Promise<LocateResult> {
   return new Promise((resolve) => {
     let settled = false;
     const finish = (result: LocateResult): void => {
@@ -100,7 +102,7 @@ export function locate(): Promise<LocateResult> {
       finish({ ok: false, reason: classifyLocateFailure(code, perm) });
 
     // Belt-and-suspenders: our own timeout in case the API doesn't respect its timeout option
-    const guard = setTimeout(() => fail(null, null), 10000);
+    const guard = setTimeout(() => fail(null, null), deadlineMs);
 
     if (!navigator.geolocation) {
       fail(null, null);
@@ -131,7 +133,7 @@ export function locate(): Promise<LocateResult> {
             fail(code, null);
           }
         },
-        { timeout: 10000, maximumAge: 0, enableHighAccuracy: true }
+        { timeout: deadlineMs, maximumAge: 0, enableHighAccuracy: true }
       );
     } catch {
       fail(null, null);

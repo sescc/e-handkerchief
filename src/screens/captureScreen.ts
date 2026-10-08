@@ -7,10 +7,12 @@ import { geoService } from '../geoService.js';
 import { knotStore } from '../knotStore.js';
 import { settingsStore } from '../settingsStore.js';
 import { toastService } from '../toastService.js';
+import { saveErrorMessage } from '../saveError.js';
 import { eventBus } from '../eventBus.js';
 import { navigate } from '../router.js';
 import { formatKnotTimestamp } from '../dateFormat.js';
 import { transcriptionService } from '../transcriptionService.js';
+import { needsAddress, addPending } from '../addressBackfill.js';
 import { renderMediaCapture } from '../components/mediaCapture.js';
 import type {
   Knot,
@@ -137,10 +139,13 @@ export function renderCapture(container: HTMLElement): () => void {
   }
 
   // ---- Geo location ----
-  function renderLocationLoading(): void {
+  function renderLocationLoading(offline: boolean): void {
     const spinner = document.createElement('span');
     spinner.className = 'location-loading';
-    spinner.innerHTML = '<span class="spinner spinner--sm"></span> Getting location…';
+    const label = offline
+      ? 'Getting location (no internet — GPS can take a minute or two)…'
+      : 'Getting location…';
+    spinner.innerHTML = `<span class="spinner spinner--sm"></span> ${label}`;
     metaLocation.replaceChildren(spinner);
   }
 
@@ -160,9 +165,12 @@ export function renderCapture(container: HTMLElement): () => void {
   function fetchLocation(): void {
     const requestId = ++locationRequestId;
     locationLoading = true;
-    renderLocationLoading();
+    // Offline there is no assisted GPS, so a cold fix can take minutes. The
+    // coordinates don't need internet; only the address lookup does.
+    const offline = !navigator.onLine;
+    renderLocationLoading(offline);
 
-    void geoService.locate().then((result) => {
+    void geoService.locate(offline ? 120_000 : 10_000).then((result) => {
       if (disposed || requestId !== locationRequestId) return;
       locationLoading = false;
 
@@ -254,14 +262,27 @@ export function renderCapture(container: HTMLElement): () => void {
     } catch (err) {
       isSaving = false;
       updateSaveBtnState();
-      const detail = err instanceof Error ? err.message : String(err);
       console.error('Knot save failed:', err);
-      toastService.show(`Could not tie knot: ${detail}`, 8000);
+      toastService.show(saveErrorMessage('Could not tie knot', err), 8000);
       return;
     }
 
     // Emit saved event so Knots refreshes
     eventBus.emit('knot:saved', knot);
+
+    // A fix without an address (the lookup needs internet) is remembered so
+    // the address can be filled in once back online. Never blocks the save.
+    if (knot.location && needsAddress(knot)) {
+      try {
+        const pending = addPending(settingsStore.getCurrent().pendingAddressKnotIds, knot.id);
+        await settingsStore.save({ pendingAddressKnotIds: pending });
+      } catch (err) {
+        console.warn('Could not queue address lookup for the new knot:', err);
+      }
+      // Not backfilled here: the knot:saved upload above is still in flight, and
+      // a second save now would start a concurrent upload of the same knot.
+      // app.ts runs the backfill at startup and on the `online` event.
+    }
 
     // Audio attached from a library file was never live-transcribed, so the
     // "live transcription" messages below would be misleading for it.

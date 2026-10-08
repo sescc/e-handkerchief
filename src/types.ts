@@ -127,6 +127,12 @@ export interface AppSettings {
   shareAttribution: boolean;
   /** Keep a quick-capture notification in the notification drawer (once permission is granted). Default true. */
   quickCaptureNotification: boolean;
+  /**
+   * Local-only list of knots tied on THIS device whose address still needs
+   * looking up (the GPS fix arrived offline). Only the creating device
+   * backfills, so two devices never both edit the same knot.
+   */
+  pendingAddressKnotIds?: string[];
 }
 
 export type UploadJobStatus = 'pending' | 'in-flight' | 'failed';
@@ -171,4 +177,10 @@ export interface SyncStateRecord {
     /** That remote copy's content `updatedAt`. */
     remoteUpdatedAt: number;
   };
+  /**
+   * When this device learned the knot's Drive backup was deleted via Manage
+   * backups (the cloud tombstone time). Cleared by the next successful push or
+   * pull, because setBase writes a fresh record.
+   */
+  backupDeletedAt?: number;
 }
