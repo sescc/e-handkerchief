@@ -20,6 +20,7 @@ import { eventBus } from './eventBus.js';
 import { formatKnotTimestamp } from './dateFormat.js';
 import { planSync, remoteChangedSinceBase, type LocalEntry, type RemoteEntry } from './syncPlan.js';
 import { deviceLabelFromUserAgent } from './deviceLabel.js';
+import { backupStatus, type BackupBadge } from './backupStatus.js';
 import type { Knot, CloudUploadJob, OAuthToken, TextMediaItem, AudioMediaItem } from './types.js';
 
 // Both values are injected into config.js at deploy time (see deploy.yml).
@@ -423,7 +424,12 @@ const _statusListeners: Array<(s: ConnectionStatus) => void> = [];
 
 function notifyStatus(s: ConnectionStatus): void {
   for (const l of _statusListeners) l(s);
+  // Connecting or disconnecting changes which knots show a backup badge.
+  eventBus.emit('backup:changed', undefined);
 }
+
+/** Ids of knots this device is uploading right now (in memory only). */
+const uploadingIds = new Set<string>();
 
 /** A best-effort nudge for the SW to retry a queued upload via Background Sync. */
 function registerCloudSyncBackgroundSync(): void {
@@ -527,6 +533,11 @@ export interface CloudSyncServiceAPI {
   deleteBackup(fileId: string, knotId: string | null): Promise<void>;
   /** The plain-language confirm() text for a LOCAL delete, based on connection status. */
   localDeleteConfirmText(): string;
+  /**
+   * Which of these knots are not in Google Drive, for the "Not backed up" /
+   * "Backup deleted" badges. Every badge is 'none' when Drive isn't connected.
+   */
+  getBackupStatuses(knots: Knot[]): Promise<Map<string, BackupBadge>>;
 }
 
 /** What a `syncAll()` pass did. */
@@ -681,37 +692,46 @@ export const cloudSyncService: CloudSyncServiceAPI = {
     const token = settingsStore.getCurrent().cloudBackupToken;
     if (!token) return;
 
+    // Mark the knot as "being sent" so its list badge doesn't flash while the
+    // upload is in flight.
+    uploadingIds.add(knot.id);
+    eventBus.emit('backup:changed', undefined);
     try {
-      await upsertKnot(knot);
-    } catch (err) {
-      // An edit conflict is owned by the review flow now: no retry job (a
-      // retry would just hit the same guard), and it isn't an upload failure.
-      if (err instanceof ConflictError) return;
-      // Queue for retry on any failure — HTTP error, offline, or the OAuth
-      // broker being unreachable during a token refresh. Avoid creating a
-      // second pending job for the same knot.
-      const db = await openDB();
-      const pendingJobs = await dbGetAllByIndex<CloudUploadJob>(
-        db,
-        'cloudUploadJobs',
-        'status',
-        IDBKeyRange.only('pending')
-      );
-      const alreadyQueued = pendingJobs.some((j) => j.knotId === knot.id);
-      if (!alreadyQueued) {
-        const job: CloudUploadJob = {
-          id: crypto.randomUUID(),
-          knotId: knot.id,
-          provider: 'google-drive',
-          createdAt: Date.now(),
-          attempts: 0,
-          lastAttemptAt: null,
-          status: 'pending',
-        };
-        await dbPut(db, 'cloudUploadJobs', job);
-        registerCloudSyncBackgroundSync();
+      try {
+        await upsertKnot(knot);
+      } catch (err) {
+        // An edit conflict is owned by the review flow now: no retry job (a
+        // retry would just hit the same guard), and it isn't an upload failure.
+        if (err instanceof ConflictError) return;
+        // Queue for retry on any failure — HTTP error, offline, or the OAuth
+        // broker being unreachable during a token refresh. Avoid creating a
+        // second pending job for the same knot.
+        const db = await openDB();
+        const pendingJobs = await dbGetAllByIndex<CloudUploadJob>(
+          db,
+          'cloudUploadJobs',
+          'status',
+          IDBKeyRange.only('pending')
+        );
+        const alreadyQueued = pendingJobs.some((j) => j.knotId === knot.id);
+        if (!alreadyQueued) {
+          const job: CloudUploadJob = {
+            id: crypto.randomUUID(),
+            knotId: knot.id,
+            provider: 'google-drive',
+            createdAt: Date.now(),
+            attempts: 0,
+            lastAttemptAt: null,
+            status: 'pending',
+          };
+          await dbPut(db, 'cloudUploadJobs', job);
+          registerCloudSyncBackgroundSync();
+        }
+        throw err;
       }
-      throw err;
+    } finally {
+      uploadingIds.delete(knot.id);
+      eventBus.emit('backup:changed', undefined);
     }
   },
 
@@ -808,6 +828,8 @@ export const cloudSyncService: CloudSyncServiceAPI = {
 
     const promise = doSyncAll().finally(() => {
       if (_syncPromise === promise) _syncPromise = null;
+      // Success or failure: uploads were retried and bases may have changed.
+      eventBus.emit('backup:changed', undefined);
     });
     _syncPromise = promise;
     return promise;
@@ -981,9 +1003,11 @@ export const cloudSyncService: CloudSyncServiceAPI = {
     // risk the opposite failure mode: if the tombstone write then failed,
     // another device holding this knot would re-upload it on its next
     // sync, silently undoing the delete the user just asked for.
+    let deletedAt: number | null = null;
     if (knotId) {
       const tombstones = await readCloudTombstones();
-      tombstones[knotId] = Date.now();
+      deletedAt = Date.now();
+      tombstones[knotId] = deletedAt;
       await writeCloudTombstones(tombstones);
     }
 
@@ -991,6 +1015,46 @@ export const cloudSyncService: CloudSyncServiceAPI = {
       method: 'DELETE',
     });
     if (!res.ok) throw new Error(`Drive delete failed: ${res.status}`);
+
+    // Remember on this device that the knot's backup is gone, so its list badge
+    // can say so. Best effort: the Drive delete already succeeded.
+    if (knotId && deletedAt !== null) {
+      try {
+        const existing = await knotStore.getSyncState(knotId);
+        await knotStore.putSyncState({
+          ...(existing ?? { knotId, baseUpdatedAt: null }),
+          knotId,
+          backupDeletedAt: deletedAt,
+        });
+      } catch (err) {
+        console.warn('cloudSyncService: failed to record backup deletion for knot', knotId, err);
+      }
+    }
+    eventBus.emit('backup:changed', undefined);
+  },
+
+  async getBackupStatuses(knots: Knot[]): Promise<Map<string, BackupBadge>> {
+    const result = new Map<string, BackupBadge>();
+    if (cloudSyncService.getConnectionStatus() !== 'connected') {
+      for (const k of knots) result.set(k.id, 'none');
+      return result;
+    }
+    const [states, jobs] = await Promise.all([knotStore.listSyncStates(), listUnfinishedJobs()]);
+    const stateById = new Map(states.map((s) => [s.knotId, s]));
+    const jobKnotIds = new Set(jobs.map((j) => j.knotId));
+    for (const k of knots) {
+      result.set(
+        k.id,
+        backupStatus({
+          connected: true,
+          uploading: uploadingIds.has(k.id),
+          knot: k,
+          state: stateById.get(k.id),
+          hasJob: jobKnotIds.has(k.id),
+        })
+      );
+    }
+    return result;
   },
 
   localDeleteConfirmText(): string {
@@ -1189,6 +1253,30 @@ async function doSyncAll(): Promise<SyncResult> {
     if (!localIds.has(id) || !plan.remoteById.has(id)) {
       conflictsCleared++;
       await knotStore.putSyncState({ knotId: id, baseUpdatedAt: stateById.get(id)?.baseUpdatedAt ?? null });
+    }
+  }
+
+  // 7d2. Remember backups deleted in Manage backups (possibly from another
+  // device): a local knot that a cloud tombstone blocks from being pushed and
+  // that is not on Drive gets `backupDeletedAt`, so its list badge can say so.
+  // Preserves base/conflict and only writes when the value changed. Best
+  // effort per item. Pushes/pulls above replaced their records via setBase,
+  // which clears the flag; conflict paths may drop it, and the next pass
+  // re-marks it.
+  for (const knot of localKnots) {
+    const tombstonedAt = cloudTombstones[knot.id];
+    if (tombstonedAt === undefined || tombstonedAt < knot.updatedAt) continue;
+    if (plan.remoteById.has(knot.id)) continue;
+    try {
+      const current = await knotStore.getSyncState(knot.id);
+      if (current?.backupDeletedAt === tombstonedAt) continue;
+      await knotStore.putSyncState({
+        ...(current ?? { knotId: knot.id, baseUpdatedAt: null }),
+        knotId: knot.id,
+        backupDeletedAt: tombstonedAt,
+      });
+    } catch (err) {
+      console.warn('cloudSyncService: failed to record backup deletion for knot', knot.id, err);
     }
   }
 

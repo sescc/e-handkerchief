@@ -266,7 +266,67 @@ Audit findings (Claude): the Knot theme was half-applied. The nav, list and cale
   - a short-tail revision ("…bought apples" → "bought oranges and pears") is appended rather than revised.
 - **Spec reconciled:** requirements.md Req 3.4/3.7 and new Req 7.5; design.md (MediaService API, mediaCapture Library menu, MediaImport tables, new TranscriptMerge section and Property 15, TranscriptionService, `extensionForMimeType`, precache list, test list); README.
 
-## Session status (as of 2026-10-06)
+### 2026-10-08 — Picked-file save failures (InvalidBlob) and the stuck edit screen
+- **User phone results (2026-10-08) for the 2026-10-06 work:** Library › Audio file finds the recorder app's files; the desktop audio picker shows one filter entry; fast Dictate has no repeats or drops. Library › Photo or video is fine on desktop but "not very stable" on mobile (the bug below).
+- **Bug (reported by user, on a phone):** after Library › Photo or video, saving sometimes failed with "Could not tie knot: Failed to write blobs (invalidblob)"; the same photo saved fine later on a better connection. On the edit screen, the Mic…Library buttons vanished and "Save Changes" did nothing; only Cancel got out.
+  - **Cause 1 (Claude):** `pickFile` resolved the picked `File` (or `new Blob([file])`, which is still a reference). On Android, picker and cloud-backed files (e.g. a Google Photos item still downloading) are lazy, so IndexedDB read the bytes only at save time and failed with InvalidBlob. It isn't a network upload: it's the local save.
+  - **Cause 2 (Claude):** the edit screen's Save Changes called `mediaCapture.destroy()` before `knotStore.save()`, with no try/catch. A failed save left the media panel removed, showed no error, and every later tap failed silently.
+- **Decision (Claude, plan shown to user):** `pickFile` reads the file fully with `arrayBuffer()` when it is picked and always resolves a fresh memory-backed `Blob` with the normalised type. A failed read rejects with the new `FileReadError`, so nothing broken enters the draft. This covers Photo, Video and both Library entries; the existing 100 MB cap bounds memory.
+- **Decision (Claude, plan shown to user):** the edit save destroys the media panel only after a successful save. Any throw (finalising a recording, building the knot, `withLatestCheckOff`, the store) toasts, re-enables the buttons, and leaves the form, removed items and draft media unchanged. While saving, Save shows "Saving…", Save and Cancel are disabled, and extra taps are ignored. Post-save steps are outside the try, so a render error isn't reported as a failed save.
+- **Decision (user):** pick-time copy (Option A): "Couldn't read that file — it may still be downloading to your phone. Wait a moment, then pick it again."
+- **Decision (user):** save-failure copy (Option A): for a media write error (message matches /blob/i, or `NotReadableError`) "Could not tie knot — a photo, video or audio file couldn't be saved. Remove it and pick it again." on Capture and "Could not save changes — …" (same text) on Edit; any other error keeps "<prefix>: <detail>". This is the pure `src/saveError.ts` (`isMediaWriteError`, `saveErrorMessage`), with a 20-check chartest. `sw.ts` ASSETS gains `src/saveError.js` after `src/mediaImport.js` (45 entries).
+- **Decision (Claude):** the stale design.md error-table geolocation row now matches the 2026-10-05 behaviour.
+- **Spec reconciled:** requirements.md new 3.8 (pick-time read), 5.6 (Capture save failure), 13.12 (edit save failure and Saving guard); design.md (MediaService, new SaveError section and Property 16, error table, precache list, test list); README.
+
+### 2026-10-09 — Offline GPS wait + address backfill, Calendar thumbnails, "Not backed up" badges (plan: `~/.claude/plans/1-offline-usage-although-noble-iverson.md`)
+- **Question (user):** with Location on but no internet, Capture shows "Location unavailable" — can't the phone still save plain GPS coordinates? **Finding (Claude):** yes, coordinates need no internet; only the Nominatim address does. `locate()` asked for a fresh high-accuracy fix (`maximumAge: 0`) and gave up after 10 s. Offline, without assisted GPS, a cold fix often takes 30 s to a few minutes.
+  - **Decision (user):** wait longer when offline. `geoService.locate(deadlineMs = 10000)`; Capture passes 120 000 when `!navigator.onLine` and shows "Getting location (no internet — GPS can take a minute or two)…". Online is unchanged (10 s). Rejected: showing a cached last-known position (could record the wrong place).
+  - **Decision (user):** fill in the address once back online. Pure `src/addressBackfill.ts` (`needsAddress`, `addPending`, `removePending`; 15-check chartest) and `src/addressBackfillService.ts` (`fillPendingAddresses`: single-flight, ≤ 10 per run, ≥ 1.1 s between Nominatim calls per its usage policy, stops when offline, keeps the id when the lookup fails). Triggers: app start and the `online` event. The fill bumps `updatedAt` and emits `knot:saved`, so the knot is backed up again.
+  - **Decision (Claude):** only the device that tied the knot backfills it (local-only `AppSettings.pendingAddressKnotIds`), so two devices never both edit the same knot and trigger a conflict review.
+  - **Decision (Claude, review fix):** Capture's save does not start the backfill itself. **Why:** the save's own upload is still in flight; an immediate backfill would start a second concurrent upload of the same knot (risking a duplicate Drive file or an out-of-order `setBase`).
+- **Request (user):** Calendar day list thumbnails. **Decision (user):** one right-aligned 40×40 tile per media type with a count when there are several: photo (first photo, from the full blob with `object-fit: cover`), video (its thumbnail with a ▶ mark), audio (a ▶ tile). Text-only knots show none; the strip is hidden from screen readers, which get "3 photos, 1 video, 1 voice recording". Pure `src/mediaSummary.ts` (17-check chartest).
+  - **Finding (Claude):** stored 80×80 thumbnails were stretched (drawn without keeping proportions). **Decision (Claude, plan approved):** `generateThumbnail` now centre-crops; existing thumbnails are not regenerated, which is why the Calendar draws photos from the full blob.
+- **Question (user):** Manage backups shows only "On this device" / "Only in backup" — what about knots only on the device? **Answer (Claude):** Manage backups lists Drive files only, so a local-only knot (not backed up yet, or its backup deleted) can't appear there.
+  - **Decision (user):** show a badge on the Knots list and on the knot page, only when Drive is connected (not rows in Manage backups).
+  - **Decision (Claude, plan approved):** pure `src/backupStatus.ts` (20-check chartest), rules in order: not connected → none; uploading now → none; in conflict → none (the conflict badge covers it); `backupDeletedAt ≥ updatedAt` → "Backup deleted"; base = `updatedAt` and no upload job → none; otherwise "Not backed up". `SyncStateRecord.backupDeletedAt` is set by `deleteBackup` and by `syncAll` step 7d2 (so other devices learn of the deletion) and cleared by the next `setBase`. New `backup:changed` event; `getBackupStatuses()`; in-memory `uploadingIds` so a just-tied knot doesn't flash the badge. The badge stays visible in Select mode.
+  - **Copy (Claude-proposed, shown in the approved plan, not separately approved):** list "☁ Not backed up" / "☁ Backup deleted"; page "☁ Not backed up yet — it backs up automatically when you're online." / "☁ Backup deleted — this knot is only on this device. Edit it to back it up again."
+- `sw.ts` ASSETS gains `addressBackfill.js`, `addressBackfillService.js`, `backupStatus.js`, `mediaSummary.js` (49 entries).
+- **Spec reconciled:** requirements.md 1.3/1.5 amended, new 1.10, 1.11, 3.5 amended, 6.11, 11.14, 13.13, 13.14; design.md (GeoService, AddressBackfill, MediaSummary, BackupStatus, CloudSyncService, screens, Properties 17–19, precache and test lists); README.
+- **Fixed (user request, 2026-10-09):** the Calendar month grid was 336 px wide at a 320 px viewport (each day cell's `min-height: 44px` with `aspect-ratio: 1 / 1` forced a 44 px minimum width, and `1fr` columns can't shrink below that). Now `repeat(7, minmax(0, 1fr))`, and `.calendar-day` gets `min-width: 0; width: 100%` (a grid item with `aspect-ratio` isn't stretched to its column, so without the width it stayed 44 px wide and overlapped its neighbours); cells keep the 44 px height and may be slightly taller than wide.
+
+## Session status (as of 2026-10-09)
+- **Implemented, reviewed and browser-checked; not committed.** The 2026-10-08 save-failure fix is also still uncommitted, so one commit covers both.
+  - `tsc` (app + SW) exits 0; the SW classic-script parse check passes.
+  - All 15 chartests and the timezone proptest pass; all 49 ASSETS paths exist.
+- **Browser-checked at 320×640 (Claude):**
+  - GPS (stubbed): offline → the offline copy and a 120 s timeout; a fix after 3 s shows the coordinates; online → 10 s; a retry while offline uses 120 s; failure → "Location unavailable — tap to retry".
+  - Backfill: an offline knot with coordinates is queued; on `online` (Nominatim stubbed) the address is filled, `updatedAt` bumped, the pending list emptied, and the list shows the address.
+  - Calendar (dark + light): 3 photos + video + audio → photo tile "3", video ▶, audio ▶, right-aligned; 2 audio → ▶ "2"; text-only → no strip.
+  - Badges (Drive stubbed as connected): no state → "☁ Not backed up"; base = `updatedAt` → none; `backupDeletedAt` ≥ `updatedAt` → "☁ Backup deleted"; conflict → only the conflict badge; `backup:changed` updates in place; the page pill shows, hides in edit and returns after Cancel; disconnected → no badges. Knots list width stays 320.
+  - Calendar month grid: page width 320 (was 336); day cells 39.4 × 44 px with no overlap, the last cell ends at the grid edge; dots and the count badge fit; at 768 px wide cells stay square (79.4 × 79.4).
+- **Pending verification (user, on the phone, after deploy):**
+  - Airplane mode with Location on: Capture shows the offline copy and gets coordinates within about 2 minutes; save; go online and reopen the app: the address appears.
+  - Calendar: thumbnails look right with real photos and videos, and a day with many large photos scrolls smoothly.
+  - With Drive connected: a knot tied offline shows "☁ Not backed up" until it uploads; deleting a backup in Manage backups shows "☁ Backup deleted" on that knot.
+  - The 2026-10-08 checks (Google Photos pick; edit save) and the earlier real-Google-account checks still apply.
+- **Open items:** the badge copy is Claude-proposed; plus the 2026-10-06 items (merge known limits; the unsupported-format copy; P2 KIV; P3 KIV; the sync race window; the `appProperties` per-key merge).
+
+## Session status (as of 2026-10-08) — superseded by 2026-10-09 above
+- **Implemented, reviewed and browser-checked; not committed.** The 2026-10-06 work is committed as `19ad87b`.
+  - `tsc` (app + SW) exits 0; the SW classic-script parse check passes.
+  - All 12 chartests and the timezone proptest pass.
+- **Browser-checked at 320×640 (Claude):**
+  - Capture: a picked file whose `arrayBuffer()` rejects shows the pick-time message and adds no item.
+  - Capture: with IndexedDB `put` on `knots` throwing "Failed to write blobs (InvalidBlob)", Tie Knot shows the new media-write toast, stays on Capture with the photo and media buttons intact, and Tie Knot is enabled again. (`saveWithRetry` absorbs a single failure, so the stub failed every put.)
+  - Edit: adding a photo then a failing save shows "Saving…" (disabled, a second tap ignored), then the "Could not save changes — …" toast; Save and Cancel are enabled again, Library is still there and the new photo is kept. A retry with storage working saves ("Knot updated") with both photos.
+  - Document width stays 320.
+- **Pending verification (user, on the phone, after deploy):**
+  - Library › Photo or video with a Google Photos item that isn't on the phone yet: either it attaches and saves, or the pick-time message appears straight away; never the InvalidBlob toast.
+  - Edit a knot, add a photo, save: works; if a save ever fails, the form stays usable.
+  - The earlier real-Google-account checks still apply.
+- **Open items:** unchanged from 2026-10-06 (merge known limits; the unsupported-format copy; P2 KIV; P3 KIV; the sync race window; the `appProperties` per-key merge).
+
+## Session status (as of 2026-10-06) — superseded by 2026-10-08 above
 - **Implemented, reviewed and browser-checked; not committed.** The 2026-10-05 work is committed (`304a492`, `e3110c7`).
   - `tsc` (app + SW) exits 0.
   - All 11 chartests and the timezone proptest pass; the SW classic-script parse check passes.
@@ -597,6 +657,34 @@ Audit findings (Claude): the Knot theme was half-applied. The nav, list and cale
 - **Known merge limit 2:** an equal-length near-identical sentence within one instance ("I went to the store" / "I went to the park") counts as a revision. Pinned in `transcriptMerge.chartest.ts`.
 - **Known merge limit 3:** a short-tail revision ("…bought apples" → "bought oranges and pears") is appended rather than revised. Pinned in `transcriptMerge.chartest.ts`.
 - **A 1-word repeat across a boundary** ("I said no" / "no thanks"): kept. Covered by `transcriptMerge.chartest.ts`.
+
+### Edge cases added 2026-10-08
+- **Picked file can't be read** (cloud-backed and still downloading, or the provider fails): the pick-time message; no draft item. Browser-checked with a stubbed `arrayBuffer()` rejection.
+- **IndexedDB write fails with a blob error after picking:** the media-write toast, on Capture and Edit; the form stays. Covered by `saveError.chartest.ts` (messages); browser-checked with a stubbed `put`.
+- **Any other save error** (e.g. quota): "<prefix>: <detail>" as before. Covered by `saveError.chartest.ts`.
+- **Single transient save failure:** `knotStore.save` retries once (`saveWithRetry`), so the user sees nothing.
+- **Double tap on Save Changes:** ignored while saving. Browser-checked.
+- **Edit save fails, then retry succeeds:** the newly added media is kept and saved. Browser-checked.
+- **Large picked file (up to 100 MB):** read fully into memory at pick time; files over the cap are rejected before reading. Manual test only.
+
+### Edge cases added 2026-10-09
+- **Saved before the GPS fix arrives:** the knot has no location (unchanged). Manual test only.
+- **Offline fix, then online before saving:** the screen's own address lookup failed offline, so the knot is queued and filled at the next start or `online` event. Browser-checked (offline path).
+- **Backfill lookup fails** (Nominatim down or rate-limited): the id stays pending and is retried next time. Manual test only.
+- **Knot given a manual label, deleted, or already has an address before the backfill runs:** dropped from the list with no lookup. Covered by `addressBackfill.chartest.ts` (`needsAddress`).
+- **More than 10 pending:** the rest wait for the next run. Manual test only.
+- **Backfill while the knot is open in Edit:** the edit's stale empty label can clear the new address on save. Rare; accepted.
+- **Knot tied on device A, pulled to B:** only A fills in the address (B never has the id pending). Design only.
+- **Calendar image fails to load:** the tile becomes 📷 / 🎬. Browser-checked (fake blobs).
+- **Old stretched thumbnails:** not regenerated; the Calendar uses the full photo, and video tiles use the old thumbnail. Accepted.
+- **Just-tied knot uploading:** no badge while `uploadingIds` holds it. Covered by `backupStatus.chartest.ts`.
+- **Upload failed / saved offline:** "Not backed up" until a retry or merge succeeds (`hasJob` or base ≠ `updatedAt`). Covered by `backupStatus.chartest.ts`.
+- **Backup deleted, then the knot is edited:** "Not backed up" (the edit lifts the tombstone), then none after the upload. Covered by `backupStatus.chartest.ts`.
+- **Backup deleted on another device:** this device marks it at its next merge (step 7d2). Manual test only.
+- **Knot in conflict review:** only the conflict badge. Covered by `backupStatus.chartest.ts`; browser-checked.
+- **Older knots with no sync base:** "Not backed up" until the first merge records the base. Covered by `backupStatus.chartest.ts`.
+- **Drive not connected:** no badges. Covered by `backupStatus.chartest.ts`; browser-checked.
+- **Calendar at 320 px:** the month grid fits (no sideways scroll); day cells are about 39 px wide and 44 px tall. Browser-checked.
 
 ## Refactoring Standard Operating Procedure (SOP)
 When instructed to refactor code, adopt the role of a principal software engineer and execute in four strict phases:

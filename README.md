@@ -1,6 +1,6 @@
 # e-Handkerchief
 
-A mobile-first PWA for tying location-aware knots — quick reminders you capture with voice, photo/video, or text — with automatic GPS tagging and timestamp. Browse them in the Knots list or on a monthly Calendar, check off the ones you've dealt with, and share one knot or several through your device's own share sheet. All data is stored locally in IndexedDB and works fully offline after first load; connect Google Drive for automatic two-way backup across devices.
+A mobile-first PWA for tying location-aware knots — quick reminders you capture with voice, photo/video, or text — with automatic GPS tagging and timestamp. Browse them in the Knots list or on a monthly Calendar (tap a day to see its knots, with a small photo, video or voice thumbnail for each kind of media, so knots without text are easy to recognise), check off the ones you've dealt with, and share one knot or several through your device's own share sheet. All data is stored locally in IndexedDB and works fully offline after first load; connect Google Drive for automatic two-way backup across devices.
 
 ## Build
 
@@ -26,9 +26,13 @@ node src/knotDiff.chartest.js
 node src/deviceLabel.chartest.js
 node src/mergeMessage.chartest.js
 node src/locateFailure.chartest.js
+node src/addressBackfill.chartest.js
 node src/randomKnot.chartest.js
 node src/mediaImport.chartest.js
+node src/mediaSummary.chartest.js
 node src/transcriptMerge.chartest.js
+node src/saveError.chartest.js
+node src/backupStatus.chartest.js
 node src/components/timezoneCombobox.proptest.js
 ```
 
@@ -87,6 +91,12 @@ with **🎧 Transcribe voice** (this needs the transcription server below). The 
 recordings can exceed the transcription provider's size limit (25 MB on Groq's free tier); the
 audio is still saved and playable, but "Transcribe voice" will report an error.
 
+A picked file is read into memory straight away. If you see "Couldn't read that file — it may still
+be downloading to your phone", the file (often a Google Photos item that hasn't finished downloading)
+wasn't available yet: wait a moment and pick it again. If saving a knot ever fails because of an
+attached file, the message says so ("…a photo, video or audio file couldn't be saved. Remove it and
+pick it again."); your form and attachments are kept, so you can remove that item and save again.
+
 ### Setting up the transcription server (optional)
 
 Deferred/offline transcription requires a small backend proxy that holds the Groq API key securely. The key must never live in the PWA or its repo.
@@ -142,7 +152,7 @@ The `transcribe-worker/` folder lives in this SAME repository (a monorepo) and i
 
 ## Location on the Capture screen
 
-The Capture screen asks the browser for your GPS position (up to 10 seconds) and shows it, with
+The Capture screen asks the browser for your GPS position (up to 10 seconds online) and shows it, with
 a street address when one can be looked up. If that fails, the location line becomes a tappable
 message that says what went wrong:
 
@@ -156,6 +166,13 @@ Location switch, Chrome's Android location permission, and the site's permission
 
 Tap it to ask again ("Getting location…"); you can save the knot at any time with whatever
 location is known by then (none if it never arrived).
+
+**Offline:** with no internet there is no assisted GPS, so a first fix can take much longer. The
+app then waits up to 2 minutes ("Getting location (no internet — GPS can take a minute or two)…")
+instead of 10 seconds. The coordinates are saved with the knot; the street address needs internet,
+so it is filled in automatically the next time this device is online (at app start or when the
+connection returns), and the knot is backed up again with it. Only the device that tied the knot
+does this.
 
 ## Checking off a knot
 
@@ -303,6 +320,14 @@ one's) and only available from a desktop browser. "Manage backups" (Settings →
 Backup) is the only way to remove one knot's backup without nuking every hidden app-data
 file on your account from a desktop.
 
+**Knots that are not in Drive:** "Manage backups" lists what is in Google Drive, so a knot that
+exists only on this device never appears there. While Drive is connected, the Knots list and the
+knot page flag such knots instead: **☁ Not backed up** (it hasn't been uploaded yet, for example
+because you saved it offline or the upload failed; it backs up automatically when you're online)
+and **☁ Backup deleted** (you deleted its backup in Manage backups; edit the knot to back it up
+again). Nothing is shown while a knot is uploading, while it is waiting for a conflict review, or
+when Drive isn't connected.
+
 **Merge with Cloud / Last merged:** Settings → Cloud Backup has a **Merge with Cloud**
 button (greyed out, with a hint, when disconnected or offline) that runs a sync on demand
 and reports what happened: how many knots were brought in, how many were backed up (including
@@ -446,9 +471,16 @@ e-Handkerchief/
 │   ├── geoService.ts       # Geolocation + reverse geocoding
 │   ├── locateFailure.ts    # Pure: why a location request failed (off / unavailable)
 │   ├── locateFailure.chartest.ts # Test: classifyLocateFailure
+│   ├── addressBackfill.ts  # Pure: needsAddress / addPending / removePending
+│   ├── addressBackfill.chartest.ts # Test: addressBackfill helpers
+│   ├── addressBackfillService.ts # Fills in addresses of knots tied offline once back online
 │   ├── mediaService.ts     # Audio/photo/video capture
 │   ├── mediaImport.ts      # Pure: classify a picked file (photo / video / Whisper-supported audio)
 │   ├── mediaImport.chartest.ts # Test: classifyImport
+│   ├── mediaSummary.ts     # Pure: per-type media summary for the Calendar day list
+│   ├── mediaSummary.chartest.ts # Test: summarizeMedia / describeMediaSummary
+│   ├── saveError.ts        # Pure: user-facing message for a failed knot save
+│   ├── saveError.chartest.ts # Test: isMediaWriteError / saveErrorMessage
 │   ├── mapsLink.ts         # Maps link builder
 │   ├── dateFormat.ts       # Date/time formatting helpers
 │   ├── remoteTranscribe.ts # Deferred transcription via Worker
@@ -462,6 +494,8 @@ e-Handkerchief/
 │   ├── shareService.ts     # Web Share API wrapper (one or several knots) + clipboard fallback
 │   ├── syncPlan.ts         # Pure: base-aware push/pull/conflict/check-off/dedupe decisions
 │   ├── syncPlan.chartest.ts    # Test: planSync / remoteChangedSinceBase
+│   ├── backupStatus.ts     # Pure: which knots show "Not backed up" / "Backup deleted"
+│   ├── backupStatus.chartest.ts # Test: backupStatus
 │   ├── checkOffActions.ts  # Check off / uncheck / Undo, shared by the Knots list and detail screen
 │   ├── dayCutoff.ts        # Pure: when a checked-off knot leaves the Knots list
 │   ├── dayCutoff.chartest.ts   # Test: dayCutoff

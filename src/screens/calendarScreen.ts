@@ -11,6 +11,8 @@ import { navigate } from '../router.js';
 import { settingsStore } from '../settingsStore.js';
 import { formatKnotTimestamp } from '../dateFormat.js';
 import { isCheckedOff } from '../dayCutoff.js';
+import { summarizeMedia, describeMediaSummary } from '../mediaSummary.js';
+import type { MediaSummaryEntry } from '../mediaSummary.js';
 import type { Knot } from '../types.js';
 
 const WEEKDAY_LABELS = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'];
@@ -97,7 +99,70 @@ export function renderCalendar(container: HTMLElement): () => void {
   let openDayKey: string | null = null;
   let allKnots: Knot[] = [];
 
+  // Object URLs created for the open day panel's thumbnails; all are revoked
+  // whenever the panel is re-rendered, cleared, or the screen is torn down.
+  let panelUrls: string[] = [];
+
+  function clearPanelUrls(): void {
+    for (const u of panelUrls) URL.revokeObjectURL(u);
+    panelUrls = [];
+  }
+
+  /** Neutral tile with an emoji, used when a thumbnail image fails to load. */
+  function fillFallback(tile: HTMLElement, emoji: string): void {
+    tile.textContent = '';
+    tile.classList.add('calendar-thumb--fallback');
+    const glyph = document.createElement('span');
+    glyph.className = 'calendar-thumb-glyph';
+    glyph.textContent = emoji;
+    tile.appendChild(glyph);
+  }
+
+  function buildThumbImage(tile: HTMLElement, blob: Blob, emoji: string): void {
+    const url = URL.createObjectURL(blob);
+    panelUrls.push(url);
+    const img = document.createElement('img');
+    img.className = 'calendar-thumb-img';
+    img.alt = '';
+    img.decoding = 'async';
+    img.addEventListener('error', () => fillFallback(tile, emoji));
+    img.src = url;
+    tile.appendChild(img);
+  }
+
+  /** One 40x40 tile for a media type (photo / video / audio). */
+  function buildThumbTile(entry: MediaSummaryEntry): HTMLElement {
+    const tile = document.createElement('span');
+    tile.className = `calendar-thumb calendar-thumb--${entry.type}`;
+
+    const first = entry.first;
+    if (entry.type === 'photo' && first.type === 'photo') {
+      // Full photo blob: the stored 80x80 thumbnails may be squashed.
+      buildThumbImage(tile, first.blob, '📷');
+    } else if (entry.type === 'video' && first.type === 'video') {
+      buildThumbImage(tile, first.thumbnailBlob, '🎬');
+      const play = document.createElement('span');
+      play.className = 'calendar-thumb-play';
+      play.textContent = '▶';
+      tile.appendChild(play);
+    } else {
+      const play = document.createElement('span');
+      play.className = 'calendar-thumb-play calendar-thumb-play--plain';
+      play.textContent = '▶';
+      tile.appendChild(play);
+    }
+
+    if (entry.count > 1) {
+      const badge = document.createElement('span');
+      badge.className = 'calendar-thumb-count';
+      badge.textContent = String(entry.count);
+      tile.appendChild(badge);
+    }
+    return tile;
+  }
+
   function renderDayDetail(dayKey: string, tz: string | undefined): void {
+    clearPanelUrls();
     detailEl.innerHTML = '';
 
     // Knots on this day, newest first (listAll already returns newest first).
@@ -124,15 +189,34 @@ export function renderCalendar(container: HTMLElement): () => void {
       row.setAttribute('role', 'link');
       row.tabIndex = 0;
 
+      const textCol = document.createElement('div');
+      textCol.className = 'calendar-day-detail-text';
+
       const timeEl = document.createElement('div');
       timeEl.className = 'calendar-day-detail-time';
       timeEl.textContent = formatKnotTimestamp(knot.timestamp.localISO);
-      row.appendChild(timeEl);
+      textCol.appendChild(timeEl);
 
       const previewEl = document.createElement('div');
       previewEl.className = 'calendar-day-detail-preview';
       previewEl.textContent = knotPreview(knot);
-      row.appendChild(previewEl);
+      textCol.appendChild(previewEl);
+
+      row.appendChild(textCol);
+
+      const mediaEntries = summarizeMedia(knot.mediaItems);
+      if (mediaEntries.length > 0) {
+        const sr = document.createElement('span');
+        sr.className = 'sr-only';
+        sr.textContent = describeMediaSummary(mediaEntries);
+        textCol.appendChild(sr);
+
+        const thumbs = document.createElement('div');
+        thumbs.className = 'calendar-day-detail-thumbs';
+        thumbs.setAttribute('aria-hidden', 'true');
+        for (const entry of mediaEntries) thumbs.appendChild(buildThumbTile(entry));
+        row.appendChild(thumbs);
+      }
 
       const go = () => navigate(`#/knot/${knot.id}`);
       row.addEventListener('click', go);
@@ -237,6 +321,7 @@ export function renderCalendar(container: HTMLElement): () => void {
           if (openDayKey === key) {
             // Toggle closed.
             openDayKey = null;
+            clearPanelUrls();
             detailEl.innerHTML = '';
           } else {
             openDayKey = key;
@@ -317,7 +402,9 @@ export function renderCalendar(container: HTMLElement): () => void {
 
     // Refresh the open day-detail panel (if any) against new data.
     if (openDayKey) {
-      renderDayDetail(openDayKey, tz);
+      renderDayDetail(openDayKey, tz); // revokes the previous panel's URLs
+    } else {
+      clearPanelUrls();
     }
   }
 
@@ -342,6 +429,7 @@ export function renderCalendar(container: HTMLElement): () => void {
     unsubscribeDeleted?.();
     unsubscribeSynced?.();
     unsubscribeCheckedOff?.();
+    clearPanelUrls();
     root.remove();
     container.innerHTML = '';
   };

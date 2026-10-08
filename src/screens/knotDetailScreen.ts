@@ -8,11 +8,13 @@ import { knotStore } from '../knotStore.js';
 import { navigate } from '../router.js';
 import { eventBus } from '../eventBus.js';
 import { toastService } from '../toastService.js';
+import { saveErrorMessage } from '../saveError.js';
 import { googleMapsUrl } from '../mapsLink.js';
 import { formatKnotTimestamp } from '../dateFormat.js';
 import { remoteTranscribe } from '../remoteTranscribe.js';
 import { settingsStore } from '../settingsStore.js';
 import { cloudSyncService } from '../cloudSyncService.js';
+import type { BackupBadge } from '../backupStatus.js';
 import { shareKnot } from '../shareService.js';
 import { toggleCheckOff, withLatestCheckOff } from '../checkOffActions.js';
 import { isCheckedOff } from '../dayCutoff.js';
@@ -91,6 +93,35 @@ export function renderKnotDetail(
   // Placeholder (first child of contentEl) that shows the "edited on another
   // device" banner; null while editing or on the not-found view.
   let conflictBannerEl: HTMLElement | null = null;
+
+  // Placeholder for the "not in Google Drive" pill; null while editing or on
+  // the not-found view. `viewedKnot` is the knot the view-mode page shows.
+  let backupPillEl: HTMLElement | null = null;
+  let viewedKnot: Knot | null = null;
+
+  /** Fill the backup pill from the knot's backup status; empty when it's in Drive or Drive isn't connected. */
+  async function updateBackupPill(): Promise<void> {
+    const el = backupPillEl;
+    const knot = viewedKnot;
+    if (!el || !knot) return;
+    let kind: BackupBadge = 'none';
+    try {
+      kind = (await cloudSyncService.getBackupStatuses([knot])).get(knot.id) ?? 'none';
+    } catch {
+      /* status unavailable — show nothing */
+    }
+    // The page re-rendered or entered edit mode while we were awaiting.
+    if (el !== backupPillEl) return;
+    el.textContent = '';
+    if (kind === 'none') return;
+    const pill = document.createElement('span');
+    pill.className = 'knot-backup-pill';
+    pill.textContent =
+      kind === 'not-backed-up'
+        ? "☁ Not backed up yet — it backs up automatically when you're online."
+        : '☁ Backup deleted — this knot is only on this device. Edit it to back it up again.';
+    el.appendChild(pill);
+  }
 
   /** Show or hide the conflict banner for this knot from the recorded conflict state. */
   async function updateConflictBanner(): Promise<void> {
@@ -262,6 +293,13 @@ export function renderKnotDetail(
       pillRow.appendChild(pill);
       contentEl.appendChild(pillRow);
     }
+
+    // "☁ Not backed up" / "☁ Backup deleted" pill (filled asynchronously; empty
+    // unless Drive is connected and the knot isn't in it).
+    viewedKnot = knot;
+    backupPillEl = document.createElement('div');
+    contentEl.appendChild(backupPillEl);
+    void updateBackupPill();
 
     // Location — clickable Google Maps link
     const locLink = renderLocation(knot, 'knot-detail-location');
@@ -481,6 +519,7 @@ export function renderKnotDetail(
     contentEl.innerHTML = '';
     actionsEl.innerHTML = ''; // hide view-mode actions while editing
     conflictBannerEl = null;
+    backupPillEl = null;
 
     // Timestamp (read-only)
     const tsEl = document.createElement('div');
@@ -654,101 +693,143 @@ export function renderKnotDetail(
     const saveBtn = document.createElement('button');
     saveBtn.className = 'btn btn-primary';
     saveBtn.textContent = 'Save Changes';
-    saveBtn.addEventListener('click', () => {
-      void (async () => {
-        // Stop any in-progress recording so its audio is captured before we
-        // snapshot the captured items.
-        await mediaCapture.finalizePendingRecording();
-        const captured = mediaCapture.getCaptured();
 
-        // Rebuild media items: keep non-removed existing non-text items, then
-        // append the newly captured items from this edit session.
-        const keptMedia: MediaItem[] = nonTextItems.filter(
-          (m) => !removedIds.has(m.id)
-        );
-
-        // Rebuild the TEXT items from every editable box, in order. Each box
-        // tied to an existing item updates that item in place (preserving id +
-        // createdAt); an emptied box drops that item. Boxes with no source that
-        // now have content become brand-new text items.
-        const textMediaItems: TextMediaItem[] = [];
-        for (const { textarea, source } of textEditors) {
-          const value = textarea.value.trim();
-          if (value.length === 0) continue; // empty box → dropped
-          if (source) {
-            // Update existing text item, preserving its id and createdAt.
-            textMediaItems.push({ ...source, content: value });
-          } else {
-            // Fresh text item from the "add text" box.
-            textMediaItems.push({
-              id: crypto.randomUUID(),
-              type: 'text',
-              createdAt: Date.now(),
-              content: value,
-            });
-          }
-        }
-
-        // Text first (preserving original relative order), then kept media and
-        // newly captured items — matching the previous text-first placement.
-        const newMediaItems: MediaItem[] = [
-          ...textMediaItems,
-          ...keptMedia,
-          ...captured.items,
-        ];
-
-        // Validate: must still have at least one media item.
-        if (newMediaItems.length === 0) {
-          errorEl.textContent =
-            'A knot must have at least one item. Add some text or keep a media item.';
-          errorEl.style.display = '';
-          return;
-        }
-
-        // Transcription now lives on each AudioMediaItem. Kept items retain
-        // their own transcript/status (they're the same objects), and newly
-        // captured audio items already carry their per-item transcript/status
-        // from the media-capture component. We do NOT copy the legacy
-        // knot-level transcript onto any item here.
-        const updatedKnot: Knot = {
-          ...knot,
-          mediaItems: newMediaItems,
-          updatedAt: Date.now(),
-        };
-
-        // Apply the edited location label (display text only). Coordinates and
-        // accuracy are preserved, so the Maps link target never changes. An
-        // empty field falls back to showing coordinates (resolvedAddress unset).
-        if (locationInput) {
-          const label = locationInput.value.trim();
-          if (knot.location) {
-            // GPS present: edit the address label; coords/link unchanged.
-            updatedKnot.location = {
-              ...knot.location,
-              resolvedAddress: label.length > 0 ? label : undefined,
-            };
-          } else {
-            // No GPS: store as a plain manual label (no map link).
-            updatedKnot.manualLabel = label.length > 0 ? label : undefined;
-          }
-        }
-
-        mediaCapture.destroy();
-
-        // The edit form was built from a possibly stale copy: take the latest
-        // stored check-off state so this content save can't revert it.
-        await withLatestCheckOff(updatedKnot);
-        await knotStore.save(updatedKnot);
-        eventBus.emit('knot:saved', updatedKnot);
-        toastService.show('Knot updated');
-        renderKnot(updatedKnot);
-      })();
-    });
     editActions.appendChild(saveBtn);
 
     const cancelBtn = document.createElement('button');
     cancelBtn.className = 'btn btn-ghost';
     cancelBtn.textContent = 'Cancel';
+
+    // True while a save is in flight: further Save taps are ignored and both
+    // buttons are disabled so a slow save can't be doubled or cancelled midway.
+    // (Declared after both buttons exist because it touches both.)
+    let saving = false;
+    const setSaving = (value: boolean): void => {
+      saving = value;
+      saveBtn.disabled = value;
+      cancelBtn.disabled = value;
+      saveBtn.textContent = value ? 'Saving…' : 'Save Changes';
+    };
+
+    /**
+     * Gather the edited content and write it to the store. Resolves with the
+     * saved knot, or null when validation fails (the buttons are already
+     * re-enabled). Any throw is handled by the caller.
+     */
+    const collectAndSave = async (): Promise<Knot | null> => {
+      // Stop any in-progress recording so its audio is captured before we
+      // snapshot the captured items.
+      await mediaCapture.finalizePendingRecording();
+      const captured = mediaCapture.getCaptured();
+
+      // Rebuild media items: keep non-removed existing non-text items, then
+      // append the newly captured items from this edit session.
+      const keptMedia: MediaItem[] = nonTextItems.filter(
+        (m) => !removedIds.has(m.id)
+      );
+
+      // Rebuild the TEXT items from every editable box, in order. Each box
+      // tied to an existing item updates that item in place (preserving id +
+      // createdAt); an emptied box drops that item. Boxes with no source that
+      // now have content become brand-new text items.
+      const textMediaItems: TextMediaItem[] = [];
+      for (const { textarea, source } of textEditors) {
+        const value = textarea.value.trim();
+        if (value.length === 0) continue; // empty box → dropped
+        if (source) {
+          // Update existing text item, preserving its id and createdAt.
+          textMediaItems.push({ ...source, content: value });
+        } else {
+          // Fresh text item from the "add text" box.
+          textMediaItems.push({
+            id: crypto.randomUUID(),
+            type: 'text',
+            createdAt: Date.now(),
+            content: value,
+          });
+        }
+      }
+
+      // Text first (preserving original relative order), then kept media and
+      // newly captured items — matching the previous text-first placement.
+      const newMediaItems: MediaItem[] = [
+        ...textMediaItems,
+        ...keptMedia,
+        ...captured.items,
+      ];
+
+      // Validate: must still have at least one media item.
+      if (newMediaItems.length === 0) {
+        errorEl.textContent =
+          'A knot must have at least one item. Add some text or keep a media item.';
+        errorEl.style.display = '';
+        setSaving(false);
+        return null;
+      }
+
+      // Transcription now lives on each AudioMediaItem. Kept items retain
+      // their own transcript/status (they're the same objects), and newly
+      // captured audio items already carry their per-item transcript/status
+      // from the media-capture component. We do NOT copy the legacy
+      // knot-level transcript onto any item here.
+      const updatedKnot: Knot = {
+        ...knot,
+        mediaItems: newMediaItems,
+        updatedAt: Date.now(),
+      };
+
+      // Apply the edited location label (display text only). Coordinates and
+      // accuracy are preserved, so the Maps link target never changes. An
+      // empty field falls back to showing coordinates (resolvedAddress unset).
+      if (locationInput) {
+        const label = locationInput.value.trim();
+        if (knot.location) {
+          // GPS present: edit the address label; coords/link unchanged.
+          updatedKnot.location = {
+            ...knot.location,
+            resolvedAddress: label.length > 0 ? label : undefined,
+          };
+        } else {
+          // No GPS: store as a plain manual label (no map link).
+          updatedKnot.manualLabel = label.length > 0 ? label : undefined;
+        }
+      }
+
+      // The edit form was built from a possibly stale copy: take the latest
+      // stored check-off state so this content save can't revert it.
+      await withLatestCheckOff(updatedKnot);
+      await knotStore.save(updatedKnot);
+      return updatedKnot;
+    };
+
+    saveBtn.addEventListener('click', () => {
+      if (saving) return;
+      setSaving(true);
+      void (async () => {
+        let updatedKnot: Knot | null;
+        try {
+          updatedKnot = await collectAndSave();
+        } catch (err) {
+          // Whatever threw (recording finalise, building the knot, the store),
+          // leave the form, removed-ids state and draft media untouched (no
+          // re-render, media panel still alive) so the user can drop the bad
+          // item or simply retry.
+          console.error('Knot update failed:', err);
+          toastService.show(saveErrorMessage('Could not save changes', err), 8000);
+          setSaving(false);
+          return;
+        }
+        if (!updatedKnot) return; // validation failed; already re-enabled
+
+        // Only tear the media panel down once the save has succeeded. These
+        // steps are outside the try so a render error isn't reported as a
+        // failed save.
+        mediaCapture.destroy();
+        eventBus.emit('knot:saved', updatedKnot);
+        toastService.show('Knot updated');
+        renderKnot(updatedKnot);
+      })();
+    });
     cancelBtn.addEventListener('click', () => {
       // Tear down the media capture component (stops recording/recognition,
       // revokes object URLs) before leaving edit mode.
@@ -766,6 +847,7 @@ export function renderKnotDetail(
     contentEl.innerHTML = '';
     actionsEl.innerHTML = '';
     conflictBannerEl = null;
+    backupPillEl = null;
 
     const heading = document.createElement('h2');
     heading.textContent = 'Knot not found';
@@ -831,9 +913,16 @@ export function renderKnotDetail(
     void updateConflictBanner();
   });
 
+  // Upload started/finished, sync done, backup deleted, connection changed:
+  // refresh just the backup pill (a no-op while editing, when it's removed).
+  const unsubscribeBackup = eventBus.on('backup:changed', () => {
+    void updateBackupPill();
+  });
+
   // Cleanup
   return () => {
     unsubscribeSynced();
+    unsubscribeBackup();
     unsubscribeCheckedOff();
     unsubscribeConflicts();
     for (const url of objUrls) {

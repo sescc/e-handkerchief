@@ -33,6 +33,14 @@ export class UnsupportedFormatError extends Error {
   }
 }
 
+/** Thrown when a picked file's bytes cannot be read (e.g. a cloud-backed file still downloading). */
+export class FileReadError extends Error {
+  constructor() {
+    super('Could not read the selected file');
+    this.name = 'FileReadError';
+  }
+}
+
 const MAX_SIZE_BYTES = 100 * 1024 * 1024; // 100 MB
 
 /**
@@ -211,6 +219,16 @@ export const mediaService: MediaServiceAPI = {
       }
 
       const cleanup = () => URL.revokeObjectURL(url);
+      // Centre-crop ("cover") into the 80x80 canvas rather than stretching;
+      // falls back to the old stretch if the natural size is unknown (0).
+      const drawCover = (src: CanvasImageSource, w: number, h: number) => {
+        if (w > 0 && h > 0) {
+          const side = Math.min(w, h);
+          ctx.drawImage(src, (w - side) / 2, (h - side) / 2, side, side, 0, 0, 80, 80);
+        } else {
+          ctx.drawImage(src, 0, 0, 80, 80);
+        }
+      };
       const exportBlob = () => {
         canvas.toBlob(
           (b) => {
@@ -230,7 +248,7 @@ export const mediaService: MediaServiceAPI = {
           video.currentTime = 0;
         };
         video.onseeked = () => {
-          ctx.drawImage(video, 0, 0, 80, 80);
+          drawCover(video, video.videoWidth, video.videoHeight);
           cleanup();
           exportBlob();
         };
@@ -241,7 +259,7 @@ export const mediaService: MediaServiceAPI = {
       } else {
         const img = new Image();
         img.onload = () => {
-          ctx.drawImage(img, 0, 0, 80, 80);
+          drawCover(img, img.naturalWidth, img.naturalHeight);
           cleanup();
           exportBlob();
         };
@@ -281,17 +299,27 @@ function pickFile(
         reject(new Error('No file selected'));
         return;
       }
+      let mimeType: string;
       try {
-        const { kind, mimeType } = validateMedia(file);
+        const classified = validateMedia(file);
         // e.g. an .m4a picked through the Photo/Video button must not become a
         // photo/video item.
-        if (!allowedKinds.includes(kind)) throw new UnsupportedFormatError(file.type);
-        // Re-type when the file's reported type differs (e.g. '' or audio/x-m4a
-        // for an .m4a) so stored and backed-up items carry the normalised type.
-        resolve(mimeType === file.type ? file : new Blob([file], { type: mimeType }));
+        if (!allowedKinds.includes(classified.kind)) throw new UnsupportedFormatError(file.type);
+        mimeType = classified.mimeType;
       } catch (e) {
         reject(e);
+        return;
       }
+      // Read the bytes into memory now (the size cap above bounds this).
+      // Files from Android's picker / cloud providers (e.g. Google Photos) are
+      // lazy references: IndexedDB would otherwise read them at save time and
+      // fail with InvalidBlob if the provider can't deliver them then. The
+      // fresh Blob is always memory-backed, and carries the normalised type
+      // (e.g. for an .m4a reported as '' or audio/x-m4a).
+      file.arrayBuffer().then(
+        (buf) => resolve(new Blob([buf], { type: mimeType })),
+        () => reject(new FileReadError())
+      );
     };
 
     // Some browsers fire 'cancel' instead of a change with empty files

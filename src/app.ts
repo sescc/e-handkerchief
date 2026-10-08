@@ -9,6 +9,7 @@ import { toastService } from './toastService.js';
 import { cloudSyncService } from './cloudSyncService.js';
 import { notificationService } from './notificationService.js';
 import { eventBus } from './eventBus.js';
+import { fillPendingAddresses } from './addressBackfillService.js';
 
 // ---- Conflict toast -------------------------------------------------------
 // ONE persistent toast reflects how many knots currently await conflict
@@ -139,6 +140,10 @@ async function init(): Promise<void> {
     if (cloudSyncService.getConnectionStatus() === 'connected') {
       void cloudSyncService.syncAll().catch(() => {});
     }
+    // Fill in addresses for knots whose GPS fix arrived while offline.
+    void fillPendingAddresses().catch((err) => {
+      console.warn('Address backfill failed:', err);
+    });
   });
 
   // 8. Re-post the quick-capture notification on every launch (only when the
@@ -160,6 +165,12 @@ async function init(): Promise<void> {
   ) {
     void cloudSyncService.refreshAccountInfo().catch(() => {});
   }
+
+  // 11. Fill in addresses for knots tied offline on this device (settings are
+  // loaded at step 1). Resolves immediately when offline or nothing pending.
+  void fillPendingAddresses().catch((err) => {
+    console.warn('Address backfill failed:', err);
+  });
 }
 
 function buildNavBar(): HTMLElement {

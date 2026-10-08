@@ -17,6 +17,7 @@ import {
   mediaService,
   MediaUnsupportedError,
   FileSizeError,
+  FileReadError,
   UnsupportedFormatError,
 } from '../mediaService.js';
 import { settingsStore } from '../settingsStore.js';
@@ -358,6 +359,10 @@ export function renderMediaCapture(
     } else if (err instanceof UnsupportedFormatError) {
       setMediaError(
         'Unsupported file format. Please use JPEG, PNG, GIF, WEBP, MP4, MOV, or an audio file (MP3, M4A, WAV, OGG, FLAC, WEBM).'
+      );
+    } else if (err instanceof FileReadError) {
+      setMediaError(
+        "Couldn't read that file — it may still be downloading to your phone. Wait a moment, then pick it again."
       );
     } else if (err instanceof MediaUnsupportedError) {
       setMediaError('Media capture is not supported in this browser.');
