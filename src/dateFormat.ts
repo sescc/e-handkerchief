@@ -16,15 +16,8 @@ const MONTHS_SHORT = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct
 export function formatKnotTimestamp(localISO: string, settings?: AppSettings): string {
   const s = settings ?? settingsStore.getCurrent();
   try {
-    const d = new Date(localISO);
-    if (isNaN(d.getTime())) return localISO;
-
-    // Resolve timezone: 'auto' means use the OS/browser default.
-    const tz = s.timezone && s.timezone !== 'auto' ? s.timezone : undefined;
-
-    // Extract date/time parts in the target timezone using Intl with the
-    // resolved timezone, then assemble according to the chosen format tokens.
-    const parts = getDateParts(d, tz);
+    const parts = resolveParts(localISO, s);
+    if (!parts) return localISO;
 
     const datePart = formatDatePart(parts, s.dateFormat);
     const timePart = formatTimePart(parts, s.timeFormat);
@@ -32,6 +25,33 @@ export function formatKnotTimestamp(localISO: string, settings?: AppSettings): s
   } catch {
     return localISO;
   }
+}
+
+/**
+ * Format only the time of a knot's ISO timestamp (e.g. "03:36" or "3:36 AM"),
+ * following the same time-format and timezone settings as `formatKnotTimestamp`.
+ * Falls back to the raw ISO string on any error.
+ */
+export function formatKnotTime(localISO: string, settings?: AppSettings): string {
+  const s = settings ?? settingsStore.getCurrent();
+  try {
+    const parts = resolveParts(localISO, s);
+    if (!parts) return localISO;
+    return formatTimePart(parts, s.timeFormat);
+  } catch {
+    return localISO;
+  }
+}
+
+/**
+ * Shared by the formatters above: wall-clock parts of `localISO` in the
+ * configured timezone ('auto' = OS/browser default), or null for an invalid date.
+ */
+function resolveParts(localISO: string, s: AppSettings): DateParts | null {
+  const d = new Date(localISO);
+  if (isNaN(d.getTime())) return null;
+  const tz = s.timezone && s.timezone !== 'auto' ? s.timezone : undefined;
+  return getDateParts(d, tz);
 }
 
 interface DateParts {

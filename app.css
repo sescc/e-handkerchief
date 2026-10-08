@@ -1392,8 +1392,16 @@ main {
   background: var(--color-bg);
 }
 
+/* Time + " ·" shown inline before the preview text. inline-block so the
+   checked-off line-through on the preview does not cross out the time
+   (text-decoration doesn't propagate into inline-blocks); nowrap keeps
+   "03:36 ·" together; the margin supplies the space inline-block would eat. */
 .calendar-day-detail-time {
-  font-size: 0.75rem;
+  display: inline-block;
+  margin-right: 0.35em;
+  white-space: nowrap;
+  font-size: 0.8rem;
+  font-variant-numeric: tabular-nums;
   color: var(--color-text-muted);
 }
 

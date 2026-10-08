@@ -626,7 +626,7 @@ e-Handkerchief/
 │   ├── saveError.ts              # Pure: user-facing message for a failed knot save (media write errors)
 │   ├── saveError.chartest.ts     # Characterization test for saveError
 │   ├── mapsLink.ts             # Google Maps URL builder (pure)
-│   ├── dateFormat.ts           # Date/time formatting helpers
+│   ├── dateFormat.ts           # Date/time formatting helpers (formatKnotTimestamp, formatKnotTime)
 │   ├── remoteTranscribe.ts     # Deferred transcription via the user's own Worker
 │   ├── transcriptionService.ts # Web Speech API (live) wrapper
 │   ├── transcriptMerge.ts        # Pure: word-level merge of live speech text (within / across instances)
@@ -889,7 +889,7 @@ Route `#/calendar`. A scrollable, reverse-chronological month grid.
 
 **Rendering:** One month block per month from the earliest knot's month through the current month, most-recent month first. Each month is a 7-column grid (Sunday-first) with leading blank cells for the 1st's weekday offset. A day with knots gets `calendar-day--has-knots`, an `aria-label` stating the count, and either up to 4 dots or (for 5+) a numeric badge. Today's cell gets `calendar-day--today`.
 
-**Day-detail panel:** Tapping a day with knots toggles an inline panel below the grid listing that day's knots (newest first): each row shows the formatted time and a short preview (first text item's leading ~60 characters, or "🎤 Voice" / "📷 Photo" / "🎬 Video" for a media-only knot), and navigates to `#/knot/{id}` on click/Enter/Space. Tapping the same day again closes the panel; tapping a different day replaces it.
+**Day-detail panel:** Tapping a day with knots toggles an inline panel below the grid listing that day's knots (newest first): each row shows the time only (`formatKnotTime`, following the Time Format and time zone settings; the date is already in the "Knots on …" header) inline before a short preview, as "03:36 · Buy milk" (the preview is the first text item's leading ~60 characters, or "🎤 Voice" / "📷 Photo" / "🎬 Video" for a media-only knot). The time is a `span.calendar-day-detail-time` inside `.calendar-day-detail-preview`, styled `display: inline-block` so a checked-off row's `line-through` (which does not propagate into inline-blocks) does not cross it out; its separator " ·" is part of the span and the gap to the text is a margin, because inline-block would swallow a trailing space. A row navigates to `#/knot/{id}` on click/Enter/Space. Tapping the same day again closes the panel; tapping a different day replaces it.
 
 **Thumbnail strip (Requirement 13.13):** a row is a flex row: a `.calendar-day-detail-text` column (`flex: 1; min-width: 0`) holding the time, the preview and a visually hidden `.sr-only` span with `describeMediaSummary(...)`, then a right-aligned `.calendar-day-detail-thumbs` strip (`flex: none`, `aria-hidden="true"`) that exists only when `summarizeMedia(knot.mediaItems)` is non-empty. The strip has one 40×40 tile per type present (at most three), in the order photo, video, audio:
 - **Photo:** an `<img>` of the *full* photo blob with `object-fit: cover`. The stored 80×80 `thumbnailBlob` is not used for photos because thumbnails generated before the `generateThumbnail` centre-crop were stretched to fit.
