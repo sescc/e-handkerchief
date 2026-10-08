@@ -9,7 +9,7 @@ import { knotStore } from '../knotStore.js';
 import { eventBus } from '../eventBus.js';
 import { navigate } from '../router.js';
 import { settingsStore } from '../settingsStore.js';
-import { formatKnotTimestamp } from '../dateFormat.js';
+import { formatKnotTime } from '../dateFormat.js';
 import { isCheckedOff } from '../dayCutoff.js';
 import { summarizeMedia, describeMediaSummary } from '../mediaSummary.js';
 import type { MediaSummaryEntry } from '../mediaSummary.js';
@@ -192,14 +192,14 @@ export function renderCalendar(container: HTMLElement): () => void {
       const textCol = document.createElement('div');
       textCol.className = 'calendar-day-detail-text';
 
-      const timeEl = document.createElement('div');
-      timeEl.className = 'calendar-day-detail-time';
-      timeEl.textContent = formatKnotTimestamp(knot.timestamp.localISO);
-      textCol.appendChild(timeEl);
-
+      // Time only, inline before the preview: the date is in the panel header.
       const previewEl = document.createElement('div');
       previewEl.className = 'calendar-day-detail-preview';
-      previewEl.textContent = knotPreview(knot);
+      const timeEl = document.createElement('span');
+      timeEl.className = 'calendar-day-detail-time';
+      timeEl.textContent = `${formatKnotTime(knot.timestamp.localISO)} ·`;
+      previewEl.appendChild(timeEl);
+      previewEl.appendChild(document.createTextNode(knotPreview(knot)));
       textCol.appendChild(previewEl);
 
       row.appendChild(textCol);
