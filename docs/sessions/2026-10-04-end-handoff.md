@@ -5,7 +5,7 @@
 
 **Next step:** the P0 phone checks (see §6).
 
-**Resume command/check:** `wsl -e bash -c 'cd <repo> && git status --short && git log --oneline -3'`, then `CLAUDE.md` › "Session status (as of 2026-10-04)".
+**Resume command/check:** `git status --short && git log --oneline -3`, then `CLAUDE.md` › "Session status (as of 2026-10-04)".
 
 ## 1. Work completed
 - The end-of-session reconcile: the `CLAUDE.md` 2026-10-04 status now says the work is committed as `5690324` (the suggested-commit-message bullet is removed).
@@ -25,7 +25,7 @@
 ## 4. Live handoff state
 | Type | Handle / location | State | Inspect / resume | Stop / cleanup |
 | --- | --- | --- | --- | --- |
-| branch | `main` @ `5690324` | clean except for this log and `CLAUDE.md` | `wsl -e bash -c 'cd <repo> && git status --short'` | the user commits |
+| branch | `main` @ `5690324` | clean except for this log and `CLAUDE.md` | `git status --short` | the user commits |
 | port | 127.0.0.1:8765 | free (the server is stopped) | none | none |
 
 There is no other live state.

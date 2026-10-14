@@ -8,6 +8,7 @@
   --color-primary: #2d7a4f;
   --color-primary-dark: #1e5c3a;
   --color-primary-soft: rgba(45, 122, 79, 0.15);
+  --color-mark: rgba(255, 193, 7, 0.45); /* search-match highlight */
   --color-bg: #f8f9fa;
   --color-surface: #ffffff;
   --color-text: #1a1a1a;
@@ -44,6 +45,7 @@
     --color-primary: #4caf76;
     --color-primary-dark: #2d7a4f;
     --color-primary-soft: rgba(76, 175, 118, 0.18);
+    --color-mark: rgba(255, 193, 7, 0.35);
   }
 }
 
@@ -1541,8 +1543,9 @@ main {
   gap: var(--space-sm);
 }
 
-/* Keep "Random" next to "Select" on the right. */
-.knots-random-btn {
+/* The 🔍 button takes the free space, so 🔍 / Random / Select sit together on
+   the right (and don't shift when Random is hidden in select mode). */
+.knots-search-btn {
   margin-left: auto;
 }
 
@@ -1959,4 +1962,201 @@ main {
   font-weight: 500;
   line-height: 1.4;
   overflow-wrap: anywhere;
+}
+
+/* ============================================================
+   Search (Knots + Calendar) and Manage-backups filter
+   ============================================================ */
+
+/* Calendar header mirrors the Knots header: title left, 🔍 right. */
+.calendar-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-sm);
+}
+
+.calendar-search-btn {
+  margin-left: auto;
+}
+
+/* 🔍 icon button: same height as the other .btn-sm header buttons (Random,
+   Select: font-size, line-height and vertical padding all come from .btn-sm);
+   only the width is set, so it stays a comfortable touch target. */
+.search-toggle-btn {
+  flex-shrink: 0;
+  min-width: 40px;
+  padding-left: var(--space-sm);
+  padding-right: var(--space-sm);
+}
+
+/* Active (a query is applied): primary-tinted. */
+.search-toggle-btn--active {
+  background: var(--color-primary-soft);
+  color: var(--color-primary);
+  border-color: var(--color-primary);
+}
+
+/* Full-width field row under the header. */
+.search-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  margin-bottom: var(--space-md);
+}
+
+.search-row[hidden] {
+  display: none;
+}
+
+.search-input {
+  flex: 1;
+  min-width: 0;
+}
+
+/* Our own ✕ clears and closes; hide the browser's second one. */
+.search-input::-webkit-search-cancel-button,
+.search-input::-webkit-search-decoration {
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+.search-clear-btn {
+  flex-shrink: 0;
+  min-height: 40px;
+  padding: var(--space-sm) var(--space-md);
+}
+
+/* "N knots match" / "No knots match “q”" above the results. */
+.search-summary {
+  margin-bottom: var(--space-sm);
+  font-size: 13px;
+  color: var(--color-text-muted);
+  overflow-wrap: anywhere;
+}
+
+/* Highlighted match inside knot text, transcripts, places and previews. */
+mark.search-mark {
+  background: var(--color-mark);
+  color: inherit;
+  border-radius: 2px;
+  padding: 0 1px;
+}
+
+/* ---- Calendar: matching and non-matching days ---- */
+.calendar-day--match {
+  background: var(--color-primary-soft);
+  border-color: var(--color-primary);
+}
+
+.calendar-day--match:hover {
+  background: var(--color-primary-soft);
+}
+
+.calendar-day--current {
+  box-shadow: 0 0 0 2px var(--color-primary);
+  font-weight: 600;
+}
+
+/* Days that have knots but none matching are dimmed. */
+.calendar-day--dim {
+  opacity: 0.4;
+}
+
+/* "N matches on M days" + ‹ ›; sticky so the buttons stay in reach. */
+.calendar-search-info {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  margin: 0 calc(-1 * var(--space-md)) var(--space-sm);
+  padding: var(--space-xs) var(--space-md);
+  background: var(--color-bg);
+  border-bottom: 1px solid var(--color-border);
+  font-size: 13px;
+}
+
+.calendar-search-info[hidden] {
+  display: none;
+}
+
+.calendar-search-info-text {
+  flex: 1;
+  min-width: 0;
+  color: var(--color-text-muted);
+}
+
+.calendar-match-nav {
+  flex-shrink: 0;
+  min-width: 36px;
+  min-height: 32px;
+  font-size: 18px;
+  line-height: 1;
+}
+
+.calendar-match-nav:disabled {
+  opacity: 0.4;
+}
+
+/* Keep the day panel clear of the sticky bar when scrolled to. */
+.calendar-day-detail-container {
+  scroll-margin-top: 56px;
+}
+
+/* Excerpt shown when the match is not in the one-line preview. */
+.calendar-day-detail-snippet {
+  font-size: 0.8rem;
+  color: var(--color-text-muted);
+  overflow-wrap: anywhere;
+}
+
+/* ---- Manage backups: filter field, chips, status line ---- */
+.backup-filter {
+  margin-bottom: var(--space-sm);
+}
+
+.backup-filter-input {
+  font-size: 14px;
+  padding: var(--space-xs) var(--space-sm);
+}
+
+/* Four chips on ONE line at 320px: 12px text, tight padding, never wrap. */
+.backup-chips {
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 4px;
+  margin-top: var(--space-xs);
+}
+
+.backup-chip {
+  flex: 0 1 auto;
+  min-width: 0;
+  padding: 3px 8px;
+  background: transparent;
+  color: var(--color-text-muted);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-full);
+  font-size: 12px;
+  line-height: 1.4;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.backup-chip--active {
+  background: var(--color-primary-soft);
+  color: var(--color-primary);
+  border-color: var(--color-primary);
+  font-weight: 600;
+}
+
+.backup-filter-summary {
+  margin-top: var(--space-xs);
+}
+
+.backup-rows {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
 }

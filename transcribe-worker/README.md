@@ -52,24 +52,24 @@ From this folder:
    Paste your Groq key when prompted. It is stored **encrypted in Cloudflare** and is never written
    to this repo.
 
-4. **(Recommended) Lock down CORS.** Edit `wrangler.toml` and set `ALLOWED_ORIGIN` to your
-   GitHub Pages origin, e.g.:
-   ```toml
-   [vars]
-   ALLOWED_ORIGIN = "https://sescc.github.io"
+4. **(Recommended) Lock down CORS.** Set `ALLOWED_ORIGIN` to your GitHub Pages origin as a
+   Worker secret (it is deliberately not in `wrangler.toml`, so the repo names no site):
+   ```bash
+   npx wrangler secret put ALLOWED_ORIGIN    # e.g. https://<your-user>.github.io
    ```
-   If left unset, the Worker allows all origins (`*`) — convenient for testing, less secure.
+   If left unset, the Worker allows all origins (`*`) — convenient for testing, less secure. A
+   secret takes effect immediately; no redeploy is needed to change it.
 
    **Multiple origins:** `ALLOWED_ORIGIN` also accepts a **comma-separated list**, so you can
    allow both your `github.io` origin and a future custom domain at the same time:
-   ```toml
-   [vars]
-   ALLOWED_ORIGIN = "https://sescc.github.io,https://notes.mydomain.com"
+   ```
+   https://<your-user>.github.io,https://notes.example.com
    ```
    The Worker reflects the request's `Origin` header back in `Access-Control-Allow-Origin` when it
    matches one of the listed origins (and adds `Vary: Origin` so caches stay correct). This makes a
    domain move seamless: add the new origin to the list and deploy, migrate traffic, then later
-   remove the old origin and deploy again — no downtime for either origin during the transition.
+   remove the old origin by putting the shorter list — no downtime for either origin during the
+   transition.
 
 5. **Deploy**
    ```bash
@@ -80,6 +80,11 @@ From this folder:
    https://ehk-transcribe.<your-subdomain>.workers.dev
    ```
 
+   **Migrating an existing deployment** that still has `ALLOWED_ORIGIN` as a plain variable:
+   deploy this version of `wrangler.toml` first (that removes the plain variable; until the
+   secret exists the Worker allows all origins, `*`), then run `npx wrangler secret put
+   ALLOWED_ORIGIN` straight away.
+
 6. **Copy that URL** and paste it into the e-Handkerchief PWA **Settings** as the
    **"Transcription server URL"**.
 
@@ -87,11 +92,11 @@ From this folder:
 
 ## Local testing
 
-For local development you can supply the secret via a `.dev.vars` file (git-ignored):
+For local development you can supply the secrets via a `.dev.vars` file (git-ignored):
 
 ```bash
 cp .dev.vars.example .dev.vars
-# edit .dev.vars and paste your Groq key
+# edit .dev.vars and paste your Groq key (ALLOWED_ORIGIN is optional locally)
 npm run dev
 ```
 
@@ -117,7 +122,7 @@ Expected response:
 **`POST /`** (any path is accepted)
 
 - Body: `multipart/form-data`
-  - `file` (required) — the audio blob (webm/ogg/wav/mp3/…)
+  - `file` (required) — the audio blob (webm/ogg/wav/mp3/m4a/flac/…)
   - `language` (optional) — an ISO language hint, e.g. `en`
 - Response: `200` with `{ "text": "…" }`
 
@@ -145,8 +150,8 @@ All responses include CORS headers.
 
 - The Groq API key is a **Cloudflare secret** (`wrangler secret put GROQ_API_KEY`). It is never in
   this source tree, so **this repo is safe to push publicly**.
-- Set `ALLOWED_ORIGIN` in `wrangler.toml` to restrict CORS to your PWA's origin so other sites
-  can't use your Worker (and your Groq quota). A comma-separated list is supported for allowing
+- Set the `ALLOWED_ORIGIN` secret (`npx wrangler secret put ALLOWED_ORIGIN`) to restrict CORS to
+  your PWA's origin so other sites can't use your Worker (and your Groq quota). A comma-separated list is supported for allowing
   multiple origins (e.g. your `github.io` origin plus a custom domain).
 - `.dev.vars` (local secrets) is git-ignored — do not commit it.
 

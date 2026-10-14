@@ -17,7 +17,7 @@ Keep the Kiro spec files updated when making structural changes.
 - **Decision (user):** broker token exchange and refresh through a Cloudflare Worker holding the client secret. Rejected alternatives: browser-only implicit flow and Google Identity Services, both without refresh tokens.
 - **Decision (user):** a separate owner-operated `oauth-worker/`, not routes on `transcribe-worker/`. The transcription Worker is per-user and self-hosted; OAuth is tied to the site owner, who alone holds the client secret.
 - **Decision (user):** keep the "Transcription server URL (optional)" setting unchanged. The broker URL is injected at deploy from the `OAUTH_BROKER_URL` GitHub secret, like the client ID, and is not a user setting.
-- **Decision (user):** Google Drive backup is not optional. "Always available": CI fails if `GOOGLE_CLIENT_ID` or `OAUTH_BROKER_URL` is missing. Users still choose whether to tap Connect; there is no nag and no blocking. **Supersedes** the earlier README statement "cloud backup is optional; build succeeds without the secret".
+- **Decision (user):** Google Drive backup is not optional. "Always available": CI fails if `GOOGLE_CLIENT_ID` or `OAUTH_BROKER_URL` is missing. Users still choose whether to tap Connect; there is no nag and no blocking. **Supersedes** the earlier README statement "cloud backup is optional; build succeeds without the secret". **(Superseded for forks only, 2026-10-14: the repository variable `DRIVE_BACKUP=off` opts a fork out; the owner's deploy stays strict.)**
 - **Decision (user asked, Claude explained):** the client secret must not be a GitHub Actions secret, because anything injected into the static site is publicly readable in `config.js`.
 - **Decision (Claude):** `prompt=consent` on the auth URL so Google always returns a refresh token.
 - **Decision (Claude):** an unset `ALLOWED_ORIGIN` on `oauth-worker` denies all origins, unlike `transcribe-worker`, which allows `*`.
@@ -295,8 +295,82 @@ Audit findings (Claude): the Knot theme was half-applied. The nav, list and cale
 - **Spec reconciled:** requirements.md 1.3/1.5 amended, new 1.10, 1.11, 3.5 amended, 6.11, 11.14, 13.13, 13.14; design.md (GeoService, AddressBackfill, MediaSummary, BackupStatus, CloudSyncService, screens, Properties 17–19, precache and test lists); README.
 - **Fixed (user request, 2026-10-09):** the Calendar month grid was 336 px wide at a 320 px viewport (each day cell's `min-height: 44px` with `aspect-ratio: 1 / 1` forced a 44 px minimum width, and `1fr` columns can't shrink below that). Now `repeat(7, minmax(0, 1fr))`, and `.calendar-day` gets `min-width: 0; width: 100%` (a grid item with `aspect-ratio` isn't stretched to its column, so without the width it stayed 44 px wide and overlapped its neighbours); cells keep the 44 px height and may be slightly taller than wide.
 
-## Session status (as of 2026-10-09)
-- **Implemented, reviewed and browser-checked; not committed.** The 2026-10-08 save-failure fix is also still uncommitted, so one commit covers both.
+### 2026-10-14 — Search, Manage-backups filter, public README + guide, licence, scrub (plan: `~/.claude/plans/1-with-the-increase-enchanted-squirrel.md`)
+Context (Claude): the repo was already public but unpublicised. The user asked for search as the knot count grows, a README that suits a public repo, a licence, and removal of identifying data. Every decision below came out of a grilling session (Q1–Q21).
+- **Decision (user): search scope.**
+  - Search lives on the Knots list. The Calendar shares the same in-memory query and highlights matching days; the user chose this after a prototype.
+  - Manage backups gets a text filter plus compact chips, not search.
+  - **Why:** the user asked how to find one of ~200 backups without scrolling. Each Drive file's description (date · place · 80-character snippet) is already loaded for the list, so nothing needs downloading.
+- **Decision (user): chip labels** "All · Backup only · Checked off · Local", with "Checked off" kept in full so it matches the badge.
+- **Decision (user): field placement.**
+  - The 🔍 icon sits in the ~70 px gap between "Knots" and 🎲 Random, opens a full-width row under the header, and focuses the field at once (the user's addition, so the phone keyboard opens).
+  - On the Calendar the 🔍 sits at the right of the title.
+  - The query lives in memory only (not saved; cleared when the app is closed), with a field on both screens, and a query typed on one screen is there when the other opens.
+- **Decision (user): matching.**
+  - Searches text items, audio transcripts (including the legacy knot-level one) and the place (resolved address or manual label).
+  - Ignores case and accents; every word must match, in any order; no fuzzy matching.
+  - Checked-off knots (hidden ones too) are included in the results, faded.
+  - Calendar: matching days highlighted, other knot days dimmed, "N match(es) on M day(s)", ‹ › jump across matching days and months, and tapping a matching day lists only its matches.
+- **Decision (user): README and guide.**
+  - The README is for visitors and self-hosters; contributor material is in a linked `CONTRIBUTING.md`.
+  - The detail moved to `docs/guide/` (Home plus 7 pages), which is the single source; CI mirrors it to the GitHub Wiki as a read-only copy. The user chose "both" (docs and Wiki).
+  - Project Structure became a top-level map only; the file-level tree stays in `design.md`.
+  - The 9-section outline and the page split are user-approved.
+  - The transcription highlight names every audio source (Mic, Dictate, Library › Audio file), and Dictate's offline use is mentioned (user). The sentence "Dictate also works offline on devices with offline speech recognition." was proposed by Claude and approved with the plan. Verified in the code: Mic checks `navigator.onLine` before going live, while Dictate has no connectivity check and relies on the browser's recogniser. **Not verified on a phone.**
+- **Decision (user): licence.** PolyForm Noncommercial 1.0.0 "for now".
+  - **Why:** the user wanted a licence that permits forking and self-hosting for non-commercial use while the question stays open; it can be loosened later.
+  - It is source-available, not OSI open source, so GitHub shows no standard licence badge (accepted). The notice is "Required Notice: Copyright 2026 the e-Handkerchief authors", with no personal name.
+- **Decision (user): `DRIVE_BACKUP=off` opt-out for forks.** A repository variable (not a secret). When it is `off`, the deploy skips the secret check and the Google injection and the app hides Cloud Backup. This **supersedes, for forks only,** the 2026-09-22 decision "Google Drive backup is not optional"; the owner's deploy stays strict.
+- **Decision (user): `npm test`** compiles both configs and runs every `*.chartest.js` / `*.proptest.js`.
+- **Decision (user): live link and screenshots.**
+  - The README's "Try it" links to the live instance, with a note that Drive backup there is limited to invited testers.
+  - Three screenshots (Capture, Knots with a search, Calendar with highlighted days) from made-up data with labels only, light mode, 360 px.
+  - The username may appear in the app's own URL (the user: "it just happens"), and only in the README's live link. It is hidden everywhere else.
+- **Decision (user): scrub.**
+  - `ALLOWED_ORIGIN` moves out of `oauth-worker/wrangler.toml` and becomes a Worker secret on both Workers (`npx wrangler secret put ALLOWED_ORIGIN`).
+  - Paths and timezone hints are redacted in the session logs and this file. This is a recorded one-off exception to "session logs are immutable"; only those strings changed.
+- **Decision (user, after Claude explained what a force-push does): history rewrite.**
+  - The author/committer email goes to the GitHub noreply address, and the WSL path and the timezone hints in old file versions are replaced.
+  - It runs **last**, by the user, from a runbook kept outside the repo (the runbook necessarily quotes the identifiers it removes).
+  - **Order:** code and docs, then screenshots, then the rewrite.
+- **Decision (Claude, implementation): search.**
+  - `searchKnots` returns `null` for an empty or whitespace-only query. **Why:** "no search" and "a search with no results" (`[]`) must be different states, or clearing the field would show "No knots match".
+  - Typing is debounced by 120 ms; Enter applies at once and blurs the field (dismissing the keyboard); Escape (with `preventDefault`) and ✕ clear and close.
+  - The row is returned separately from the button so a screen places it outside the re-rendered part. **Why:** re-rendering a focused field drops the phone keyboard.
+  - Highlighting builds text nodes and `<mark>` elements only. **Why:** knot text is user content and also arrives through sync. `matchRanges` folds one code point at a time so the ranges index the original text and agree with `knotMatches`.
+  - The Calendar's ‹ › step in page order (newest month first, so › goes to an older day), wrap around, and always open the day.
+- **Decision (Claude, implementation): backups filter.** `filterBackups` takes `formatTimestamp` as a parameter, and the row and the filter share one `backupMainLine`. **Why:** the filter then searches exactly the text the row shows, including the "Backup from …" fallback for a backup with no description, and the module still runs under `node`. Old-format backups appear only under "All". The filter and chip are kept in the Settings screen's closure, so they survive a reload of the panel.
+- **Decision (Claude, implementation): neutral timezone defaults.** The curated timezone shortlist is 21 major zones, west to east, starting with UTC (a regional duplicate was dropped; every other zone, including any in the old list, stays as one entry among many). The `dayCutoff` chartest's non-UTC example zone became Tokyo, and the doc examples in the timezone-selector spec are now Europe/Paris (agent A). **Why:** a personal-location example as the default or the sample in committed docs and tests is a country hint under the public-ready rule; the list itself is just a neutral set of zones.
+- **Decision (Claude, implementation): Drive off.** `cloudSyncService` has a single `storedToken()` gate that returns `null` when Drive is off, so the connection status, every Drive call, `disconnect` and the backup badges all behave as disconnected, even if a token is stored. `notifyStatus` reports `disconnected` when Drive is off, and `connect`, `handleOAuthCallback` and `handleOAuthError` return early. The `app.ts` `driveEnabled` gates are kept as a second layer. **Why:** a fork's origin might still hold a token from an earlier deployment, and nothing else may talk to Google then; one gate in the service is harder to miss than many call sites. `deploy.yml`'s missing-secret message now points to `docs/guide/self-hosting.md#google-drive-backup` and mentions `DRIVE_BACKUP=off`.
+- **Decision (Claude, implementation): search button height.** The 🔍 button takes its height from `.btn-sm`, like Random and Select, so the Knots header row stays level.
+- **Decision (Claude): the Wiki workflow** (`wiki.yml`) pushes with `GITHUB_TOKEN` and falls back to a `WIKI_TOKEN` secret if that is refused. It skips with a notice if the Wiki isn't initialised (the first page must be created in the GitHub UI once). It rewrites relative `.md` links to Wiki page names. The `GITHUB_TOKEN` push is untested.
+- **Finding (Claude, Google docs):** an external OAuth app in *Testing* status gets refresh tokens that expire after 7 days. A self-hoster who skips the consent-screen publishing sees "Google Drive session expired — please reconnect" weekly. Documented in `docs/guide/self-hosting.md` and `troubleshooting.md`.
+- **Spec reconciled:** requirements.md (new Req 20 Search and Req 21 Drive opt-out; amendments to the glossary, 6.2, 6.12, 11.1, 11.9, 11.15, 12.18, 14.11); design.md (KnotSearch, SearchState, SearchRow/SearchHighlight, BackupFilter, DriveBackup, screens, Deploy-time injection, precache list of 55, test list of 19, file tree, Properties 20–22, Known Limitations); README, CONTRIBUTING.md, `docs/guide/`.
+- **Copy (Claude-proposed; approved by the user, 2026-10-14):** the search labels and counts ("Search knots", "Clear search", "N knots match", "No knots match “q”", "N matches on M days", "No matches", "Previous match" / "Next match"), the backups filter text ("Filter by date, place or text", "Showing N of M", "No backups match"), the screen-reader labels "Filter backups" and ", N match(es)", and the README line "Dictate also works offline on devices with offline speech recognition."
+- **Confirmed (user, 2026-10-14):** the owner's Google OAuth consent screen is still in **Testing**, so the README note "limited to invited testers" and the 7-day refresh-token expiry both apply to the live instance as written.
+- **Known limits (accepted):**
+  - a match only on the legacy knot-level transcript, while per-audio transcripts exist, lists the knot with no visible highlight;
+  - the Calendar ‹ › scrolls to the day panel below the months, not to the cell.
+- **Open (not touched):** the `public/` and `static/` folders at the repo root look like leftovers (`scripts/generate-icons.js` writes to `static/icons`; `icons/` is what the site uses).
+
+## Session status (as of 2026-10-14)
+- **Implemented, reviewed and browser-checked at 320×640 in light and dark mode; not committed.**
+  - `npm test`: 19/19 test files pass (knotSearch 59 checks, backupFilter 29, driveBackup 13, plus the earlier ones).
+  - `tsc` (app + SW) and the SW classic-script parse check pass; the precache list has 55 entries.
+- **Done since:**
+  - agent A's follow-ups: the single `storedToken()` Drive-off gate (connection status, Drive calls, `disconnect`, badges), `notifyStatus`, the early returns in `connect` / `handleOAuthCallback` / `handleOAuthError` (the `app.ts` gates stay as a second layer), the `deploy.yml` message pointing to `docs/guide/self-hosting.md#google-drive-backup`, the 🔍 button taking its height from `.btn-sm`, and the neutral 21-zone timezone shortlist with Europe/Paris doc examples;
+  - the README screenshots `docs/images/{capture,knots,calendar}.png`, made by headless Edge at 360 px in light mode with UTC, from made-up knots with generic labels. The Capture shot's address is a faked lookup reply ("12 Example Street, Old Town") at a mid-ocean position. The script is kept outside the repo;
+  - `npm test` 19/19, the `sw.js` classic-script parse check and the drift check (0 dead) pass.
+- **Pending:**
+  - ~~an independent personal-data review of the repo~~ **Done (independent verifier, 2026-10-14):** the only finding, a fragment of the Google project number in the 2026-09-22 log entry, is redacted to `<client-id>`. The username appears only in the README live link (user-approved); no email, path, timezone hint or secret was found in the working tree; the screenshots carry no metadata. Old commits still carry the personal email and that fragment, which the history rewrite handles;
+  - the user's phone checks: search on both screens (the keyboard opens from the 🔍 tap, ‹ › scrolling), the backups filter, Dictate in airplane mode, plus the 2026-10-09 checks;
+  - the user's Wiki setup: enable the Wiki, create its first page, restrict editing to collaborators, and check that `GITHUB_TOKEN` can push (else add `WIKI_TOKEN`);
+  - the history rewrite (the runbook is in the git-ignored `CLAUDE.local.md`; it is the last step);
+  - redeploying each Worker: `npx wrangler deploy` first, then straight away `npx wrangler secret put ALLOWED_ORIGIN` (a secret can't be set while the deployed plain var of the same name exists);
+  - the `public/` and `static/` leftovers (noted, not touched).
+
+## Session status (as of 2026-10-09) — superseded by 2026-10-14 above
+- **Implemented, reviewed and browser-checked; committed and pushed by the user** as `816dfe0` (the 2026-10-08 save-failure fix plus the 2026-10-09 features and grid fix) and `fd1e0d0` (Calendar time inline). Session log: `docs/sessions/2026-10-09-offline-gps-thumbs-badges.md`.
   - `tsc` (app + SW) exits 0; the SW classic-script parse check passes.
   - All 15 chartests and the timezone proptest pass; all 49 ASSETS paths exist.
 - **Browser-checked at 320×640 (Claude):**
@@ -602,7 +676,7 @@ Audit findings (Claude): the Knot theme was half-applied. The nav, list and cale
 - **Location blocked for the site:** a retry fails immediately until the user allows it in browser settings, which the copy says. The browser won't prompt again, so a retry can't re-prompt. *(Refined 2026-10-04: this copy is now shown only when the Permissions API confirms the site is `denied`; see below.)* **Superseded 2026-10-05:** there is no "blocked" copy any more. A blocked site shows "Location unavailable — tap to retry", and a retry still fails immediately until the user allows it.
 - **Tapping a plain toast:** it dismisses immediately and its timer is cleared, so nothing is removed twice. The Undo toast's button keeps its own behaviour. Browser-checked.
 - **"+" ring in dark mode:** primary-dark #2d7a4f with a #1e1e1e gap and a #4caf76 ring. Browser-checked (computed styles).
-- **Checked-off pill:** it appears on check-off and disappears on Undo, re-rendered by `knot:checkedOff`. The time shows in the user's zone. Browser-checked.
+- **Checked-off pill:** it appears on check-off and disappears on Undo, re-rendered by `knot:checkedOff`. The time shows in the user's zone. Browser-checked (local zone).
 
 ### Edge cases added 2026-10-04 (toggle overflow / location off vs blocked / Random knot / toggle at top)
 - **Location off on the phone, site still allowed (code 1 + `granted`):** Capture shows "Location is off — turn it on, then tap to retry". Covered by `locateFailure.chartest.ts`.
@@ -687,6 +761,36 @@ Audit findings (Claude): the Knot theme was half-applied. The nav, list and cale
 - **Drive not connected:** no badges. Covered by `backupStatus.chartest.ts`; browser-checked.
 - **Calendar at 320 px:** the month grid fits (no sideways scroll); day cells are about 39 px wide and 44 px tall. Browser-checked.
 - **Checked-off knot in the Calendar day list:** the row is faded and its text struck through, but not its time (the time is an inline-block). Browser-checked.
+
+### Edge cases added 2026-10-14
+- **Empty or whitespace-only query:** no search is active; the Knots list and Calendar behave as if the row were closed (`searchKnots` returns `null`, not the full list). Covered by `knotSearch.chartest.ts` (`tokens`, `searchKnots` cases).
+- **Accents and case:** "cafe", "CAFÉ" and "café" all find "Café", and pre-decomposed input works; highlights index the original text. Covered by `knotSearch.chartest.ts`.
+- **Several words, any order, spread over fields:** all must match; one word can't span two fields; a typo doesn't match (no fuzzy). Covered by `knotSearch.chartest.ts`.
+- **Transcript-only match:** found through the audio item's transcript. Covered by `knotSearch.chartest.ts`; browser-checked.
+- **Match only on the legacy knot-level transcript while per-audio transcripts exist:** the knot is listed but no visible text is highlighted (the Calendar's excerpt line does show it). Known limit. The matching is covered by `knotSearch.chartest.ts`; the missing highlight is manual only.
+- **Checked-off knot in the results:** included, faded and struck through, even if the cutoff would hide it; the "Show N checked-off knots" toggle is hidden while searching. Browser-checked at 320×640.
+- **Query set on one screen, then the other opened:** the other screen opens with its row already open and the query in the field (`searchRow.sync` on `search:changed` and at creation). Browser-checked (a query set on Knots is open with that query on the Calendar).
+- **Several words across a text:** "cafe milk" finds "Café … milk", with both words highlighted. Browser-checked; the matching is also covered by `knotSearch.chartest.ts`.
+- **Dark mode:** the search row, highlights, Calendar states and backup chips were checked in dark mode. Browser-checked.
+- **Select mode during a search:** still available; selected knots that are not in the results are dropped from the selection. Manual test.
+- **Random during a search:** unaffected; it draws from all unchecked knots in the store. Manual test.
+- **Search row open and empty, 🔍 tapped again:** closes the row. Escape and ✕ clear and close. Enter applies at once and blurs (the keyboard closes). Manual test.
+- **Typing quickly:** applied after a 120 ms pause, so a long list isn't rebuilt per keystroke; the field isn't rewritten from state while a debounced edit is pending (the caret doesn't jump). Manual test.
+- **Calendar ‹ › wrap:** › after the last matching day goes to the first, ‹ before the first goes to the last, across months; each step opens the day. Browser-checked that ‹ › opens the day. In the in-app test pane smooth scrolling doesn't animate (an instant `scrollIntoView` works), so the scroll itself is pending a phone check.
+- **Calendar, a day with matches vs a day without:** the info line reads "1 match on 1 day", matching days are highlighted and other knot days dimmed; the matching day lists only its matches (with an excerpt line when the preview shows no highlight, matches highlighted); a day without a match lists all its knots. Browser-checked at 320×640.
+- **Manage backups chips and filter at 320 px:** the four chips sit on one line, ending at x 266 of 320; the text filter plus the "Checked off" and "Local" chips give the right rows, and the summary reads "Showing 1 of 5". Browser-checked (Drive stubbed).
+- **Backup with no description:** filtered on its fallback line ("Backup from {date}"). Covered by `backupFilter.chartest.ts`.
+- **Old-format backup:** appears only under the "All" chip. Covered by `backupFilter.chartest.ts`.
+- **Chip and text together:** both must pass; original order kept; an empty or whitespace filter applies none. Covered by `backupFilter.chartest.ts`.
+- **Delete while filtered:** the row is removed and "Showing N of M" updates; deleting the last backup shows "No backups in Google Drive yet." and hides the controls. Manual test (needs a Drive account, or Drive stubbed).
+- **Filter state across a panel reload** (for example after Merge with Cloud): kept while Settings stays open; lost on leaving Settings. Manual test.
+- **`DRIVE_BACKUP` = `off`, `OFF`, ` off `:** Drive is disabled (the workflow lowercases the variable; the app trims and lowercases the injected value). Covered by `driveBackup.chartest.ts` (13 checks) for the app side; the workflow step itself has no automated test.
+- **`DRIVE_BACKUP` unset, empty, or any other value ("on", "false", "offline"):** Drive stays enabled; the deploy fails if either secret is missing. Covered by `driveBackup.chartest.ts` for the app side.
+- **Local development (placeholder never replaced):** Drive stays enabled and Connect shows "Google Drive client ID not configured". Covered by `driveBackup.chartest.ts` (the `''` case).
+- **`DRIVE_BACKUP=off` in the app:** the Cloud Backup section is hidden. Browser-checked (with the flag stubbed).
+- **A fork with a stored token and Drive off:** `getConnectionStatus()` reads `disconnected` (the `storedToken()` gate), no backup badges show, and there is no sync, upload or OAuth handling. Browser-checked.
+- **Wiki not initialised:** the workflow prints a notice and exits 0. Manual test (first run).
+- **Testing-status Google consent screen:** refresh tokens expire after 7 days, so "session expired — please reconnect" appears weekly. Documented; not code.
 
 ## Refactoring Standard Operating Procedure (SOP)
 When instructed to refactor code, adopt the role of a principal software engineer and execute in four strict phases:

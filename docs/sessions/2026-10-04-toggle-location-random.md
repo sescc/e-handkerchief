@@ -11,7 +11,7 @@ The decision and edge-case log is in `CLAUDE.md` › "2026-10-04". The plan is `
 
 **Next step:** the user commits (suggested message in `CLAUDE.md` › "Session status (as of 2026-10-04)"), pushes or deploys, and runs the P0/P1 phone checks in §6.
 
-**Resume command/check:** `wsl -e bash -c 'cd <repo> && git status --short && git log --oneline -3'`, then open `CLAUDE.md` › "Session status (as of 2026-10-04)".
+**Resume command/check:** `git status --short && git log --oneline -3`, then open `CLAUDE.md` › "Session status (as of 2026-10-04)".
 
 ## 1. Work completed
 - **Settings toggle overflow (user-reported on a phone).**
@@ -71,7 +71,7 @@ The decision and edge-case log is in `CLAUDE.md` › "2026-10-04". The plan is `
 ## 4. Live handoff state
 | Type | Handle / location | State | Inspect / resume | Stop / cleanup |
 | --- | --- | --- | --- | --- |
-| branch | `main` @ `4c70b9a` | dirty: see §10 | `wsl -e bash -c 'cd <repo> && git status --short'` | the user commits |
+| branch | `main` @ `4c70b9a` | dirty: see §10 | `git status --short` | the user commits |
 | process | scratchpad `serve.js` on 127.0.0.1:8765 | stopped | none | none |
 | data | browser-pane IndexedDB `e-handkerchief-db` and SW registration @127.0.0.1:8765 | deleted / unregistered | none | none |
 

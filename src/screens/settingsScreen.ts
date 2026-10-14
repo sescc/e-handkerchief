@@ -12,6 +12,14 @@ import { formatKnotTimestamp, getTimezoneOptions } from '../dateFormat.js';
 import { createTimezoneCombobox } from '../components/timezoneCombobox.js';
 import { notificationService } from '../notificationService.js';
 import type { ShowResult } from '../notificationService.js';
+import { driveBackupEnabled } from '../driveBackup.js';
+import {
+  BACKUP_CHIPS,
+  backupFilterSummary,
+  backupMainLine,
+  filterBackups,
+  type BackupChip,
+} from '../backupFilter.js';
 import type { AppSettings } from '../types.js';
 
 // RFC 5321-compatible email regex (local-part@domain)
@@ -666,7 +674,9 @@ export function renderSettings(container: HTMLElement): () => void {
   backupPanel.style.display = 'none';
   cloudSection.appendChild(backupPanel);
 
-  root.appendChild(cloudSection);
+  // A fork deployed with DRIVE_BACKUP=off has no Cloud Backup at all: the
+  // section is built (the code below wires its controls) but never shown.
+  if (driveBackupEnabled()) root.appendChild(cloudSection);
 
   let syncInFlight = false;
   let backupPanelOpen = false;
@@ -706,7 +716,7 @@ export function renderSettings(container: HTMLElement): () => void {
   syncBtn.addEventListener('click', onSyncClickEvent);
   listenerCleanups.push(() => syncBtn.removeEventListener('click', onSyncClickEvent));
 
-  function renderBackupRow(b: BackupEntry, localIds: Set<string>): HTMLElement {
+  function renderBackupRow(b: BackupEntry, localIds: Set<string>, onDeleted: () => void): HTMLElement {
     const row = document.createElement('div');
     row.className = 'backup-row';
 
@@ -716,11 +726,8 @@ export function renderSettings(container: HTMLElement): () => void {
 
     const mainLine = document.createElement('div');
     mainLine.className = 'backup-row-main';
-    mainLine.textContent = b.description
-      ? b.description
-      : b.kind === 'knot'
-      ? `Backup from ${formatKnotTimestamp(b.modifiedTime)}`
-      : `Old-format backup (${b.name})`;
+    // Same text the filter searches (one shared builder, so they cannot disagree).
+    mainLine.textContent = backupMainLine(b, formatKnotTimestamp);
     mainWrap.appendChild(mainLine);
 
     const metaLine = document.createElement('div');
@@ -746,7 +753,7 @@ export function renderSettings(container: HTMLElement): () => void {
         if (!confirm('Delete this backup from Google Drive? Copies on your devices are not deleted.')) return;
         try {
           await cloudSyncService.deleteBackup(b.fileId, b.knotId);
-          row.remove();
+          onDeleted(); // drops it from the loaded list and re-renders (so "Showing N of M" stays right)
           toastService.show('Backup deleted');
         } catch {
           toastService.show('Could not delete backup — check your connection');
@@ -758,7 +765,14 @@ export function renderSettings(container: HTMLElement): () => void {
     return row;
   }
 
+  // Manage-backups filter state. Kept here (not in the panel's DOM) so it
+  // survives a reload of the panel, e.g. after Merge with Cloud.
+  let backupQuery = '';
+  let backupChip: BackupChip = 'all';
+  let backupLoadSeq = 0;
+
   async function loadBackups(): Promise<void> {
+    const seq = ++backupLoadSeq;
     backupPanel.innerHTML = '';
     const loadingEl = document.createElement('div');
     loadingEl.className = 'settings-row-desc';
@@ -767,6 +781,7 @@ export function renderSettings(container: HTMLElement): () => void {
 
     try {
       const [backups, localKnots] = await Promise.all([cloudSyncService.listBackups(), knotStore.listAll()]);
+      if (seq !== backupLoadSeq) return; // a newer load is in charge of the panel
       const localIds = new Set(localKnots.map((k) => k.id));
 
       backupPanel.innerHTML = '';
@@ -777,10 +792,88 @@ export function renderSettings(container: HTMLElement): () => void {
         backupPanel.appendChild(empty);
         return;
       }
-      for (const b of backups) {
-        backupPanel.appendChild(renderBackupRow(b, localIds));
+
+      // The loaded list lives here; filtering re-renders from it, with no new Drive fetch.
+      let loaded: BackupEntry[] = backups;
+
+      // Controls (kept outside the rows container, so re-rendering rows never touches the field).
+      const controls = document.createElement('div');
+      controls.className = 'backup-filter';
+
+      const filterInput = document.createElement('input');
+      filterInput.type = 'search';
+      filterInput.className = 'form-input backup-filter-input';
+      filterInput.placeholder = 'Filter by date, place or text';
+      filterInput.setAttribute('aria-label', 'Filter by date, place or text');
+      filterInput.autocomplete = 'off';
+      filterInput.value = backupQuery;
+      controls.appendChild(filterInput);
+
+      const chipRow = document.createElement('div');
+      chipRow.className = 'backup-chips';
+      chipRow.setAttribute('role', 'group');
+      chipRow.setAttribute('aria-label', 'Filter backups');
+      const chipButtons = new Map<BackupChip, HTMLButtonElement>();
+      for (const chip of BACKUP_CHIPS) {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'backup-chip';
+        btn.textContent = chip.label;
+        btn.addEventListener('click', () => {
+          backupChip = chip.id;
+          renderRows();
+        });
+        chipButtons.set(chip.id, btn);
+        chipRow.appendChild(btn);
       }
+      controls.appendChild(chipRow);
+
+      const summaryEl = document.createElement('div');
+      summaryEl.className = 'settings-row-desc backup-filter-summary';
+      summaryEl.setAttribute('role', 'status');
+      controls.appendChild(summaryEl);
+
+      const rowsEl = document.createElement('div');
+      rowsEl.className = 'backup-rows';
+
+      backupPanel.appendChild(controls);
+      backupPanel.appendChild(rowsEl);
+
+      function renderRows(): void {
+        for (const [id, btn] of chipButtons) {
+          const on = id === backupChip;
+          btn.classList.toggle('backup-chip--active', on);
+          btn.setAttribute('aria-pressed', String(on));
+        }
+        rowsEl.innerHTML = '';
+        if (loaded.length === 0) {
+          // Every backup was deleted from this panel.
+          controls.hidden = true;
+          const empty = document.createElement('div');
+          empty.className = 'settings-row-desc';
+          empty.textContent = 'No backups in Google Drive yet.';
+          rowsEl.appendChild(empty);
+          return;
+        }
+        const shown = filterBackups(loaded, localIds, backupQuery, backupChip, formatKnotTimestamp);
+        summaryEl.textContent = backupFilterSummary(shown.length, loaded.length);
+        for (const b of shown) {
+          rowsEl.appendChild(
+            renderBackupRow(b, localIds, () => {
+              loaded = loaded.filter((x) => x.fileId !== b.fileId);
+              renderRows();
+            }),
+          );
+        }
+      }
+
+      filterInput.addEventListener('input', () => {
+        backupQuery = filterInput.value;
+        renderRows();
+      });
+      renderRows();
     } catch {
+      if (seq !== backupLoadSeq) return;
       backupPanel.innerHTML = '';
       const errEl = document.createElement('div');
       errEl.className = 'settings-row-desc';

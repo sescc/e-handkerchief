@@ -119,7 +119,7 @@ function formatTimePart(p: DateParts, format: AppSettings['timeFormat']): string
  * Returns null when the timezone is invalid or the runtime cannot resolve an offset.
  * Pure with respect to inputs except for the implicit "now" used to resolve DST.
  *
- * Examples: `GMT+8` -> `UTC+08:00`, `GMT+5:30` -> `UTC+05:30`,
+ * Examples: `GMT+1` -> `UTC+01:00`, `GMT+5:30` -> `UTC+05:30`,
  * `GMT` / `UTC` -> `UTC+00:00`, `GMT-5` -> `UTC-05:00`.
  */
 export function formatTimezoneOffset(timeZone: string, at?: Date): string | null {
@@ -149,7 +149,7 @@ export function formatTimezoneOffset(timeZone: string, at?: Date): string | null
 
 /**
  * Build a timezone option's display label: the humanized name, suffixed with the
- * current UTC offset (e.g. `Asia/Singapore (UTC+08:00)`) when it can be resolved,
+ * current UTC offset (e.g. `Europe/Paris (UTC+01:00)`) when it can be resolved,
  * otherwise the name-only label (graceful degradation).
  */
 function buildTimezoneLabel(tz: string): string {
@@ -175,10 +175,12 @@ export function getTimezoneOptions(): Array<{ value: string; label: string }> {
       // fall through to curated list
     }
   }
+  // Major zones, roughly west to east; no single region is singled out.
   const curated = [
-    'UTC','Asia/Singapore','Asia/Kuala_Lumpur','Asia/Tokyo','Asia/Shanghai','Asia/Kolkata',
-    'Asia/Dubai','Europe/London','Europe/Paris','Europe/Berlin','America/New_York',
-    'America/Chicago','America/Denver','America/Los_Angeles','Australia/Sydney','Pacific/Auckland',
+    'UTC','Pacific/Honolulu','America/Anchorage','America/Los_Angeles','America/Denver',
+    'America/Chicago','America/New_York','America/Sao_Paulo','Europe/London','Europe/Paris',
+    'Europe/Berlin','Africa/Cairo','Europe/Moscow','Asia/Dubai','Asia/Kolkata','Asia/Bangkok',
+    'Asia/Shanghai','Asia/Singapore','Asia/Tokyo','Australia/Sydney','Pacific/Auckland',
   ];
   for (const tz of curated) opts.push({ value: tz, label: buildTimezoneLabel(tz) });
   return opts;

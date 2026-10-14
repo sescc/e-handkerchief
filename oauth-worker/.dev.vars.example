@@ -1,3 +1,5 @@
 # Copy to .dev.vars for local `wrangler dev` testing. NEVER commit .dev.vars.
 GOOGLE_CLIENT_ID=your_client_id.apps.googleusercontent.com
 GOOGLE_CLIENT_SECRET=your_client_secret
+# Origin(s) allowed to call the Worker locally (comma-separated). Unset denies all origins.
+ALLOWED_ORIGIN=http://localhost:8080

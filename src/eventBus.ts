@@ -12,6 +12,7 @@ type EventMap = {
   'knots:synced': { pulled: number; pushed: number };
   'knots:conflicts': { count: number }; // number of knots currently awaiting conflict review
   'backup:changed': void; // a knot's backup status may have changed (upload started/finished, sync done, backup deleted, connection changed)
+  'search:changed': string; // the shared Knots/Calendar search query changed (raw text, may be empty)
   'settings:changed': AppSettings;
   'sw:waiting': void;
 };

@@ -11,7 +11,7 @@ For the full session, read `2026-10-05-location-m4a-mic-notif.md` (rounds 1 and 
 
 **Next step:** the user runs the phone checks in §6. The service-worker check goes first, because it unblocks the notification and offline checks.
 
-**Resume command/check:** `wsl -e bash -c 'cd <repo> && git status --short && git log --oneline -3'`, then `CLAUDE.md` › "Session status (as of 2026-10-05)".
+**Resume command/check:** `git status --short && git log --oneline -3`, then `CLAUDE.md` › "Session status (as of 2026-10-05)".
 
 ## 1. Work completed
 - Since the round-1 log: the round-2 root cause and fix, recorded in that log's §11 and in `CLAUDE.md` › "2026-10-05 (round 2)".
@@ -34,14 +34,14 @@ For the full session, read `2026-10-05-location-m4a-mic-notif.md` (rounds 1 and 
 | `node -e "new Function(require('fs').readFileSync('sw.js','utf8'))"` | exit 0 (the old file failed: `SyntaxError: Unexpected token 'export'`) | `sw.js` runs as a classic script. |
 | All 10 chartests + the timezone proptest | 0 failures | No regressions. |
 | Headless Edge (CDP), fresh profile | registered, ready, controller set, 43 precached, 0 query URLs cached, no `SW_WAITING` on first install | The SW works end to end locally. |
-| The deployed `https://sescc.github.io/e-handkerchief/sw.js` | build `e3110c73-29`, no `export {}` | The fix is live and the CI guard passed. |
+| The deployed `https://<owner>.github.io/e-handkerchief/sw.js` | build `e3110c73-29`, no `export {}` | The fix is live and the CI guard passed. |
 | `drift-check.ps1 .` | `0 dead / 0 refs` | No dead doc references. |
 
 ## 4. Live handoff state
 | Type | Handle / location | State | Inspect / resume | Stop / cleanup |
 | --- | --- | --- | --- | --- |
-| branch | `main` @ `e3110c7`, even with `origin/main` | clean except this log and `CLAUDE.md` | `wsl -e bash -c 'cd <repo> && git status -sb'` | the user commits |
-| deployment | GitHub Pages `sescc.github.io/e-handkerchief` | serving build `e3110c73-29` | fetch `sw.js` and read `BUILD_VERSION` | none |
+| branch | `main` @ `e3110c7`, even with `origin/main` | clean except this log and `CLAUDE.md` | `git status -sb` | the user commits |
+| deployment | GitHub Pages `<owner>.github.io/e-handkerchief` | serving build `e3110c73-29` | fetch `sw.js` and read `BUILD_VERSION` | none |
 | port | 127.0.0.1:8765 (scratchpad `serve.js`) | free (stopped) | none | none |
 | port | 9333 (headless Edge CDP) | free (no process) | none | none |
 | artifact | scratchpad `edge-profile*` directories | partly left (locked cache files) | scratchpad only | disposable, deleted with the scratchpad |

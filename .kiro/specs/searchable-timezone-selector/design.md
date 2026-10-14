@@ -11,7 +11,7 @@ option list can be committed.
 The design has three moving parts:
 
 1. **`getTimezoneOptions()` enrichment** (in `src/dateFormat.ts`) — each non-`'auto'` option's
-   label gains its current UTC offset, e.g. `Asia/Singapore (UTC+08:00)`, computed via `Intl` at
+   label gains its current UTC offset, e.g. `Europe/Paris (UTC+01:00)`, computed via `Intl` at
    render time. This is a pure-data change; the returned shape stays `Array<{ value; label }>`.
 
 2. **A self-contained combobox component** (new file `src/components/timezoneCombobox.ts`) — a plain
@@ -87,10 +87,10 @@ export function getTimezoneOptions(): Array<{ value: string; label: string }>;
 
 1. Build `new Intl.DateTimeFormat('en-US', { timeZone, timeZoneName: 'shortOffset' })` and call
    `formatToParts(at ?? new Date())`. Read the `timeZoneName` part, which returns strings such as
-   `GMT+8`, `GMT+5:30`, `GMT`, or `UTC`.
+   `GMT+1`, `GMT+5:30`, `GMT`, or `UTC`.
 2. Normalize that token to the canonical `UTC±HH:MM` shape: strip the `GMT`/`UTC` prefix, treat a bare
    prefix (no digits) as `+0`, split hours/minutes, zero-pad both to two digits, and always emit a
-   sign, giving `UTC+08:00`, `UTC+05:30`, `UTC+00:00`, `UTC-05:00`.
+   sign, giving `UTC+01:00`, `UTC+05:30`, `UTC+00:00`, `UTC-05:00`.
 3. Wrap the whole thing in `try/catch`; return `null` on any throw or unparseable token.
 
 Browser support note: `timeZoneName: 'shortOffset'` / `'longOffset'` are supported in Chrome 91+,
@@ -197,7 +197,7 @@ export function filterTimezoneOptions(options: TimezoneOption[], query: string):
 
 Because each option's `label` already contains the Offset_Text (from enrichment), matching against
 `value + '\u0000' + label` covers value, name, and offset in one pass — this satisfies Req 2.5
-(offset search such as `+08`) without a separate offset field. An empty/whitespace query returns the
+(offset search such as `+01`) without a separate offset field. An empty/whitespace query returns the
 full list (Req 2.2). For a few hundred entries a synchronous per-keystroke linear scan is trivially
 fast (sub-millisecond) and needs no debouncing; this is noted rather than optimized.
 
@@ -319,8 +319,8 @@ honored. Each such test is tagged `Feature: searchable-timezone-selector, Proper
 **Behavioral / manual checks (interaction and ARIA — not amenable to PBT):**
 
 1. Focus the input → dropdown opens showing the full list (Req 3.1).
-2. Type `sing` → only Singapore-matching rows remain, in original order (Req 2.1–2.4).
-3. Type `+08` → offset-matching rows appear (Req 2.5).
+2. Type `pari` → only Paris-matching rows remain, in original order (Req 2.1–2.4).
+3. Type `+01` → offset-matching rows appear (Req 2.5).
 4. ArrowDown/ArrowUp cycle with wrap; highlighted row scrolls into view (Req 5.1–5.2, 5.5).
 5. ArrowDown while closed opens the list (Req 5.3).
 6. Enter commits the highlighted row, sets input text, closes (Req 5.4).
@@ -365,7 +365,7 @@ single property test; each tagged with its design property number.
 
 - **Offset baked into `label` rather than a separate field.** Enriching the label means the existing
   `Array<{value,label}>` shape is unchanged, the screen's wiring stays identical, and offset search
-  (`+08`) falls out of the same substring filter for free — no separate Searchable_Text field or
+  (`+01`) falls out of the same substring filter for free — no separate Searchable_Text field or
   filter branch needed.
 
 - **Single `render()` from explicit state.** Centralizing DOM updates in one `render()` driven by a

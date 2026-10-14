@@ -2,14 +2,13 @@ name = "ehk-transcribe"
 main = "src/index.js"
 compatibility_date = "2024-11-01"
 
-# Public (non-secret) variables:
-[vars]
-# ALLOWED_ORIGIN accepts a single origin or a comma-separated list, e.g.
-#   ALLOWED_ORIGIN = "https://sescc.github.io"
-#   ALLOWED_ORIGIN = "https://sescc.github.io,https://notes.mydomain.com"
-# The Worker reflects the request's Origin back if it's in the list.
-# Leave unset to allow all origins (*).
-# ALLOWED_ORIGIN = "https://sescc.github.io"
-
-# GROQ_API_KEY is NOT set here — it is a secret set via:
+# ALLOWED_ORIGIN and GROQ_API_KEY are NOT set here. They are Worker secrets:
 #   npx wrangler secret put GROQ_API_KEY
+#   npx wrangler secret put ALLOWED_ORIGIN
+# ALLOWED_ORIGIN accepts a single origin or a comma-separated list, e.g.
+#   https://<your-user>.github.io
+#   https://<your-user>.github.io,https://notes.example.com
+# The Worker reflects the request's Origin back if it's in the list.
+# Leave it unset to allow all origins (*).
+# Do not add ALLOWED_ORIGIN under [vars]: a plain variable and a secret cannot
+# share a name.

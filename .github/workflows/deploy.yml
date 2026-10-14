@@ -66,12 +66,25 @@ jobs:
         env:
           GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID }}
           OAUTH_BROKER_URL: ${{ secrets.OAUTH_BROKER_URL }}
+          # Repository variable (Settings > Secrets and variables > Actions > Variables).
+          # Forks that don't want Google Drive backup set it to "off".
+          DRIVE_BACKUP: ${{ vars.DRIVE_BACKUP }}
         run: |
-          # Google Drive backup is a required feature: refuse to deploy without it.
+          # Opt-out for forks: DRIVE_BACKUP=off skips the secret check and the
+          # client/broker injection. The literal "off" is injected (never the raw
+          # variable value) and the app then hides Cloud Backup entirely.
+          if [ "${DRIVE_BACKUP,,}" = "off" ]; then
+            echo "DRIVE_BACKUP=off: Google Drive backup is disabled for this deployment."
+            sed -i "s|@@DRIVE_BACKUP@@|off|g" _site/config.js
+            node --check _site/config.js
+            exit 0
+          fi
+          # Default (the owner's deploy): Google Drive backup is a required
+          # feature, so refuse to deploy without it.
           missing=0
           for name in GOOGLE_CLIENT_ID OAUTH_BROKER_URL; do
             if [ -z "${!name}" ]; then
-              echo "ERROR: GitHub Actions secret ${name} is not set — see README 'Cloud Backup (Google Drive)'." >&2
+              echo "ERROR: GitHub Actions secret ${name} is not set — see docs/guide/self-hosting.md#google-drive-backup (or set the repository variable DRIVE_BACKUP to 'off' to disable Drive backup)." >&2
               missing=1
             fi
           done

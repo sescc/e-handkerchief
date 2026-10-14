@@ -13,6 +13,10 @@ import { formatKnotTime } from '../dateFormat.js';
 import { isCheckedOff } from '../dayCutoff.js';
 import { summarizeMedia, describeMediaSummary } from '../mediaSummary.js';
 import type { MediaSummaryEntry } from '../mediaSummary.js';
+import { searchState } from '../searchState.js';
+import { queryTokens, searchKnots, matchRanges, matchSnippet } from '../knotSearch.js';
+import { createSearchRow } from '../components/searchRow.js';
+import { appendHighlightedText } from '../components/searchHighlight.js';
 import type { Knot } from '../types.js';
 
 const WEEKDAY_LABELS = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'];
@@ -52,22 +56,32 @@ function dayKeyFromYMD(year: number, month1: number, day: number): string {
   return `${year}-${m}-${d}`;
 }
 
-/** Short one-line preview for a knot in the day-detail list. */
-function knotPreview(knot: Knot): string {
+/**
+ * Short one-line preview for a knot in the day-detail list. `content` is true
+ * when the text is the knot's own text (searchable/highlightable) rather than
+ * a "🎤 Voice" style placeholder.
+ */
+function knotPreview(knot: Knot): { text: string; content: boolean } {
   const firstText = knot.mediaItems.find((m) => m.type === 'text');
   if (firstText && firstText.type === 'text') {
     const content = firstText.content.trim();
     if (content) {
-      return content.length > 60 ? content.slice(0, 60) + '…' : content;
+      return { text: content.length > 60 ? content.slice(0, 60) + '…' : content, content: true };
     }
   }
   const hasAudio = knot.mediaItems.some((m) => m.type === 'audio');
-  if (hasAudio) return '🎤 Voice';
+  if (hasAudio) return { text: '🎤 Voice', content: false };
   const hasPhoto = knot.mediaItems.some((m) => m.type === 'photo');
-  if (hasPhoto) return '📷 Photo';
+  if (hasPhoto) return { text: '📷 Photo', content: false };
   const hasVideo = knot.mediaItems.some((m) => m.type === 'video');
-  if (hasVideo) return '🎬 Video';
-  return '(empty)';
+  if (hasVideo) return { text: '🎬 Video', content: false };
+  return { text: '(empty)', content: false };
+}
+
+/** The day key of a knot in the configured zone, or null for an unreadable timestamp. */
+function knotDayKey(knot: Knot, tz: string | undefined): string | null {
+  const d = new Date(knot.timestamp.localISO);
+  return isNaN(d.getTime()) ? null : localDayKey(d, tz);
 }
 
 export function renderCalendar(container: HTMLElement): () => void {
@@ -79,10 +93,46 @@ export function renderCalendar(container: HTMLElement): () => void {
   const root = document.createElement('div');
   root.className = 'calendar-screen';
 
+  // Header: title on the left, 🔍 on the right; the field row sits under it.
+  const headerRow = document.createElement('div');
+  headerRow.className = 'calendar-header';
+
   const titleEl = document.createElement('h1');
   titleEl.className = 'page-title';
   titleEl.textContent = 'Calendar';
-  root.appendChild(titleEl);
+  headerRow.appendChild(titleEl);
+
+  const search = createSearchRow({ buttonClass: 'calendar-search-btn' });
+  headerRow.appendChild(search.button);
+  root.appendChild(headerRow);
+  root.appendChild(search.row);
+
+  // "N matches on M days" with ‹ › to step through the matching days. Shown
+  // only while a search is active; sticky so the buttons stay reachable.
+  const infoRow = document.createElement('div');
+  infoRow.className = 'calendar-search-info';
+  infoRow.hidden = true;
+
+  const infoText = document.createElement('span');
+  infoText.className = 'calendar-search-info-text';
+  infoText.setAttribute('role', 'status');
+  infoRow.appendChild(infoText);
+
+  const prevMatchBtn = document.createElement('button');
+  prevMatchBtn.type = 'button';
+  prevMatchBtn.className = 'btn btn-ghost btn-sm calendar-match-nav';
+  prevMatchBtn.textContent = '‹';
+  prevMatchBtn.setAttribute('aria-label', 'Previous match');
+  infoRow.appendChild(prevMatchBtn);
+
+  const nextMatchBtn = document.createElement('button');
+  nextMatchBtn.type = 'button';
+  nextMatchBtn.className = 'btn btn-ghost btn-sm calendar-match-nav';
+  nextMatchBtn.textContent = '›';
+  nextMatchBtn.setAttribute('aria-label', 'Next match');
+  infoRow.appendChild(nextMatchBtn);
+
+  root.appendChild(infoRow);
 
   const monthsEl = document.createElement('div');
   monthsEl.className = 'calendar-months';
@@ -98,6 +148,18 @@ export function renderCalendar(container: HTMLElement): () => void {
   // Track the currently open day so re-tapping the same day toggles it closed.
   let openDayKey: string | null = null;
   let allKnots: Knot[] = [];
+
+  // --- Search state (recomputed by paint() from allKnots + the shared query) ---
+  /** Words of the active search (empty = no search). */
+  let searchWords: string[] = [];
+  /** Ids of the knots that match the active search. */
+  let matchIds = new Set<string>();
+  /** Matching knots per day key. */
+  let matchesByDay = new Map<string, Knot[]>();
+  /** Days with a match, newest first (the order the months are laid out in). */
+  let matchDayKeys: string[] = [];
+  /** The day the ‹ › buttons last jumped to; null until the first jump. */
+  let currentMatchDay: string | null = null;
 
   // Object URLs created for the open day panel's thumbnails; all are revoked
   // whenever the panel is re-rendered, cleared, or the screen is torn down.
@@ -166,10 +228,12 @@ export function renderCalendar(container: HTMLElement): () => void {
     detailEl.innerHTML = '';
 
     // Knots on this day, newest first (listAll already returns newest first).
-    const dayKnots = allKnots.filter(
-      (n) => localDayKey(new Date(n.timestamp.localISO), tz) === dayKey
-    );
+    let dayKnots = allKnots.filter((n) => knotDayKey(n, tz) === dayKey);
     if (dayKnots.length === 0) return;
+    // A day with matches lists only its matching knots; any other day lists all.
+    if (searchWords.length > 0 && matchesByDay.has(dayKey)) {
+      dayKnots = dayKnots.filter((n) => matchIds.has(n.id));
+    }
 
     const panel = document.createElement('div');
     panel.className = 'calendar-day-detail';
@@ -199,8 +263,25 @@ export function renderCalendar(container: HTMLElement): () => void {
       timeEl.className = 'calendar-day-detail-time';
       timeEl.textContent = `${formatKnotTime(knot.timestamp.localISO)} ·`;
       previewEl.appendChild(timeEl);
-      previewEl.appendChild(document.createTextNode(knotPreview(knot)));
+      // Highlight only knots that match the search, and only the text actually
+      // shown (ranges are computed on the exact preview string). Text nodes +
+      // <mark> via DOM APIs — never innerHTML.
+      const words = matchIds.has(knot.id) ? searchWords : [];
+      const preview = knotPreview(knot);
+      appendHighlightedText(previewEl, preview.text, preview.content ? words : []);
       textCol.appendChild(previewEl);
+
+      // The match may be in a later text item, a transcript or the place:
+      // when the preview shows no highlight, add a short excerpt that does.
+      if (words.length > 0 && !(preview.content && matchRanges(preview.text, words).length > 0)) {
+        const snippet = matchSnippet(knot, words);
+        if (snippet) {
+          const snippetEl = document.createElement('div');
+          snippetEl.className = 'calendar-day-detail-snippet';
+          appendHighlightedText(snippetEl, snippet, words);
+          textCol.appendChild(snippetEl);
+        }
+      }
 
       row.appendChild(textCol);
 
@@ -294,12 +375,21 @@ export function renderCalendar(container: HTMLElement): () => void {
 
       if (count > 0) {
         cell.classList.add('calendar-day--has-knots');
+        cell.dataset.dayKey = key;
         cell.setAttribute('role', 'button');
         cell.tabIndex = 0;
-        cell.setAttribute(
-          'aria-label',
-          `${friendlyDayLabel(key)} — ${count} knot${count === 1 ? '' : 's'}`
-        );
+        let label = `${friendlyDayLabel(key)} — ${count} knot${count === 1 ? '' : 's'}`;
+        if (searchWords.length > 0) {
+          const matched = matchesByDay.get(key)?.length ?? 0;
+          if (matched > 0) {
+            cell.classList.add('calendar-day--match');
+            if (key === currentMatchDay) cell.classList.add('calendar-day--current');
+            label += `, ${matched} match${matched === 1 ? '' : 'es'}`;
+          } else {
+            cell.classList.add('calendar-day--dim');
+          }
+        }
+        cell.setAttribute('aria-label', label);
 
         if (count <= 4) {
           const dots = document.createElement('div');
@@ -328,6 +418,8 @@ export function renderCalendar(container: HTMLElement): () => void {
             renderDayDetail(key, tz);
             detailEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
           }
+          // Keep the ‹ › cursor on the day the user last looked at.
+          if (openDayKey === key && matchesByDay.has(key)) markCurrentCell(key);
         };
         cell.addEventListener('click', onTap);
         cell.addEventListener('keydown', (ev) => {
@@ -345,9 +437,73 @@ export function renderCalendar(container: HTMLElement): () => void {
     return block;
   }
 
+  /** Move the "current match" outline to `dayKey` (null = none) without re-rendering the months. */
+  function markCurrentCell(dayKey: string | null): void {
+    currentMatchDay = dayKey;
+    for (const el of monthsEl.querySelectorAll<HTMLElement>('.calendar-day--current')) {
+      el.classList.remove('calendar-day--current');
+    }
+    if (dayKey === null) return;
+    for (const el of monthsEl.querySelectorAll<HTMLElement>('.calendar-day--match')) {
+      if (el.dataset.dayKey === dayKey) el.classList.add('calendar-day--current');
+    }
+  }
+
+  /**
+   * ‹ (-1) and › (+1): step through the matching days in page order (the
+   * months are laid out newest first, so › goes down the page to an older
+   * day). Wraps around. Always OPENS the day (a tap would toggle it closed),
+   * marks its cell, and scrolls to the day's panel, which sits below the months.
+   */
+  function jumpToMatch(dir: 1 | -1): void {
+    const n = matchDayKeys.length;
+    if (n === 0) return;
+    let idx = currentMatchDay === null ? -1 : matchDayKeys.indexOf(currentMatchDay);
+    idx = idx === -1 ? (dir === 1 ? 0 : n - 1) : (idx + dir + n) % n;
+    const key = matchDayKeys[idx];
+    openDayKey = key;
+    markCurrentCell(key);
+    renderDayDetail(key, resolveTimeZone());
+    detailEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+  prevMatchBtn.addEventListener('click', () => jumpToMatch(-1));
+  nextMatchBtn.addEventListener('click', () => jumpToMatch(1));
+
+  /** Fetch the knots, then paint. */
   async function loadAndRender(): Promise<void> {
-    const tz = resolveTimeZone();
     allKnots = await knotStore.listAll();
+    paint();
+  }
+
+  /** Paint months, search state and the open day from the in-memory `allKnots` (synchronous). */
+  function paint(): void {
+    const tz = resolveTimeZone();
+
+    // --- Search: which knots/days match the shared query ---
+    const query = searchState.get();
+    const results = searchKnots(allKnots, query);
+    searchWords = results ? queryTokens(query) : [];
+    matchIds = new Set((results ?? []).map((k) => k.id));
+    matchesByDay = new Map();
+    for (const k of results ?? []) {
+      const dk = knotDayKey(k, tz);
+      if (dk === null) continue;
+      const list = matchesByDay.get(dk);
+      if (list) list.push(k);
+      else matchesByDay.set(dk, [k]);
+    }
+    matchDayKeys = [...matchesByDay.keys()].sort().reverse();
+    if (currentMatchDay !== null && !matchesByDay.has(currentMatchDay)) currentMatchDay = null;
+
+    infoRow.hidden = results === null;
+    if (results !== null) {
+      const n = results.length;
+      const d = matchDayKeys.length;
+      infoText.textContent =
+        n === 0 ? 'No matches' : `${n} match${n === 1 ? '' : 'es'} on ${d} day${d === 1 ? '' : 's'}`;
+      prevMatchBtn.disabled = d === 0;
+      nextMatchBtn.disabled = d === 0;
+    }
 
     // Build per-day counts keyed by YYYY-MM-DD in the configured timezone.
     const counts = new Map<string, number>();
@@ -422,9 +578,17 @@ export function renderCalendar(container: HTMLElement): () => void {
   unsubscribeCheckedOff = eventBus.on('knot:checkedOff', () => {
     void loadAndRender();
   });
+  // The shared query changed (here or on the Knots screen): restart the ‹ ›
+  // cursor and repaint from memory (no reload from the store).
+  const unsubscribeSearch = searchState.subscribe(() => {
+    currentMatchDay = null;
+    paint();
+  });
 
   // Cleanup
   return () => {
+    unsubscribeSearch();
+    search.destroy();
     unsubscribeSaved?.();
     unsubscribeDeleted?.();
     unsubscribeSynced?.();

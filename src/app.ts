@@ -10,6 +10,13 @@ import { cloudSyncService } from './cloudSyncService.js';
 import { notificationService } from './notificationService.js';
 import { eventBus } from './eventBus.js';
 import { fillPendingAddresses } from './addressBackfillService.js';
+import { driveBackupEnabled } from './driveBackup.js';
+
+/**
+ * False on a fork deployed with DRIVE_BACKUP=off: the app then never starts a
+ * Google Drive sync, upload or OAuth flow, even if a token was stored earlier.
+ */
+const driveEnabled = driveBackupEnabled();
 
 // ---- Conflict toast -------------------------------------------------------
 // ONE persistent toast reflects how many knots currently await conflict
@@ -63,10 +70,12 @@ async function init(): Promise<void> {
   // Toasts attach to document.body, so they work before the shell is built.
   const urlParams = new URLSearchParams(location.search);
   const code = urlParams.get('code');
-  if (code) {
-    await cloudSyncService.handleOAuthCallback(code);
-  } else if (urlParams.has('error')) {
-    await cloudSyncService.handleOAuthError(urlParams.get('error') ?? '');
+  if (driveEnabled) {
+    if (code) {
+      await cloudSyncService.handleOAuthCallback(code);
+    } else if (urlParams.has('error')) {
+      await cloudSyncService.handleOAuthError(urlParams.get('error') ?? '');
+    }
   }
 
   // 3. Build the app shell: main content area + fixed bottom nav bar
@@ -84,7 +93,7 @@ async function init(): Promise<void> {
   // registration below) so a save made while either is still in flight is
   // never missed.
   eventBus.on('knot:saved', (k) => {
-    if (cloudSyncService.getConnectionStatus() === 'connected') {
+    if (driveEnabled && cloudSyncService.getConnectionStatus() === 'connected') {
       void cloudSyncService.uploadKnot(k).catch(() => {
         /* queued internally by uploadKnot */
       });
@@ -95,19 +104,22 @@ async function init(): Promise<void> {
   // forget: a failure is harmless (the next full sync reconciles it). Also
   // registered before initRouter so nothing is missed.
   eventBus.on('knot:checkedOff', (k) => {
+    if (!driveEnabled) return;
     void cloudSyncService.pushCheckOff(k).catch((err) => {
       console.warn('Check-off sync failed (the next full sync will retry):', err);
     });
   });
 
   // Keep the conflict toast in step with the recorded conflicts.
-  eventBus.on('knots:conflicts', ({ count }) => syncConflictToast(count));
-  void cloudSyncService
-    .listConflicts()
-    .then((list) => syncConflictToast(list.length))
-    .catch(() => {
-      /* no conflict state yet — nothing to show */
-    });
+  if (driveEnabled) {
+    eventBus.on('knots:conflicts', ({ count }) => syncConflictToast(count));
+    void cloudSyncService
+      .listConflicts()
+      .then((list) => syncConflictToast(list.length))
+      .catch(() => {
+        /* no conflict state yet — nothing to show */
+      });
+  }
 
   // 5. Init the hash-based router into the main content area
   initRouter(main);
@@ -127,7 +139,7 @@ async function init(): Promise<void> {
         } else if (data?.type === 'NAVIGATE' && data.to) {
           navigate(data.to);
         } else if (data?.type === 'FLUSH_CLOUD') {
-          void cloudSyncService.syncAll().catch(() => {});
+          if (driveEnabled) void cloudSyncService.syncAll().catch(() => {});
         }
       });
     } catch (err) {
@@ -137,7 +149,7 @@ async function init(): Promise<void> {
 
   // 7. On reconnect: run a full cloud sync
   window.addEventListener('online', () => {
-    if (cloudSyncService.getConnectionStatus() === 'connected') {
+    if (driveEnabled && cloudSyncService.getConnectionStatus() === 'connected') {
       void cloudSyncService.syncAll().catch(() => {});
     }
     // Fill in addresses for knots whose GPS fix arrived while offline.
@@ -152,13 +164,14 @@ async function init(): Promise<void> {
   void notificationService.ensureShown();
 
   // 9. Run a full sync on startup when already connected and online.
-  if (cloudSyncService.getConnectionStatus() === 'connected' && navigator.onLine) {
+  if (driveEnabled && cloudSyncService.getConnectionStatus() === 'connected' && navigator.onLine) {
     void cloudSyncService.syncAll().catch(() => {});
   }
 
   // 10. Backfill the connected account's email for connections made before
   // this feature existed.
   if (
+    driveEnabled &&
     cloudSyncService.getConnectionStatus() === 'connected' &&
     navigator.onLine &&
     settingsStore.getCurrent().cloudAccountEmail === null

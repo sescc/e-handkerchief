@@ -21,6 +21,7 @@ import { formatKnotTimestamp } from './dateFormat.js';
 import { planSync, remoteChangedSinceBase, type LocalEntry, type RemoteEntry } from './syncPlan.js';
 import { deviceLabelFromUserAgent } from './deviceLabel.js';
 import { backupStatus, type BackupBadge } from './backupStatus.js';
+import { driveBackupEnabled } from './driveBackup.js';
 import type { Knot, CloudUploadJob, OAuthToken, TextMediaItem, AudioMediaItem } from './types.js';
 
 // Both values are injected into config.js at deploy time (see deploy.yml).
@@ -28,6 +29,16 @@ const runtimeConfig = window as Window &
   typeof globalThis & { __GOOGLE_CLIENT_ID__?: string; __OAUTH_BROKER_URL__?: string };
 
 const GOOGLE_CLIENT_ID = runtimeConfig.__GOOGLE_CLIENT_ID__ ?? '';
+
+/**
+ * The stored Google token, or null. Always null when this deployment has Drive
+ * backup switched off (DRIVE_BACKUP=off), even if a token was stored earlier:
+ * that one gate makes the connection status, every Drive call and the badges
+ * behave as disconnected.
+ */
+function storedToken(): OAuthToken | null {
+  return driveBackupEnabled() ? settingsStore.getCurrent().cloudBackupToken : null;
+}
 
 /**
  * Owner-operated Worker (oauth-worker/) that adds the client secret to Google
@@ -94,7 +105,7 @@ function stripOAuthParams(): void {
  * token, the connection is cleared and the user is asked to reconnect.
  */
 async function getAccessToken(force = false): Promise<string | null> {
-  const token = settingsStore.getCurrent().cloudBackupToken;
+  const token = storedToken();
   if (!token) return null;
   if (!force && token.expiresAt - TOKEN_EXPIRY_MARGIN_MS > Date.now()) {
     return token.accessToken;
@@ -423,7 +434,9 @@ export type ConnectionStatus = 'connected' | 'disconnected';
 const _statusListeners: Array<(s: ConnectionStatus) => void> = [];
 
 function notifyStatus(s: ConnectionStatus): void {
-  for (const l of _statusListeners) l(s);
+  // With Drive backup switched off nobody is ever told "connected".
+  const effective: ConnectionStatus = driveBackupEnabled() ? s : 'disconnected';
+  for (const l of _statusListeners) l(effective);
   // Connecting or disconnecting changes which knots show a backup badge.
   eventBus.emit('backup:changed', undefined);
 }
@@ -554,7 +567,7 @@ let _syncPromise: Promise<SyncResult> | null = null;
 
 export const cloudSyncService: CloudSyncServiceAPI = {
   getConnectionStatus(): ConnectionStatus {
-    const token = settingsStore.getCurrent().cloudBackupToken;
+    const token = storedToken();
     return token ? 'connected' : 'disconnected';
   },
 
@@ -567,6 +580,7 @@ export const cloudSyncService: CloudSyncServiceAPI = {
   },
 
   async connect(): Promise<void> {
+    if (!driveBackupEnabled()) return; // Drive backup is switched off for this deployment
     if (!GOOGLE_CLIENT_ID || !OAUTH_BROKER_URL) {
       toastService.show('Google Drive client ID not configured');
       return;
@@ -595,6 +609,7 @@ export const cloudSyncService: CloudSyncServiceAPI = {
   },
 
   async handleOAuthCallback(code: string): Promise<void> {
+    if (!driveBackupEnabled()) return; // Drive backup is switched off: never exchange a code
     const verifier = sessionStorage.getItem('pkce_verifier');
     sessionStorage.removeItem('pkce_verifier');
     // Codes are single-use: strip them up front so a reload can't replay one.
@@ -629,6 +644,7 @@ export const cloudSyncService: CloudSyncServiceAPI = {
   },
 
   async handleOAuthError(error: string): Promise<void> {
+    if (!driveBackupEnabled()) return;
     // Google redirected back with ?error=... (e.g. the user cancelled consent).
     // Drop the now-useless verifier and the dirty URL; connection state and
     // tokens are deliberately left untouched.
@@ -643,7 +659,7 @@ export const cloudSyncService: CloudSyncServiceAPI = {
   },
 
   async disconnect(): Promise<void> {
-    const token = settingsStore.getCurrent().cloudBackupToken;
+    const token = storedToken();
     if (token) {
       try {
         // Revoking the refresh token also invalidates its access tokens.
@@ -689,7 +705,7 @@ export const cloudSyncService: CloudSyncServiceAPI = {
   },
 
   async uploadKnot(knot: Knot): Promise<void> {
-    const token = settingsStore.getCurrent().cloudBackupToken;
+    const token = storedToken();
     if (!token) return;
 
     // Mark the knot as "being sent" so its list badge doesn't flash while the
@@ -821,7 +837,7 @@ export const cloudSyncService: CloudSyncServiceAPI = {
   async syncAll(): Promise<SyncResult> {
     if (_syncPromise) return _syncPromise;
 
-    const token = settingsStore.getCurrent().cloudBackupToken;
+    const token = storedToken();
     if (!token || !navigator.onLine) {
       return { pulled: 0, pushed: 0, conflicts: 0 };
     }
@@ -836,7 +852,7 @@ export const cloudSyncService: CloudSyncServiceAPI = {
   },
 
   async pushCheckOff(knot: Knot): Promise<void> {
-    if (!settingsStore.getCurrent().cloudBackupToken) return;
+    if (!storedToken()) return;
 
     const existing = await findExistingFiles(`${DRIVE_FILE_PREFIX}${knot.id}.json`);
     const target = newestFile(existing);
@@ -876,7 +892,7 @@ export const cloudSyncService: CloudSyncServiceAPI = {
   async fetchRemoteKnot(
     knotId: string
   ): Promise<{ knot: Knot; updatedAt: number; editedOn: string | null; fileId: string }> {
-    if (!settingsStore.getCurrent().cloudBackupToken) throw new Error('Google Drive not connected');
+    if (!storedToken()) throw new Error('Google Drive not connected');
     if (!navigator.onLine) throw new Error('Offline');
 
     const files = await findExistingFiles(`${DRIVE_FILE_PREFIX}${knotId}.json`);
@@ -896,7 +912,7 @@ export const cloudSyncService: CloudSyncServiceAPI = {
     choice: 'local' | 'remote' | 'both',
     expectedRemoteUpdatedAt: number
   ): Promise<{ ok: true } | { ok: false; reason: 'changed-again' }> {
-    if (!settingsStore.getCurrent().cloudBackupToken) throw new Error('Google Drive not connected');
+    if (!storedToken()) throw new Error('Google Drive not connected');
 
     const files = await findExistingFiles(`${DRIVE_FILE_PREFIX}${knotId}.json`);
     const target = newestFile(files);

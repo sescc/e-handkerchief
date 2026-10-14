@@ -17,6 +17,10 @@ import { collectTranscripts } from '../knotSummary.js';
 import { shareKnots } from '../shareService.js';
 import { toggleCheckOff } from '../checkOffActions.js';
 import { pickRandomKnot } from '../randomKnot.js';
+import { searchState } from '../searchState.js';
+import { queryTokens, searchKnots } from '../knotSearch.js';
+import { createSearchRow } from '../components/searchRow.js';
+import { setHighlightedText } from '../components/searchHighlight.js';
 import { isCheckedOff, isCheckedOffVisible, nextCutoffAfter, resolveTimeZone } from '../dayCutoff.js';
 import type { BackupBadge } from '../backupStatus.js';
 import type { Knot, AudioMediaItem, PhotoMediaItem, VideoMediaItem, TextMediaItem } from '../types.js';
@@ -52,6 +56,8 @@ export function renderKnots(container: HTMLElement): () => void {
   let refreshTimer: ReturnType<typeof setTimeout> | null = null;
   /** Guards against overlapping loads painting twice. */
   let loadSeq = 0;
+  /** Words of the active search (empty = no search). Set by renderList; read when building entries. */
+  let searchWords: string[] = [];
 
   function trackUrl(url: string): string {
     objUrls.push(url);
@@ -69,6 +75,10 @@ export function renderKnots(container: HTMLElement): () => void {
   titleEl.className = 'page-title';
   titleEl.textContent = 'Knots';
   headerRow.appendChild(titleEl);
+
+  // 🔍 sits between the title and Random; its field row goes under the header.
+  const search = createSearchRow({ buttonClass: 'knots-search-btn' });
+  headerRow.appendChild(search.button);
 
   const randomBtn = document.createElement('button');
   randomBtn.className = 'btn btn-ghost btn-sm knots-random-btn';
@@ -102,6 +112,8 @@ export function renderKnots(container: HTMLElement): () => void {
   });
   headerRow.appendChild(selectBtn);
   root.appendChild(headerRow);
+  // Outside listEl: renderList wipes listEl, which would drop the field's focus.
+  root.appendChild(search.row);
 
   const listEl = document.createElement('div');
   listEl.className = 'knot-list';
@@ -312,9 +324,11 @@ export function renderKnots(container: HTMLElement): () => void {
       locLink.href = googleMapsUrl(knot.location);
       locLink.target = '_blank';
       locLink.rel = 'noopener noreferrer';
-      locLink.textContent = knot.location.resolvedAddress
-        ? knot.location.resolvedAddress
-        : formatCoords(knot.location.latitude, knot.location.longitude);
+      if (knot.location.resolvedAddress) {
+        setHighlightedText(locLink, knot.location.resolvedAddress, searchWords);
+      } else {
+        locLink.textContent = formatCoords(knot.location.latitude, knot.location.longitude);
+      }
       // Tapping the location should open Maps, not navigate to the knot. In
       // select mode a tap selects the knot instead (the link is not followed).
       locLink.addEventListener('click', (ev) => {
@@ -330,7 +344,7 @@ export function renderKnots(container: HTMLElement): () => void {
       // it bubbles to the entry and navigates to the knot, which is fine.
       const locPlain = document.createElement('div');
       locPlain.className = 'knot-location-link knot-location-link--plain';
-      locPlain.textContent = knot.manualLabel;
+      setHighlightedText(locPlain, knot.manualLabel, searchWords);
       entry.appendChild(locPlain);
     }
 
@@ -347,7 +361,7 @@ export function renderKnots(container: HTMLElement): () => void {
         const textEl = document.createElement('div');
         textEl.className = 'knot-text';
         textEl.style.whiteSpace = 'pre-wrap';
-        textEl.textContent = textItem.content; // safe — never innerHTML
+        setHighlightedText(textEl, textItem.content, searchWords); // Text nodes + <mark> — never innerHTML
         entry.insertBefore(textEl, mediaWrapper);
       } else if (item.type === 'audio') {
         const audioItem = item as AudioMediaItem;
@@ -419,7 +433,7 @@ export function renderKnots(container: HTMLElement): () => void {
     for (const transcript of collectTranscripts(knot)) {
       const transEl = document.createElement('div');
       transEl.className = 'transcription-block';
-      transEl.textContent = transcript;
+      setHighlightedText(transEl, transcript, searchWords);
       entry.appendChild(transEl);
     }
 
@@ -496,13 +510,19 @@ export function renderKnots(container: HTMLElement): () => void {
       }
     }
 
+    // An active search lists matches over ALL knots (checked-off ones too,
+    // already faded by their own class) and ignores the check-off cutoff.
+    const query = searchState.get();
+    const searchResults = searchKnots(allKnots, query);
+    searchWords = searchResults ? queryTokens(query) : [];
+
     // Re-render when the earliest visible checked-off knot passes its cutoff.
-    if (Number.isFinite(earliestHide)) {
+    if (!searchResults && Number.isFinite(earliestHide)) {
       const delay = Math.min(Math.max(earliestHide - now, 0) + 500, MAX_REFRESH_DELAY_MS);
       refreshTimer = setTimeout(() => renderList(), delay);
     }
 
-    displayedKnots = showCheckedOff ? allKnots : visible;
+    displayedKnots = searchResults ?? (showCheckedOff ? allKnots : visible);
 
     // Keep only selections that are still on screen.
     for (const id of [...selected]) {
@@ -513,7 +533,18 @@ export function renderKnots(container: HTMLElement): () => void {
 
     // Show / hide toggle for checked-off knots past the cutoff — at the top of
     // the list, before the empty-state message and the entries.
-    if (hiddenCheckedOff.length > 0) {
+    if (searchResults) {
+      // "N knots match" / "No knots match “q”" (aria-live so it is announced).
+      const summary = document.createElement('p');
+      summary.className = 'search-summary';
+      summary.setAttribute('role', 'status');
+      const n = searchResults.length;
+      summary.textContent =
+        n === 0
+          ? `No knots match “${query.trim()}”`
+          : `${n} knot${n === 1 ? '' : 's'} match${n === 1 ? 'es' : ''}`;
+      listEl.appendChild(summary);
+    } else if (hiddenCheckedOff.length > 0) {
       const toggle = document.createElement('button');
       toggle.className = 'btn btn-ghost btn-full knots-checked-toggle';
       const n = hiddenCheckedOff.length;
@@ -527,7 +558,7 @@ export function renderKnots(container: HTMLElement): () => void {
       listEl.appendChild(toggle);
     }
 
-    if (displayedKnots.length === 0) {
+    if (!searchResults && displayedKnots.length === 0) {
       const emptyState = document.createElement('div');
       emptyState.className = 'empty-state';
       const msg = document.createElement('p');
@@ -589,6 +620,8 @@ export function renderKnots(container: HTMLElement): () => void {
   // only the badges can change, so update them in place (no list re-render,
   // which keeps select mode, scroll position and the checked-off toggle as is).
   unsubscribers.push(eventBus.on('backup:changed', () => void refreshBackupBadges()));
+  // The shared search query changed (here or on the Calendar): repaint from memory.
+  unsubscribers.push(searchState.subscribe(() => renderList()));
 
   // Coming back to the app may be after a cutoff — re-check what to show.
   const onVisibilityChange = (): void => {
@@ -599,6 +632,7 @@ export function renderKnots(container: HTMLElement): () => void {
   // Cleanup
   return () => {
     for (const unsubscribe of unsubscribers) unsubscribe();
+    search.destroy();
     document.removeEventListener('visibilitychange', onVisibilityChange);
     if (refreshTimer !== null) {
       clearTimeout(refreshTimer);

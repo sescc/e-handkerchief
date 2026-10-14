@@ -23,7 +23,7 @@ Constraints honored throughout:
 - [x] 1. Add `formatTimezoneOffset` and enrich `getTimezoneOptions()` in `src/dateFormat.ts`
   - [x] 1.1 Implement the `formatTimezoneOffset(timeZone: string, at?: Date): string | null` pure helper
     - Build `Intl.DateTimeFormat('en-US', { timeZone, timeZoneName: 'shortOffset' })`, call
-      `formatToParts(at ?? new Date())`, and read the `timeZoneName` part (e.g. `GMT+8`, `GMT+5:30`,
+      `formatToParts(at ?? new Date())`, and read the `timeZoneName` part (e.g. `GMT+1`, `GMT+5:30`,
       `GMT`, `UTC`)
     - Normalize the token to canonical `UTC±HH:MM`: strip the `GMT`/`UTC` prefix, treat a bare prefix
       as `+0`, split hours/minutes, zero-pad both to two digits, always emit a sign
@@ -51,7 +51,7 @@ Constraints honored throughout:
       `filterTimezoneOptions(options: TimezoneOption[], query: string): TimezoneOption[]`
     - Trim the query; on empty/whitespace return the full list unchanged (same order)
     - Otherwise return options whose `value + '\u0000' + label` contains the trimmed query as a
-      case-insensitive substring, preserving original relative order (offset search like `+08` is
+      case-insensitive substring, preserving original relative order (offset search like `+01` is
       covered because the offset already lives in `label`)
     - Also export the `TimezoneOption`, `TimezoneComboboxConfig`, and `TimezoneComboboxHandle`
       interfaces from the design so later tasks can consume them
@@ -201,7 +201,7 @@ Constraints honored throughout:
       iterations each
     - _Requirements: 10.1, 10.2_
   - [ ]* 9.2 Manual behavioral / ARIA checklist (not codeable — perform by hand)
-    - Walk the design Testing Strategy behavioral list items 1–14: focus-opens, `sing` filter, `+08`
+    - Walk the design Testing Strategy behavioral list items 1–14: focus-opens, `pari` filter, `+01`
       offset search, arrow wrap + scroll-into-view, ArrowDown-opens, Enter-commits, pointer select on
       touch + desktop, outside-pointerdown/Escape close + restore, blur reverts junk text, empty-list
       "no matches" + Enter no-op, save-failure revert+toast, no-op-skip, external-change-when-unfocused,

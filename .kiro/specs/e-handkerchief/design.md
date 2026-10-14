@@ -2,7 +2,7 @@
 
 ## Overview
 
-e-Handkerchief is a mobile-first Progressive Web App that lets users capture location-aware knots — via voice recording, photo/video, or text — with minimal friction. Every knot is timestamped and geo-tagged automatically. The app stores all data locally in IndexedDB and works fully offline after first load. Voice transcription is optional and additive; it never blocks the core capture flow. Cloud backup (Google Drive) is always available on a deployed site and, once connected, runs an automatic two-way sync so the same knots appear on every device signed into that account. Content sync is **base-aware**: a copy is replaced silently only when just one side changed since the two last agreed, and a knot edited on two devices is surfaced as a **conflict** for the user to review — it is never resolved by "newest wins". A knot can be **checked off**, which is deliberately not a content edit and syncs on its own clock. One or several knots can be sent elsewhere at any time through the platform's own Share sheet. A Daily Email Summary is planned but not yet implemented; the Settings screen keeps its toggle and recipient address for when it ships.
+e-Handkerchief is a mobile-first Progressive Web App that lets users capture location-aware knots — via voice recording, photo/video, or text — with minimal friction. Every knot is timestamped and geo-tagged automatically. The app stores all data locally in IndexedDB and works fully offline after first load. Voice transcription is optional and additive; it never blocks the core capture flow. The Knots list and the Calendar share one in-memory **search** (text, transcripts and place). Cloud backup (Google Drive) is always available on a deployed site (a fork can opt out at deploy time with `DRIVE_BACKUP=off`) and, once connected, runs an automatic two-way sync so the same knots appear on every device signed into that account. Content sync is **base-aware**: a copy is replaced silently only when just one side changed since the two last agreed, and a knot edited on two devices is surfaced as a **conflict** for the user to review — it is never resolved by "newest wins". A knot can be **checked off**, which is deliberately not a content edit and syncs on its own clock. One or several knots can be sent elsewhere at any time through the platform's own Share sheet. A Daily Email Summary is planned but not yet implemented; the Settings screen keeps its toggle and recipient address for when it ships.
 
 The implementation uses vanilla HTML, CSS, and TypeScript compiled to plain ES module JavaScript. There is no framework runtime, no bundler, and no npm install step required by the end user. `tsc` (the TypeScript compiler) is the only build tool.
 
@@ -30,6 +30,10 @@ graph TD
         KnotDiff[knotDiff.ts<br/>pure: conflict-review diff]
         MergeMessage[mergeMessage.ts<br/>pure: merge toast wording]
         DeviceLabel[deviceLabel.ts<br/>pure: user agent to device label]
+        KnotSearch[knotSearch.ts<br/>pure: search matching + highlight ranges]
+        SearchState[searchState.ts<br/>shared in-memory query]
+        BackupFilter[backupFilter.ts<br/>pure: Manage backups filter]
+        DriveBackup[driveBackup.ts<br/>Drive on/off per deployment]
         CloudSync[cloudSyncService.ts<br/>Google Drive API]
         NotifService[notificationService.ts<br/>Notification API]
         EventBus[eventBus.ts<br/>Custom event emitter]
@@ -63,6 +67,12 @@ graph TD
     CheckOffActions --> EventBus
     Router --> KnotDiff
     Router --> MergeMessage
+    Router --> KnotSearch
+    Router --> SearchState
+    SearchState --> EventBus
+    Router --> BackupFilter
+    CloudSync --> DriveBackup
+    Router --> DriveBackup
     SW --> KnotStore
     SW -->|FLUSH_CLOUD message| CloudSync
     CloudSync --> GDrive
@@ -72,7 +82,7 @@ graph TD
     GeoService --> ReverseGeo
 ```
 
-The architecture is intentionally flat: a thin vanilla-JS UI layer built from TypeScript screen modules calls service modules directly. There is no application backend; all persistence is local. The one server-side piece the app itself depends on is `oauth-worker/`, a tiny Cloudflare Worker operated by the site owner. It completes Google's OAuth token exchange and refresh, because Google requires a client secret that must not ship in the static bundle. The optional transcription Worker (`transcribe-worker/`) is configured per user and is separate. The Service Worker is hand-written and handles asset caching, offline fallback, and background sync (a single `cloud-sync` tag) without Workbox. External network calls (Google Drive and its OAuth broker, reverse geocoding, the user's own transcription Worker) never block capture and degrade gracefully when unavailable. Reverse geocoding and deferred transcription are optional features. Google Drive backup is always offered, although each user decides whether to connect.
+The architecture is intentionally flat: a thin vanilla-JS UI layer built from TypeScript screen modules calls service modules directly. There is no application backend; all persistence is local. The one server-side piece the app itself depends on is `oauth-worker/`, a tiny Cloudflare Worker operated by the site owner. It completes Google's OAuth token exchange and refresh, because Google requires a client secret that must not ship in the static bundle. The optional transcription Worker (`transcribe-worker/`) is configured per user and is separate. The Service Worker is hand-written and handles asset caching, offline fallback, and background sync (a single `cloud-sync` tag) without Workbox. External network calls (Google Drive and its OAuth broker, reverse geocoding, the user's own transcription Worker) never block capture and degrade gracefully when unavailable. Reverse geocoding and deferred transcription are optional features. Google Drive backup is always offered (except on a deployment that opted out, see *Deploy-time injection*), although each user decides whether to connect.
 
 ### Component Breakdown
 
@@ -103,7 +113,12 @@ The architecture is intentionally flat: a thin vanilla-JS UI layer built from Ty
 | **CloudSyncService** | Authenticates with Google Drive OAuth2 PKCE flow (token exchange and refresh via `oauth-worker`); upserts each knot's single backup file behind a conflict guard; runs the full two-way sync (via SyncPlan); pushes check-off state as metadata; lists and resolves conflicts; lists and deletes individual backups; manages local/cloud delete tombstones. |
 | **oauth-worker** | Owner-operated Cloudflare Worker (`oauth-worker/src/index.js`). `POST /token` and `POST /refresh` add the Google client secret (a Wrangler secret) and relay Google's token endpoint. CORS is locked to `ALLOWED_ORIGIN`. |
 | **NotificationService** | The quick-capture notification: reports the permission state, posts it on launch (`ensureShown`, which reports `shown` / `skipped` / `failed` with a reason), turns it on from a user gesture (`enable`, which is where the permission prompt happens) and off (`disable`). |
-| **EventBus** | Lightweight publish/subscribe module; decouples service events (`knot:saved`, `knot:deleted`, `knot:checkedOff`, `knots:synced`, `knots:conflicts`, `backup:changed`, `settings:changed`, `sw:waiting`) from screen renders. |
+| **KnotSearch** | Pure module (`knotSearch.ts`): accent- and case-insensitive, every-word search over a knot's text, transcripts, address and label (`searchKnots`, `knotMatches`, `queryTokens`, `normalizeForSearch`), plus `matchRanges` / `matchSnippet` for highlighting. |
+| **SearchState** | `searchState.ts`: the one in-memory query shared by the Knots list and the Calendar (`get` / `set` / `subscribe`, emitting `search:changed`). Not persisted. |
+| **SearchRow / SearchHighlight** | `components/searchRow.ts` builds the 🔍 button and the full-width field row used by both screens; `components/searchHighlight.ts` renders text with `<mark>` using DOM nodes only. |
+| **BackupFilter** | Pure module (`backupFilter.ts`): the Manage backups text filter and the four chips (`filterBackups`, `backupMainLine`, `backupFilterSummary`, `BACKUP_CHIPS`). |
+| **DriveBackup** | `driveBackup.ts`: `isDriveBackupEnabled(value)` (pure) and `driveBackupEnabled()`, which read the deploy-time `window.__DRIVE_BACKUP__` so a fork can leave Drive backup out. |
+| **EventBus** | Lightweight publish/subscribe module; decouples service events (`knot:saved`, `knot:deleted`, `knot:checkedOff`, `knots:synced`, `knots:conflicts`, `backup:changed`, `search:changed`, `settings:changed`, `sw:waiting`) from screen renders. |
 | **BackupStatus** | Pure module (`backupStatus.ts`): `backupStatus(input)` decides whether a knot shows "☁ Not backed up", "☁ Backup deleted" or nothing, from the connection state, an in-flight upload, its `syncState` record and any unfinished upload job. Fed by `CloudSyncService.getBackupStatuses`. |
 | **Service Worker** | Hand-written `sw.ts` compiled to `sw.js` (via `tsconfig.sw.json`); precaches all static assets; relays the `cloud-sync` Background Sync tag to the page as `FLUSH_CLOUD`; opens Capture from the quick-capture notification and re-posts it. |
 
@@ -649,12 +664,21 @@ e-Handkerchief/
 │   ├── deviceLabel.chartest.ts   # Characterization test for deviceLabel
 │   ├── mergeMessage.ts           # Pure: "Merge with Cloud" result wording
 │   ├── mergeMessage.chartest.ts  # Characterization test for mergeMessage
+│   ├── knotSearch.ts             # Pure: search matching, highlight ranges, excerpts
+│   ├── knotSearch.chartest.ts    # Characterization test for knotSearch
+│   ├── searchState.ts            # The one in-memory search query (get / set / subscribe)
+│   ├── backupFilter.ts           # Pure: Manage backups text filter + chips + summary line
+│   ├── backupFilter.chartest.ts  # Characterization test for backupFilter
+│   ├── driveBackup.ts            # isDriveBackupEnabled / driveBackupEnabled (DRIVE_BACKUP opt-out)
+│   ├── driveBackup.chartest.ts   # Characterization test for driveBackup
 │   ├── notificationService.ts  # Quick-capture notification: permission, ensureShown (ShowResult), enable (EnableResult), disable
 │   ├── cloudSyncService.ts     # Google Drive OAuth2 PKCE + upsert + two-way sync + backups
 │   ├── toastService.ts         # Global toast UI (DOM-based)
 │   ├── app.ts                  # Entry point: init, SW registration, routing, sync triggers
 │   ├── components/
 │   │   ├── mediaCapture.ts             # Shared mic/photo/video/library capture UI
+│   │   ├── searchRow.ts                # 🔍 button + full-width search row shared by Knots and Calendar
+│   │   ├── searchHighlight.ts          # Text with matches wrapped in <mark> (DOM nodes only)
 │   │   ├── timezoneCombobox.ts         # Searchable timezone selector
 │   │   └── timezoneCombobox.proptest.ts  # Property-based tests for the combobox
 │   └── screens/
@@ -665,7 +689,19 @@ e-Handkerchief/
 │       ├── conflictScreen.ts   # Conflict review screen (#/conflict/{id})
 │       └── settingsScreen.ts   # Settings screen render + logic
 ├── sw.ts                       # Service Worker source
-├── config.js                   # Runtime config; Google client ID + OAuth broker URL injected at deploy
+├── config.js                   # Runtime config; Google client ID, OAuth broker URL and the Drive on/off flag injected at deploy
+├── icons/                      # PWA icons (192, 512, shortcut) and favicon
+├── scripts/
+│   ├── generate-icons.js       # Writes placeholder PNG icons (hand-written, not compiled)
+│   └── run-tests.js            # `npm test`: runs every compiled *.chartest.js / *.proptest.js with node
+├── docs/
+│   ├── guide/                  # User and operator guide (source of the GitHub Wiki mirror)
+│   ├── images/                 # Screenshots used by the README
+│   └── sessions/               # Per-session hand-off logs
+├── .github/workflows/
+│   ├── deploy.yml              # Build + deploy to GitHub Pages (with deploy-time injection)
+│   └── wiki.yml                # Mirrors docs/guide to the GitHub Wiki
+├── CONTRIBUTING.md, LICENSE, README.md, CLAUDE.md
 ├── oauth-worker/               # Owner-operated Cloudflare Worker: Google token exchange/refresh
 │   └── src/index.js
 ├── transcribe-worker/          # Per-user Cloudflare Worker: deferred transcription proxy
@@ -686,13 +722,17 @@ tsc
 tsc -p tsconfig.sw.json
 ```
 
+`npm test` (`package.json`) runs `tsc && tsc -p tsconfig.sw.json && node scripts/run-tests.js`. `scripts/run-tests.js` (CommonJS, like `generate-icons.js`) finds every compiled `src/**/*.chartest.js` and `src/**/*.proptest.js` that still has a `.ts` sibling (compiled output is git-ignored, so stale files can linger), runs each with `node`, prints a summary and exits non-zero if any test fails or none are found. It currently runs 19 test files.
+
 `tsc` reads `tsconfig.json`, compiles every `src/**/*.ts` source to a `.js` ES module in place. `sw.ts` is compiled separately via `tsconfig.sw.json`, because it needs the `WebWorker` lib (which conflicts with `DOM` in a single `tsconfig`) rather than `DOM`. Neither config bundles, tree-shakes, or requires an npm install step for end users. The output is deployable as static files served from any HTTP server.
 
 ### Deploy-time injection
 
-`config.js` is a plain (non-module, not compiled) script loaded by `index.html` before `src/app.js`. It sets `window.__GOOGLE_CLIENT_ID__` and `window.__OAUTH_BROKER_URL__`, which `CloudSyncService` reads at module load. The committed file holds the placeholders `@@GOOGLE_CLIENT_ID@@` and `@@OAUTH_BROKER_URL@@`. The GitHub Pages deploy workflow replaces them with the `GOOGLE_CLIENT_ID` and `OAUTH_BROKER_URL` Actions secrets via `sed`. An unreplaced placeholder sets its global to `''`, and a trailing `/` on the broker URL is stripped.
+`config.js` is a plain (non-module, not compiled) script loaded by `index.html` before `src/app.js`. It sets `window.__GOOGLE_CLIENT_ID__`, `window.__OAUTH_BROKER_URL__` and `window.__DRIVE_BACKUP__`, which `CloudSyncService` and `DriveBackup` read. The committed file holds the placeholders `@@GOOGLE_CLIENT_ID@@`, `@@OAUTH_BROKER_URL@@` and `@@DRIVE_BACKUP@@`. The GitHub Pages deploy workflow replaces the first two with the `GOOGLE_CLIENT_ID` and `OAUTH_BROKER_URL` Actions secrets via `sed`. An unreplaced placeholder sets its global to `''`, and a trailing `/` on the broker URL is stripped.
 
-- Google Drive backup is a required feature: **CI fails** if either secret is empty.
+- **Drive opt-out (forks only).** The workflow reads the repository **variable** (not a secret) `DRIVE_BACKUP`. When it equals `off` in any letter case (`${DRIVE_BACKUP,,}`), the step skips the secret check and the client/broker injection, replaces `@@DRIVE_BACKUP@@` with the literal `off` (never the raw variable value), runs `node --check _site/config.js`, and exits successfully. The app then treats Drive backup as disabled (*DriveBackup*). The two Google globals stay `''`.
+- **`@@DRIVE_BACKUP@@` split-string guard.** Like the other placeholders, the comparison in `config.js` is written as `'@@DRIVE' + '_BACKUP@@'`, so `sed` can never rewrite it. If the placeholder was never replaced (local development) the global is `''` and Drive backup stays **enabled**.
+- Otherwise (variable unset or any other value) Google Drive backup is a required feature: **CI fails** if either secret is empty. This keeps the owner's deployment strict; the 2026-09-22 decision "Drive backup is not optional" still holds for it.
 - Placeholder tokens must be distinct from the global names. When they were identical, `sed` also rewrote the assignment target and produced a syntax error.
 - After injection, CI runs `node --check _site/config.js` so a malformed config fails the build instead of deploying silently.
 - Test files are not deployed: the workflow deletes `*.chartest.js` and `*.proptest.js` from `_site/src` after copying.
@@ -859,6 +899,8 @@ Route `#/knots`. Displays all knots as an inline, scrollable feed, newest first.
 
 **Random:** a "🎲 Random" header button (`.knots-random-btn`, `margin-left: auto`, aria-label "Open a random unchecked knot") sits before "Select". It is hidden only in select mode (and stays visible when the list is empty or all-hidden, since hidden checked-off knots don't matter to it). On click it calls `KnotStore.listAll()` — the whole store, not just the displayed list — then `pickRandomKnot(all, null)` from *RandomKnot* and navigates to `#/random/{id}`. With no unchecked knot it toasts "No unchecked knots yet"; if `listAll()` throws it logs and toasts "Could not load knots".
 
+**Search (Requirement 20):** the header is `Knots` title, then `.knots-search-btn` (🔍, `createSearchRow({ buttonClass: 'knots-search-btn' })`), then Random and Select; the search row (`search.row`) is the next child of the screen root, under the header and outside the re-rendered list, so re-rendering never drops the field's focus. `renderList` reads `searchState.get()` and calls `searchKnots(allKnots, query)`. `null` (no words) leaves the normal behaviour untouched. Otherwise the displayed list is the matches over **all** knots (checked-off ones included, already faded by their own class; the cutoff refresh timer is not armed), the "Show N checked-off knots" toggle is replaced by `p.search-summary` (`role="status"`) reading "N knots match" / "1 knot matches" / `No knots match “{query}”`, and the entry builders highlight with `setHighlightedText(el, text, searchWords)` for the address, the manual label, the text items and the transcripts. The screen subscribes to `searchState` and repaints from memory (no store read). The empty-state messages are suppressed while a search is active. Selected ids that are not in the results are dropped (`selected.delete`), and Select stays available; Random is unchanged because it reads the whole store.
+
 **Select mode:** a "Select" header button (hidden when there is nothing to select) turns entries into checkbox rows and shows a sticky bar with "Cancel" and "Share (N)" (disabled while N is 0). The selection survives re-renders while in select mode, and entries that leave the screen are dropped from it. In select mode a tap on an entry — including on its **location link**, whose default action is suppressed — toggles its selection instead of opening the knot or Maps; the per-entry check-off/delete buttons and conflict badge are not shown. Share (N) builds the list from the in-memory knots and calls `shareKnots(chosen)` synchronously from the click handler, then leaves select mode. Long-press is not used because it clashes with the media controls.
 
 **Conflict badge:** an entry whose knot is in conflict (from `cloudSyncService.listConflicts()`, refreshed on `knots:conflicts`) shows a button "⚠ Also edited on another device" that navigates to `#/conflict/{id}`.
@@ -898,6 +940,8 @@ Route `#/calendar`. A scrollable, reverse-chronological month grid.
 - A `.calendar-thumb-count` pill (bottom right) shows the count only when it is above 1.
 - If an `<img>` fires `error`, the tile's content is replaced by a neutral tile with 📷 or 🎬.
 A checked-off row's existing fade (`opacity`) fades its thumbnails too.
+
+**Search (Requirement 20):** the header is a `.calendar-header` row (title + `.calendar-search-btn`, 🔍) with the shared search row beneath it, then a sticky `.calendar-search-info` line (hidden unless a search is active) with `role="status"` text and ‹ / › buttons (`.calendar-match-nav`, aria-labels "Previous match" / "Next match"). `paint()` is synchronous and runs from the in-memory `allKnots` (the store is read only by `loadAndRender`, on the knot events); it recomputes from `searchState.get()`: `matchIds`, `matchesByDay` (keyed by the day key in the app's time zone), `matchDayKeys` (newest first, the order the months are laid out in) and `searchWords`. The info line reads "N match(es) on M day(s)" or "No matches"; the ‹ › buttons are disabled when no day matches. Month cells of matching days get `calendar-day--match`, other days with knots `calendar-day--dim`, and the day last jumped to `calendar-day--current`. `jumpToMatch(±1)` steps through `matchDayKeys` in page order (› goes to an older day), wraps around, **opens** the day (it never toggles it closed), marks the cell with `markCurrentCell` and calls `detailEl.scrollIntoView({ behavior: 'smooth', block: 'start' })`. In `renderDayDetail`, a day that has matches lists only the matching knots (any other day lists all); the preview text is highlighted via `appendHighlightedText` only for matching knots and only when the preview is built from content (`preview.content`); when the preview shows no highlighted word, a `.calendar-day-detail-snippet` line with `matchSnippet(knot, words)` (about 80 characters) is added and highlighted. The screen subscribes to `search:changed` and repaints.
 
 **Object-URL lifecycle:** every `URL.createObjectURL` made for the panel is pushed onto `panelUrls`; `clearPanelUrls()` revokes them all and runs at the start of every `renderDayDetail`, when the open day is tapped closed, in `loadAndRender` (explicitly when no day is open; an open day goes through `renderDayDetail`), and in the cleanup function.
 
@@ -975,6 +1019,10 @@ The stored setting defaults to on but only takes effect once permission is grant
 
 The panel calls `cloudSyncService.listBackups()` on open and renders one `.backup-row` per file, newest first: a primary line (the file's `description`, or "Backup from `<modifiedTime>`" for a knot-kind file with no description, or "Old-format backup (`<name>`)" for a non-knot file), a secondary badge ("On this device" / "Only in backup", by comparing `knotId` against `KnotStore.listAll()`, or "Old format"), a "Checked off" badge when `BackupEntry.checkedOffAt` is set (so the user can tell which backups are safe to delete), and a Delete button (`confirm('Delete this backup from Google Drive? Copies on your devices are not deleted.')`, then `deleteBackup()`, removing the row and toasting "Backup deleted" on success). Empty state: "No backups in Google Drive yet."; loading state: "Loading backups…"; error state: "Could not load backups — check your connection".
 
+**Backup filter (Requirement 11.15).** When at least one backup is loaded, the panel renders a `.backup-filter` block above a `.backup-rows` container: a `type="search"` input (`.backup-filter-input`, placeholder and aria-label "Filter by date, place or text"), a `.backup-chips` group (`role="group"`, aria-label "Filter backups") holding the four `BACKUP_CHIPS` buttons "All", "Backup only", "Checked off", "Local" (`.backup-chip`, `aria-pressed`, `.backup-chip--active`; 12 px, `white-space: nowrap`, tight padding so they stay on one line at 320 px), and a `role="status"` line from `backupFilterSummary` ("Showing N of M" / "No backups match"). The loaded `BackupEntry[]` lives in a closure variable (`loaded`); typing or choosing a chip calls `renderRows()`, which re-runs `filterBackups(loaded, localIds, backupQuery, backupChip, formatKnotTimestamp)` and rebuilds only the rows, so **no Drive request is made** and the input keeps focus. The row's main line comes from the shared `backupMainLine`, the same text the filter searches. Deleting a backup removes it from `loaded` and re-renders, which updates "Showing N of M"; when `loaded` becomes empty the controls are hidden and "No backups in Google Drive yet." is shown. `backupQuery` and `backupChip` are variables of the screen render (not of the panel), so they survive a reload of the panel (for example after Merge with Cloud) but not leaving Settings. A sequence number (`backupLoadSeq`) stops a stale `listBackups()` from overwriting a newer load.
+
+**Drive off.** When `driveBackupEnabled()` is false the whole Cloud Backup section is not appended to the screen (`if (driveBackupEnabled()) root.appendChild(cloudSection)`), so none of the controls above exist.
+
 **Merge with Cloud** and **Manage backups** are disabled, with the hint "Connect Google Drive and go online to merge or manage backups.", whenever Google Drive is disconnected or `navigator.onLine` is false; this reacts to `cloudSyncService.onStatusChange` and to `window`'s `online`/`offline` events, both unsubscribed on cleanup.
 
 **Save behaviour:** every `change`/`blur` event on a control immediately calls `SettingsStore.save(patch)`. On failure, the control reverts to its previous value and a toast is shown.
@@ -1005,7 +1053,6 @@ const ASSETS: string[] = [
   'src/addressBackfillService.js',
   'src/mediaService.js',
   'src/mediaImport.js',
-  'src/mediaSummary.js',
   'src/saveError.js',
   'src/transcriptionService.js',
   'src/transcriptMerge.js',
@@ -1014,7 +1061,12 @@ const ASSETS: string[] = [
   'src/syncPlan.js',
   'src/backupStatus.js',
   'src/knotSummary.js',
+  'src/mediaSummary.js',
   'src/randomKnot.js',
+  'src/knotSearch.js',
+  'src/searchState.js',
+  'src/backupFilter.js',
+  'src/driveBackup.js',
   'src/knotDiff.js',
   'src/checkOffActions.js',
   'src/dayCutoff.js',
@@ -1027,6 +1079,8 @@ const ASSETS: string[] = [
   'src/types.js',
   'src/components/mediaCapture.js',
   'src/components/timezoneCombobox.js',
+  'src/components/searchRow.js',
+  'src/components/searchHighlight.js',
   'src/screens/captureScreen.js',
   'src/screens/knotsScreen.js',
   'src/screens/calendarScreen.js',
@@ -1058,7 +1112,7 @@ const ASSETS: string[] = [
 
 **Update banner:** When a new SW installs while an old one is active (`sw.registration.active` is already set at install time), posts `{ type: "SW_WAITING" }` to all clients. The very first install has no active worker and posts nothing, so the banner never appears for the initial install. `app.ts` listens for this message and renders a "New version available — tap to reload" banner. Tapping it posts `{ type: "SKIP_WAITING" }` back to the SW, which calls `self.skipWaiting()`; then `app.ts` calls `location.reload()`.
 
-`ASSETS` must be kept in sync manually with the compiled JS file list (a small maintenance cost that replaces Workbox's build-time manifest injection).
+The list has 55 entries, including `knotSearch.js`, `searchState.js`, `backupFilter.js`, `driveBackup.js`, `components/searchRow.js` and `components/searchHighlight.js`. `ASSETS` must be kept in sync manually with the compiled JS file list (a small maintenance cost that replaces Workbox's build-time manifest injection).
 
 ### ToastService (`src/toastService.ts`)
 
@@ -1270,6 +1324,55 @@ Pure — types-only imports — so it runs under plain `node` (`backupStatus.cha
 6. otherwise → `not-backed-up` (saved offline, failed upload, never merged, no base yet, or edited since the base).
 
 Inputs come from `CloudSyncService.getBackupStatuses`, which reads `syncState` records, unfinished upload jobs and the in-memory `uploadingIds` once per call. The badge is a local, best-effort signal derived from bookkeeping; it does not list Drive.
+
+---
+
+### KnotSearch (`src/knotSearch.ts`)
+
+Pure — a type-only import of `./types.js` — so it runs under plain `node` (`knotSearch.chartest.ts`, 59 checks). It decides which knots match a query and which parts of a text to highlight.
+
+- `normalizeForSearch(s)`: NFD, drop combining marks (`\p{M}`), lowercase ("Café" → "cafe"). Pure-ASCII text takes a fast path with identical output, so searching a large store stays quick on a phone.
+- `queryTokens(q)`: the normalised, de-duplicated words of a query (any whitespace separates them). An empty or whitespace-only query gives `[]`, which every caller reads as "no search active".
+- `knotSearchFields(knot)`: the raw searchable strings, in display order — each text item's `content`, each audio item's `transcript`, the legacy knot-level `transcription`, the resolved address, and the manual label (empty strings dropped).
+- `knotMatches(knot, tokens)`: **every** token must occur as a substring of at least one field (so the words may be spread over different fields, and appear in any order), but a token cannot span two fields. No fuzzy matching. With no tokens it is vacuously true.
+- `searchKnots(knots, q)`: the matches in their original order, or **`null`** (not the full list) when the query has no words, so "no search" and "a search with no results" (`[]`) are distinct states.
+- `matchRanges(text, tokens)`: sorted, merged `[start, end)` ranges in UTF-16 indices of the **original** text. The text is folded one code point at a time while remembering where each folded unit came from, so accents, pre-decomposed characters and astral characters keep correct indices and `knotMatches` and `matchRanges` always agree; a combining mark extends the previous range so a highlight never splits a letter from its accent.
+- `matchSnippet(knot, tokens, maxLen = 80)`: a single-line excerpt (whitespace collapsed, cut with "…") of the first field that contains a token, positioned so the match is visible; `null` when none does. Callers highlight it by running `matchRanges` on the returned string.
+
+---
+
+### SearchState (`src/searchState.ts`)
+
+The one shared query. `get()` returns the raw text (possibly empty or whitespace), `set(q)` stores it and emits `search:changed` only when it changed, and `subscribe(cb)` returns the unsubscribe function (a thin wrapper over `eventBus.on('search:changed', …)`). It is a module-level variable: **not persisted**, so it is empty again whenever the app is reopened. Both screens read it on render, so a query typed on one screen is there when the other opens.
+
+### SearchRow and SearchHighlight (`src/components/`)
+
+`createSearchRow({ buttonClass })` returns `{ button, row, destroy }`. The 🔍 `button` (aria-label "Search knots", `aria-expanded`) goes in the screen header; the `row` (`role="search"`, `hidden` until opened) is a `type="search"` input (placeholder and aria-label "Search knots", `enterkeyhint="search"`, `autocomplete="off"`) plus a ✕ button (aria-label "Clear search"). It is returned separately from the button so a screen can place it **outside** the part it re-renders: re-rendering a focused field would drop the phone keyboard.
+
+- The button's click handler sets the row visible **before** calling `input.focus()`, in the same handler with no `await` or `requestAnimationFrame`; that is what makes the on-screen keyboard open. When the row is open and the query has no words, the same click closes and clears it instead.
+- Typing is debounced by 120 ms before `searchState.set`; the native `search` event (Enter, or the browser's own clear) applies at once. **Enter** applies the query and blurs the field (dismissing the keyboard); **Escape** (with `preventDefault`, because Chrome's own Escape on a search input would clear the field first) and ✕ clear the query and close the row.
+- `sync()` runs on every `search:changed`: a query with at least one word forces the row open (this is how the other screen opens with the query), toggles `search-toggle-btn--active` on the icon, and writes the field only when it differs and no debounced edit is pending, so the caret never jumps.
+
+`setHighlightedText(el, text, tokens)` / `appendHighlightedText(parent, text, tokens)` render `text` with the parts selected by `matchRanges` wrapped in `<mark class="search-mark">`, built from `Text` nodes and elements with `textContent` — **never `innerHTML`**, because knot text is user content and also arrives from other devices through sync.
+
+---
+
+### BackupFilter (`src/backupFilter.ts`)
+
+Pure (it imports only `knotSearch`), `backupFilter.chartest.ts`, 29 checks. Filters the Manage backups list.
+
+- `BACKUP_CHIPS`: `all` ("All"), `backup-only` ("Backup only"), `checked-off` ("Checked off"), `local` ("Local"), in display order.
+- `backupMainLine(b, formatTimestamp)`: the row's main line — the description, or "Backup from {formatTimestamp(modifiedTime)}" for a knot file without one, or "Old-format backup ({name})". It is the **one** place this text is built, used by both the row and the filter so they can never disagree; `formatTimestamp` is injected (the screen passes `formatKnotTimestamp`) so the module needs no `dateFormat` import and runs under `node`.
+- `backupMatchesChip(b, localIds, chip)`: `all` → true; `backup-only` → a knot-kind file whose knot is not on this device; `checked-off` → `checkedOffAt` is set; `local` → a knot-kind file whose `knotId` is in `localIds`. An old-format file satisfies only `all`.
+- `filterBackups(entries, localIds, query, chip, formatTimestamp)`: chip and text filter together, original order kept. The text filter normalises the main line with `normalizeForSearch` and requires every `queryTokens(query)` word to be a substring; an empty or whitespace-only query applies no text filter.
+- `backupFilterSummary(shown, total)`: "Showing N of M", or "No backups match" when `shown` is 0.
+
+### DriveBackup (`src/driveBackup.ts`)
+
+`isDriveBackupEnabled(value)` is pure: only a string that is `off` after `trim()` and `toLowerCase()` disables Drive; anything else (unset, `''`, the unreplaced local value, a non-string) leaves it enabled. `driveBackupEnabled()` reads `globalThis.__DRIVE_BACKUP__` (set by `config.js`) through it (`driveBackup.chartest.ts`, 13 checks). Consumers when Drive is off:
+- `app.ts` computes `driveEnabled` once and skips the OAuth-return handling (`?code=` / `?error=`), the per-save upload, the check-off push, the conflict notice, the Background Sync `FLUSH_CLOUD` handling, and the startup and `online` syncs;
+- `settingsScreen.ts` does not append the Cloud Backup section;
+- `cloudSyncService.ts` has a single `storedToken()` gate that returns `null` when Drive is off, so the connection status, every Drive call, `disconnect` and the backup badges all behave as **disconnected** even if a token was stored earlier (for example by a previous deployment of the same origin); `notifyStatus` tells the status listeners `disconnected`, and `connect()`, `handleOAuthCallback()` and `handleOAuthError()` return without doing anything. The `app.ts` `driveEnabled` checks remain as a second layer.
 
 ---
 
@@ -1527,6 +1630,7 @@ type EventMap = {
   "knots:synced": { pulled: number; pushed: number };
   "knots:conflicts": { count: number };// number of knots currently awaiting conflict review
   "backup:changed": void;              // a knot's backup status may have changed (upload started/finished, sync pass done, backup deleted, connection changed)
+  "search:changed": string;            // the shared Knots/Calendar search query changed (raw text, may be empty)
   "settings:changed": AppSettings;
   "sw:waiting": void;
 };
@@ -1535,7 +1639,7 @@ function emit<K extends keyof EventMap>(event: K, data: EventMap[K]): void
 function on<K extends keyof EventMap>(event: K, cb: (data: EventMap[K]) => void): () => void
 ```
 
-All screen `render` functions that subscribe to events store the returned unsubscribe function and call it in their cleanup function. `knots:synced` is emitted by `CloudSyncService.syncAll()` when at least one knot was pulled or a check-off state was pulled, and by `resolveConflict` so screens reload after a resolution. `knots:conflicts` is emitted by the upsert guard, by `syncAll`, and by `resolveConflict`; because it can fire more than once per sync, listeners treat `count` as current state (replace, don't stack). `knot:checkedOff` is emitted by the Knots list and the detail screen, never by sync. `backup:changed` is emitted by `CloudSyncService` — when `uploadKnot` starts and finishes (success or failure), after every `syncAll` pass (success or failure), after `deleteBackup`, and whenever the connection status changes — and carries no data: listeners re-query `getBackupStatuses`.
+All screen `render` functions that subscribe to events store the returned unsubscribe function and call it in their cleanup function. `knots:synced` is emitted by `CloudSyncService.syncAll()` when at least one knot was pulled or a check-off state was pulled, and by `resolveConflict` so screens reload after a resolution. `knots:conflicts` is emitted by the upsert guard, by `syncAll`, and by `resolveConflict`; because it can fire more than once per sync, listeners treat `count` as current state (replace, don't stack). `knot:checkedOff` is emitted by the Knots list and the detail screen, never by sync. `backup:changed` is emitted by `CloudSyncService` — when `uploadKnot` starts and finishes (success or failure), after every `syncAll` pass (success or failure), after `deleteBackup`, and whenever the connection status changes — and carries no data: listeners re-query `getBackupStatuses`. `search:changed` is emitted only by `searchState.set` and only when the value actually changed; the Knots list and the Calendar repaint from memory on it.
 
 ---
 
@@ -1544,24 +1648,10 @@ All screen `render` functions that subscribe to events store the returned unsubs
 There is no test framework dependency (no fast-check, no Vitest). Each pure module has a small, dependency-free **characterization test** (`*.chartest.ts`) or **property test** (`*.proptest.ts`) written in plain TypeScript with a minimal hand-rolled assertion helper. Each is run the same way: compile with `tsc` (the same compile that builds the app), then run the emitted `.js` directly under `node`:
 
 ```sh
-tsc
-node src/router.chartest.js
-node src/syncPlan.chartest.js
-node src/knotSummary.chartest.js
-node src/dayCutoff.chartest.js
-node src/knotDiff.chartest.js
-node src/deviceLabel.chartest.js
-node src/mergeMessage.chartest.js
-node src/locateFailure.chartest.js
-node src/addressBackfill.chartest.js
-node src/randomKnot.chartest.js
-node src/mediaImport.chartest.js
-node src/mediaSummary.chartest.js
-node src/transcriptMerge.chartest.js
-node src/saveError.chartest.js
-node src/backupStatus.chartest.js
-node src/components/timezoneCombobox.proptest.js
+npm test          # tsc && tsc -p tsconfig.sw.json && node scripts/run-tests.js
 ```
+
+`scripts/run-tests.js` finds and runs all 19 test files: `src/{router,syncPlan,knotSummary,dayCutoff,knotDiff,deviceLabel,mergeMessage,locateFailure,addressBackfill,randomKnot,mediaImport,mediaSummary,transcriptMerge,saveError,backupStatus,knotSearch,backupFilter,driveBackup}.chartest.js` and `src/components/timezoneCombobox.proptest.js`. Any one file can still be run alone, for example `node src/router.chartest.js` after `tsc`.
 
 Each prints one PASS/FAIL line per case and exits non-zero on any failure, so it composes with CI or a pre-commit hook without any additional tooling.
 
@@ -1768,9 +1858,33 @@ Identical knots report `identical` with nothing else; changed text is reported w
 
 ---
 
+### Property 20: KnotSearch — which knots match a query and what to highlight (`knotSearch.chartest.ts`)
+
+An empty or whitespace-only query has no tokens, and `searchKnots` returns `null` for it (never the full list), whereas a query with no matches returns `[]`. Matching ignores case and accents in both directions ("cafe" finds "Café", "café" finds "cafe", "CAFÉ" finds "Café", pre-decomposed input too). Every token must occur in some field, in any order, and the tokens may be spread over different fields, but one token can never span two fields; a substring of a word matches; a typo does not (no fuzzy matching). The searched fields are exactly text-item content, each audio transcript, the legacy knot-level transcript (even when per-audio transcripts exist), the resolved address and the manual label; an address word does not match via the label or vice versa, and a photo-only knot never matches a word. `searchKnots` keeps the original order and drops non-matches. `matchRanges` returns sorted, merged ranges in indices of the **original** string (accents, pre-decomposed marks, astral characters and the dotted capital İ included), and `matchSnippet` returns a field whole when short, a window around the match with "…" when long, and `null` when nothing matches. Fifty-nine checks. The search UI (focus-in-handler keyboard behaviour, debounce, Escape/Enter, the Calendar match navigation, scrolling, highlight rendering) needs a browser and is verified by hand.
+
+**Validates: Requirement 20.6, 20.7, 20.8, 20.9, 20.12** — `knotSearch.ts`. **Automated** — `node src/knotSearch.chartest.js`.
+
+---
+
+### Property 21: BackupFilter — which backups are listed (`backupFilter.chartest.ts`)
+
+`filterBackups` must keep the original order; apply the chip and the text filter together; treat an empty or whitespace-only query as no text filter; require every word of the query to occur in the row's main line (the description, or the fallback "Backup from …" / "Old-format backup (…)" line) ignoring case and accents; match a backup with no description on its fallback line; put "Backup only" at knot-kind files whose knot is not local, "Local" at those whose knot is local, "Checked off" at those with `checkedOffAt`, and let old-format files appear only under "All". `backupFilterSummary` reads "Showing N of M" or "No backups match". Twenty-nine checks. The panel wiring (no re-fetch, the Delete count update, the one-line chips at 320 px) is verified by hand.
+
+**Validates: Requirement 11.15** — `backupFilter.ts`. **Automated** — `node src/backupFilter.chartest.js`.
+
+---
+
+### Property 22: DriveBackup — when Drive backup is off (`driveBackup.chartest.ts`)
+
+`isDriveBackupEnabled(v)` is false exactly for a string that is `off` once trimmed and lowercased ("off", "OFF", " Off "); it is true for any other string (including `''`, "on", "offline", the unreplaced local value), for `undefined`, `null` and non-strings. Thirteen checks. That the deploy workflow injects the literal `off` and skips the secrets, and that the app then hides Cloud Backup and reads as disconnected, is verified by simulating the injection with `node` and by hand in the browser.
+
+**Validates: Requirement 21.1, 21.3, 21.4** — `driveBackup.ts`. **Automated** — `node src/driveBackup.chartest.js`.
+
+---
+
 ### Drive and Share behaviour: verified by hand
 
-Everything that requires a real Google account, a real Drive app-data folder, a real platform share sheet, or a real notification drawer — connecting, the full `syncAll` pass against live Drive data, `pushCheckOff` and `resolveConflict` against live files, `listBackups`/`deleteBackup` against live files, `navigator.share`/`navigator.canShare`, and the quick-capture notification's permission, tap, and relaunch behaviour — is **verified manually** against a real deployment, not by an automated test. `syncPlan.ts`, `knotSummary.ts`, `dayCutoff.ts`, `knotDiff.ts`, `deviceLabel.ts`, `mergeMessage.ts`, `locateFailure.ts`, `randomKnot.ts`, `mediaImport.ts`, `mediaSummary.ts`, `transcriptMerge.ts`, `saveError.ts`, and `backupStatus.ts` are deliberately factored out as pure modules specifically so the *decision logic* each of those features depends on can still be tested automatically, even though the I/O around them cannot be. Pending real-device checks: a check-off syncs to a second device without a content re-upload and shows in Manage backups; a check-off on one device followed by a content edit on another keeps the check-off (this is also the check for the per-key `appProperties` merge); editing the same knot on two offline devices and then syncing gives a review prompt, and all three choices work; the Merge toast counts after an offline save; the notification survives a tap and a relaunch and opens Capture under the subpath; multi-share with media opens the native sheet.
+Everything that requires a real Google account, a real Drive app-data folder, a real platform share sheet, or a real notification drawer — connecting, the full `syncAll` pass against live Drive data, `pushCheckOff` and `resolveConflict` against live files, `listBackups`/`deleteBackup` against live files, `navigator.share`/`navigator.canShare`, and the quick-capture notification's permission, tap, and relaunch behaviour — is **verified manually** against a real deployment, not by an automated test. `syncPlan.ts`, `knotSummary.ts`, `dayCutoff.ts`, `knotDiff.ts`, `deviceLabel.ts`, `mergeMessage.ts`, `locateFailure.ts`, `randomKnot.ts`, `mediaImport.ts`, `mediaSummary.ts`, `transcriptMerge.ts`, `saveError.ts`, `backupStatus.ts`, `knotSearch.ts`, `backupFilter.ts`, and `driveBackup.ts` are deliberately factored out as pure modules specifically so the *decision logic* each of those features depends on can still be tested automatically, even though the I/O around them cannot be. Pending real-device checks: a check-off syncs to a second device without a content re-upload and shows in Manage backups; a check-off on one device followed by a content edit on another keeps the check-off (this is also the check for the per-key `appProperties` merge); editing the same knot on two offline devices and then syncing gives a review prompt, and all three choices work; the Merge toast counts after an offline save; the notification survives a tap and a relaunch and opens Capture under the subpath; multi-share with media opens the native sheet. Pending phone checks for the 2026-10-14 work: the search field's keyboard opening from the 🔍 tap on both screens, the Calendar ‹ › smooth scrolling, the Manage backups filter against a real Drive account, and Dictate in airplane mode.
 
 ---
 
@@ -1840,6 +1954,8 @@ All errors are surfaced through `ToastService` (`src/toastService.ts`), a DOM-ma
 - **`appProperties` per-key merge is inferred, not confirmed.** The design relies on Drive's `files.update` merging `appProperties` per key, so a content PATCH that omits the check-off keys leaves them unchanged. Google's v3 reference documents that `appProperties` entries with a `null` value "are cleared in update", and that `files.update` has patch semantics (only the fields supplied are changed) — together that implies per-key merge, but it never says so outright. Its custom-properties guide shows a PATCH of one key leaving the others intact — but the guide's example uses `properties`, not `appProperties`, and the reference does not state the merge in so many words. It still needs confirming on a real device (check off on device A, content-edit on device B, and confirm the check-off survives).
 - **Quick-capture notification cannot be pinned.** A web app cannot create an undismissable notification (`requireInteraction` is ignored on Android, and there is no Quick Settings tile for a PWA); on Android the user can swipe it away, and it returns at the next launch and after each tap. A native or TWA wrapper would be needed to change that.
 - **"Keep both" can leave a duplicate copy.** It is not atomic, but it cannot lose the cloud version (see *Conflict resolution*): if it fails part-way and the user retries, a second copy of the cloud version can be created. The extra knot can be checked off or deleted.
+- **A match only on the legacy knot-level transcript can show no highlight.** `knotSearch` searches the legacy `transcription` field even when per-audio transcripts exist, but the Knots list and the detail view show the legacy transcript only for the first audio item when that item has no transcript of its own. A knot that matches only through the legacy field while per-audio transcripts exist is therefore listed, but no visible text is highlighted (on the Calendar, the excerpt line still shows the matched text). Accepted: the case only arises for knots saved by early versions.
+- **Calendar ‹ › scrolls to the day panel, not to the cell.** A step opens the matching day's panel (which sits below all the months) and scrolls that panel into view; the matched cell is marked as current but is not scrolled to, so with many months the cell may be off screen. Smooth scrolling also does not animate in the embedded browser used for testing (the instant scroll was verified there); a phone check is pending.
 - **Check-off read/save race.** `withLatestCheckOff` reads the stored check-off state and the caller then saves, as two separate steps; a check-off made in the tiny gap between them can still be overwritten by the content save.
 
 ---

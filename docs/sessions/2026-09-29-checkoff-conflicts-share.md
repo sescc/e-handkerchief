@@ -85,7 +85,7 @@ This repo has no `docs/` architecture tree, no OpenSpec and no graphify graph. T
 ## 4. Live handoff state
 | Type | Handle / location | State | Inspect / resume | Stop / cleanup |
 | --- | --- | --- | --- | --- |
-| branch | `main` @ `fc1dc7c` | clean except this new log file | `wsl -e bash -c 'cd <repo> && git status'` | user commits this log |
+| branch | `main` @ `fc1dc7c` | clean except this new log file | `git status` | user commits this log |
 | process | local smoke-test server (`node serve.js`, port 8765) | stopped | none | none |
 | artifact | scratchpad `serve.js` (session temp dir) | throwaway | none | disposable |
 | data | the browser pane's IndexedDB `e-handkerchief-db` @127.0.0.1:8765 | deleted after the test | none | none |

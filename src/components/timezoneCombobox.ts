@@ -52,7 +52,7 @@ export interface TimezoneComboboxHandle {
  * Otherwise every option whose combined searchable text — `value + '\u0000' + label`
  * (a NUL separator prevents matches spanning the value/label boundary) — lowercased
  * contains the trimmed, lowercased query is returned, preserving the original relative
- * order (Req 2.1, 2.3). Offset queries like `+08` match through the label, since the
+ * order (Req 2.1, 2.3). Offset queries like `+01` match through the label, since the
  * offset text already lives there (Req 2.5).
  */
 export function filterTimezoneOptions(

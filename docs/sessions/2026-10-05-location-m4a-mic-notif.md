@@ -14,7 +14,7 @@ The decision and edge-case log is in `CLAUDE.md` › "2026-10-05". The status is
 
 **Next step:** the user commits, pushes (deploy) and runs the phone checks in §6. **Round 2 (§11) found the real cause of the missing notification: `sw.ts` had `export {};`, so no service worker had ever run; it is fixed in `sw.ts` and guarded in CI.** The first phone check is now: open the app online once, fully close and reopen, and confirm the Settings notification line is gone and "Tap to tie a knot" is in the drawer.
 
-**Resume command/check:** `wsl -e bash -c 'cd <repo> && git status --short && git log --oneline -3'`, then `CLAUDE.md` › "Session status (as of 2026-10-05)".
+**Resume command/check:** `git status --short && git log --oneline -3`, then `CLAUDE.md` › "Session status (as of 2026-10-05)".
 
 ## 1. Work completed
 - **Location:** `classifyLocateFailure` returns `off` only for code 1 + `granted`. Everything else returns `unavailable`, because Android folds a blocked site, device Location off, and Chrome lacking Android permission into `denied`. Claude confirmed the deployed `src/locateFailure.js` was the `5690324` code, so the phone report reflects the classifier, not stale code.
@@ -60,7 +60,7 @@ The decision and edge-case log is in `CLAUDE.md` › "2026-10-05". The status is
 ## 4. Live handoff state
 | Type | Handle / location | State | Inspect / resume | Stop / cleanup |
 | --- | --- | --- | --- | --- |
-| branch | `main` @ `5690324` | dirty (see §10) | `wsl -e bash -c 'cd <repo> && git status --short'` | the user commits |
+| branch | `main` @ `5690324` | dirty (see §10) | `git status --short` | the user commits |
 | process | scratchpad `serve.js` on 127.0.0.1:8765 | stopped | none | none |
 | data | browser-pane IndexedDB `e-handkerchief-db` @127.0.0.1:8765 | deleted | none | none |
 

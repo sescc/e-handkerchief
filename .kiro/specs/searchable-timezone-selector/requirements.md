@@ -6,7 +6,7 @@ The e-Handkerchief Settings screen currently lets the user pick a timezone from 
 
 This feature replaces the native timezone `<select>` in the **Date & Time** section with a **searchable combobox**: a text input paired with a filtered dropdown list. As the user types, the dropdown narrows to matching timezones, which the user selects by mouse/touch or by keyboard (arrow keys + Enter). Only a value that exists in the option list can be committed. All existing save behavior is preserved: the selection persists through `settingsStore.save({ timezone })`, the live date/time preview updates, a failed save reverts the control and shows a toast, and the control stays in sync with external `settingsStore.onChange` updates when it is not focused.
 
-Each Timezone_Option's displayed label and searchable text is enriched with the timezone's current UTC offset, computed via `Intl` at render time, so that the label reads like `Asia/Singapore (UTC+08:00)` and the user can search by offset (for example, typing `+08`). The `'auto'` option is exempt from offset enrichment because it has no fixed offset.
+Each Timezone_Option's displayed label and searchable text is enriched with the timezone's current UTC offset, computed via `Intl` at render time, so that the label reads like `Europe/Paris (UTC+01:00)` and the user can search by offset (for example, typing `+01`). The `'auto'` option is exempt from offset enrichment because it has no fixed offset.
 
 The feature is intentionally scoped to the single timezone control. The date-format and time-format selectors, and the rest of the settings screen, are out of scope. The combobox SHOULD be authored as a self-contained, reusable component so it *could* later be applied elsewhere, but this spec does not require reusing it.
 
@@ -14,8 +14,8 @@ The feature is intentionally scoped to the single timezone control. The date-for
 
 - **Timezone_Combobox**: The new UI component that replaces the native timezone `<select>`. It comprises a text input (the search field), a toggle/dropdown affordance, and a filtered list of timezone options.
 - **Settings_Screen**: The module `src/screens/settingsScreen.ts` that renders and wires the Settings UI, including the Date & Time section.
-- **Timezone_Option**: A single selectable entry of shape `{ value: string; label: string }`, as returned by `getTimezoneOptions()`. The first option is always `{ value: 'auto', label: 'Automatic (follow device)' }`. For every option other than `'auto'`, the `label` includes the timezone's current UTC offset (its Offset_Text), for example `Asia/Singapore (UTC+08:00)`.
-- **Offset_Text**: The human-readable current UTC offset of a Timezone_Option, computed via `Intl` at render time and formatted as `UTC±HH:MM` (for example, `UTC+08:00`). The `'auto'` option has no Offset_Text.
+- **Timezone_Option**: A single selectable entry of shape `{ value: string; label: string }`, as returned by `getTimezoneOptions()`. The first option is always `{ value: 'auto', label: 'Automatic (follow device)' }`. For every option other than `'auto'`, the `label` includes the timezone's current UTC offset (its Offset_Text), for example `Europe/Paris (UTC+01:00)`.
+- **Offset_Text**: The human-readable current UTC offset of a Timezone_Option, computed via `Intl` at render time and formatted as `UTC±HH:MM` (for example, `UTC+01:00`). The `'auto'` option has no Offset_Text.
 - **Option_List**: The complete, ordered array of Timezone_Options returned by `getTimezoneOptions()` in `src/dateFormat.ts`.
 - **Searchable_Text**: The text of a Timezone_Option used for matching a Query, comprising the option's `value`, its `label`, and (for options other than `'auto'`) its Offset_Text.
 - **Filtered_List**: The subset of the Option_List whose Searchable_Text matches the current search text, preserving the original Option_List order.

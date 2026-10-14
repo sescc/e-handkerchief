@@ -1,525 +1,99 @@
 # e-Handkerchief
 
-A mobile-first PWA for tying location-aware knots — quick reminders you capture with voice, photo/video, or text — with automatic GPS tagging and timestamp. Browse them in the Knots list or on a monthly Calendar (tap a day to see its knots, with a small photo, video or voice thumbnail for each kind of media, so knots without text are easy to recognise), check off the ones you've dealt with, and share one knot or several through your device's own share sheet. All data is stored locally in IndexedDB and works fully offline after first load; connect Google Drive for automatic two-way backup across devices.
+Tie a knot to remember: a mobile-first, offline-first PWA for quick, location-aware reminders you capture by voice, photo, video or text.
 
-## Build
+<p align="center">
+  <img src="docs/images/capture.png" alt="Capture screen" width="240">
+  <img src="docs/images/knots.png" alt="Knots list with search" width="240">
+  <img src="docs/images/calendar.png" alt="Calendar with matching days highlighted" width="240">
+</p>
 
-```sh
-tsc                   # compiles src/**/*.ts
-tsc -p tsconfig.sw.json   # compiles sw.ts (Service Worker, separate lib)
-```
+## Try it
 
-Compiles all TypeScript sources to ES modules. No npm install required by end users (only `tsc` needed at build time).
+Open the live app: [https://sescc.github.io/e-handkerchief/](https://sescc.github.io/e-handkerchief/), then use your browser's **Install** / **Add to Home Screen** option.
 
-## Tests
+Google Drive backup on this instance is limited to invited testers. To use backup with your own Google account, [self-host](#self-hosting) your own copy.
 
-There's no test framework — each pure module has a small, dependency-free test file
-(`*.chartest.ts` / `*.proptest.ts`) that runs directly under `node` after compiling:
+## Highlights
 
-```sh
-npx tsc
-node src/router.chartest.js
-node src/syncPlan.chartest.js
-node src/knotSummary.chartest.js
-node src/dayCutoff.chartest.js
-node src/knotDiff.chartest.js
-node src/deviceLabel.chartest.js
-node src/mergeMessage.chartest.js
-node src/locateFailure.chartest.js
-node src/addressBackfill.chartest.js
-node src/randomKnot.chartest.js
-node src/mediaImport.chartest.js
-node src/mediaSummary.chartest.js
-node src/transcriptMerge.chartest.js
-node src/saveError.chartest.js
-node src/backupStatus.chartest.js
-node src/components/timezoneCombobox.proptest.js
-```
+- **Capture in one tap.** A knot is text, photos, videos and voice recordings with an automatic timestamp and GPS location. Offline, it waits for a GPS fix for up to 2 minutes and fills in the street address once you're back online.
+- **Voice to text, three ways.**
+  - **Mic** records audio and transcribes it live while recording when online; when offline the audio is saved and transcribed later.
+  - **Dictate** is live speech-to-text. Dictate also works offline on devices with offline speech recognition.
+  - **Library › Audio file** attaches an existing recording (MP3, M4A, WAV, OGG, FLAC, WEBM), transcribed later via your transcription Worker.
+- **Find things.** Search the Knots list by text, transcript or place (ignores case and accents; every word must match). The Calendar shares the same search and highlights the matching days. Browse by month, tap a day to see its knots with small photo, video and voice thumbnails.
+- **Check off, don't delete.** Check off knots you've dealt with; they fade, then leave the list at your chosen "new day starts at" time but stay in the Calendar. **🎲 Random** opens a random unchecked knot.
+- **Share.** One knot or several at once, through your device's own share sheet (with media attached where supported).
+- **Offline-first.** Everything is stored on your device in IndexedDB and works offline after the first load. An optional quick-capture notification and home-icon shortcut open Capture in one tap.
+- **Optional Google Drive backup.** Two-way sync across your devices on the same Google account. If a knot was edited on two devices, you review a diff and choose which version to keep; nothing is overwritten silently.
 
-Each prints one PASS/FAIL line per case and exits non-zero on failure. You need Node on
-your PATH to run them (the same Node that provides `tsc`); no other setup is required.
+## Privacy
 
-**Service worker note:** `sw.js` is registered as a classic script, so `sw.ts` must not contain any
-`import` or `export`. After `npx tsc -p tsconfig.sw.json`, check that it still parses as one (CI
-runs the same check and fails the deploy if it doesn't):
+- Knots live in your browser's IndexedDB on your own device. No e-Handkerchief server stores them and the app has no accounts of its own; the only copy off your device is in your own Google Drive, and only if you turn backup on.
+- Google Drive backup is opt-in per user. It uses the Drive **app-data folder** scope only, so the app can read and write only its own backup files, never the rest of your Drive.
+- Secrets exist only in your own Cloudflare Workers (the Google OAuth client secret, the Groq API key). Nothing secret is committed or injected into the public site.
+- Street addresses come from OpenStreetMap's Nominatim reverse-geocoding service, which receives the coordinates of a knot when an address is looked up. Live speech recognition (Mic and Dictate) uses your browser's speech service, which on Chrome may send the audio to Google's cloud (unless the device recognises speech on-device). Transcribing saved audio later, if you set up a Worker, sends that audio to Groq through your Worker.
 
-```sh
-node -e "new Function(require('fs').readFileSync('sw.js','utf8'))"
-```
+## Self-hosting
 
-## Serve (local preview only)
+The project has three independently deployed parts:
 
-This step is for **local development/preview on your own machine**. End users never
-run a server — they install the PWA straight from the deployed URL (see *Deploy to
-GitHub Pages* below).
+| Part | Where | Needed for |
+| ---- | ----- | ---------- |
+| The site (this repo's PWA) | GitHub Pages, deployed by `.github/workflows/deploy.yml` | **Required** |
+| `oauth-worker/` | Your Cloudflare account | Google Drive backup |
+| `transcribe-worker/` | Your Cloudflare account | Transcribing saved audio later (optional; each user sets its URL in Settings) |
 
-```sh
-python -m http.server 8080
-# or: npx serve .
-```
+Short version:
 
-Then open http://localhost:8080 in your browser.
+1. Fork the repo, enable Actions in the fork's **Actions** tab, and in **Settings → Pages** set the source to **GitHub Actions**. Pushing to `main` deploys the site, but the first deploy fails until step 2 or 3 is done.
+2. **Drive backup:** create a Google OAuth *Web application* client with your site URL as the redirect URI, deploy `oauth-worker/` (see its README), then add the repository secrets `GOOGLE_CLIENT_ID` and `OAUTH_BROKER_URL`. Unless you opt out (below), the deploy **fails** without both secrets.
+3. **No Drive backup:** set the repository **variable** `DRIVE_BACKUP` to `off` (Settings → Secrets and variables → Actions → Variables). The deploy then skips the Google secrets and the app hides Cloud Backup.
+4. **Transcription (optional):** deploy `transcribe-worker/` with your Groq API key (see its README), then paste its URL into the app's **Settings → Transcription server URL**.
 
-> **Note:** HTTPS is required for Service Worker, Geolocation, and MediaRecorder on real devices.
-> Use ngrok or a similar tunnelling tool for device testing:
-> ```sh
-> ngrok http 8080
-> ```
+**When to redeploy the Workers.** A normal push deploys only the site, never the Workers. Run `npx wrangler deploy` in a Worker's folder when you change its source or `wrangler.toml`. Rotating a secret (Groq key, Google client secret) or changing `ALLOWED_ORIGIN` uses `npx wrangler secret put <NAME>` and takes effect immediately without a redeploy.
 
-## Voice Transcription
+**Custom domain or renamed repo checklist:**
 
-A knot's voice recording can be turned into text in two ways.
+- [ ] Google Cloud Console: update the OAuth client's authorized redirect URI and JavaScript origin (must equal the site URL including the trailing slash).
+- [ ] `ALLOWED_ORIGIN` secret on **both** Workers includes the new origin (comma-separated list supported; add the new one before removing the old).
+- [ ] If a Worker's own URL changed: update the `OAUTH_BROKER_URL` secret and re-run the deploy; and update the transcription URL in the app's Settings.
 
-### How transcription works (two modes)
+Full step-by-step instructions: [docs/guide/self-hosting.md](docs/guide/self-hosting.md).
 
-- **Live (online):** When "Voice Transcription" is enabled in Settings and you record a voice recording while online in a supporting browser (Chrome on Android), it's transcribed live on-device via the Web Speech API as you speak. The audio is also saved. When the browser revises or re-delivers words (Android does this with fast speech, and after a restart following a pause), the app merges them so text isn't repeated or lost; rare known limits (for example a deliberate repeat of two or more words across a pause collapsing into one) are listed in `design.md`. Mic recordings are made without call-style processing (echo cancellation, noise suppression and automatic gain control are off), which keeps them clean; if a phone records too quietly, that is a one-line change in `mediaService.ts`.
-- **Deferred (offline / later):** If you record while offline (or live transcription isn't available), the audio is saved and marked "transcription pending." Later, when online, open the knot and tap "🎧 Transcribe voice" to transcribe the saved audio via your transcription server (Groq Whisper via a Cloudflare Worker). The transcript is appended to that recording.
-
-### Attaching an existing audio file
-
-Tap **🖼️ Library** and choose from the small menu that opens under the buttons:
-
-- **🖼️ Photo or video** opens your phone's photo picker (JPEG, PNG, GIF, WEBP, MP4, MOV).
-- **🎵 Audio file** opens a file picker for audio, for example a recording made with your phone's
-  recorder app. Supported formats are the ones the transcription service understands: **MP3, M4A,
-  WAV, OGG (including Opus), FLAC and WEBM audio**. Raw AAC, WMA and AMR aren't supported.
-
-The menu closes when you tap Library again, press Escape, pick a file, or use another button. A
-picked audio file becomes a voice recording on the knot: you can play it, and transcribe it later
-with **🎧 Transcribe voice** (this needs the transcription server below). The **Photo** and
-**Video** buttons accept photos and videos only. Very large files such as long WAV or FLAC
-recordings can exceed the transcription provider's size limit (25 MB on Groq's free tier); the
-audio is still saved and playable, but "Transcribe voice" will report an error.
-
-A picked file is read into memory straight away. If you see "Couldn't read that file — it may still
-be downloading to your phone", the file (often a Google Photos item that hasn't finished downloading)
-wasn't available yet: wait a moment and pick it again. If saving a knot ever fails because of an
-attached file, the message says so ("…a photo, video or audio file couldn't be saved. Remove it and
-pick it again."); your form and attachments are kept, so you can remove that item and save again.
-
-### Setting up the transcription server (optional)
-
-Deferred/offline transcription requires a small backend proxy that holds the Groq API key securely. The key must never live in the PWA or its repo.
-
-- That backend lives in the `transcribe-worker/` folder in this repo (a Cloudflare Worker). See `transcribe-worker/README.md` for full setup.
-- Quick version: create a free Cloudflare account and a free Groq API key, then in `transcribe-worker/`:
-
-  ```sh
-  npm install
-  npx wrangler login
-  npx wrangler secret put GROQ_API_KEY
-  npx wrangler deploy
-  ```
-
-  Copy the resulting Worker URL.
-- In the PWA: **Settings → Transcription** → paste the Worker URL into "Transcription server URL".
-- Live transcription does NOT need this server — it only needs internet and a supporting browser.
-
-### Cloudflare Worker: when to re-deploy
-
-The Worker deploys **independently** of the PWA. A normal `git push` deploys the PWA to
-GitHub Pages but does **not** touch the Worker — you must run `wrangler` yourself.
-
-Re-deploy the Worker when you:
-
-- change the Worker source in `transcribe-worker/src/`,
-- change `transcribe-worker/wrangler.toml` (e.g. `ALLOWED_ORIGIN` for a domain change), or
-- rotate the Groq API key.
-
-Run these from the `transcribe-worker/` folder:
+## Local development
 
 ```sh
-cd transcribe-worker
-npm install                          # first time only
-npx wrangler login                   # first time only
-npx wrangler secret put GROQ_API_KEY # to set/rotate the Groq key
-npx wrangler deploy                  # deploy code + wrangler.toml vars
+npm ci            # installs TypeScript
+npm test          # compiles, then runs every test
+python -m http.server 8080   # or: npx serve .   (then open http://localhost:8080)
 ```
 
-> Changing the `GROQ_API_KEY` secret via `wrangler secret put` takes effect immediately
-> (no code deploy needed). But changing `ALLOWED_ORIGIN` in `wrangler.toml` **does**
-> require `npx wrangler deploy`.
+Details (HTTPS for device testing, the service-worker rule, test layout) are in [CONTRIBUTING.md](CONTRIBUTING.md).
 
-See `transcribe-worker/README.md` for full details.
-
-### Repo structure note
-
-The `transcribe-worker/` folder lives in this SAME repository (a monorepo) and is committed alongside the PWA.
-
-- The two parts deploy independently: the PWA deploys to GitHub Pages via the Actions workflow; the Worker deploys to Cloudflare via `wrangler deploy`. They share a repo but not a deploy pipeline.
-- The GitHub Pages workflow only publishes the PWA's own files (`index.html`, `app.css`, `manifest.webmanifest`, `sw.js`, `config.js`, `src/`, `icons/`); the `transcribe-worker/` folder is not part of the deployed site.
-- The repo contains NO secrets (the Groq key is a Cloudflare secret set via `wrangler secret put`), so the whole repo — worker subfolder included — is safe to push publicly.
-
-## Location on the Capture screen
-
-The Capture screen asks the browser for your GPS position (up to 10 seconds online) and shows it, with
-a street address when one can be looked up. If that fails, the location line becomes a tappable
-message that says what went wrong:
-
-- **"Location is off — turn it on, then tap to retry"** — the site is allowed, but your phone's own Location setting is off.
-- **"Location unavailable — tap to retry"** — anything else: no fix arrived in time, the position couldn't be worked out, or the browser refused for a reason it can't pin down.
-
-There is deliberately no "blocked for this site" message. Android Chrome reports a blocked site, a
-phone with Location switched off, and Chrome lacking Android's location permission in the same
-way, so the app can't tell them apart. If the generic message keeps appearing, check your phone's
-Location switch, Chrome's Android location permission, and the site's permission in Chrome.
-
-Tap it to ask again ("Getting location…"); you can save the knot at any time with whatever
-location is known by then (none if it never arrived).
-
-**Offline:** with no internet there is no assisted GPS, so a first fix can take much longer. The
-app then waits up to 2 minutes ("Getting location (no internet — GPS can take a minute or two)…")
-instead of 10 seconds. The coordinates are saved with the knot; the street address needs internet,
-so it is filled in automatically the next time this device is online (at app start or when the
-connection returns), and the knot is backed up again with it. Only the device that tied the knot
-does this.
-
-## Checking off a knot
-
-When you've dealt with a knot, **check it off** — it's not the same as deleting it. There's a
-check-off button (✓, or ↩ once a knot is checked off) on each entry in the Knots list, and the
-same ✓ tick beside the timestamp on the knot's detail page (↩ to uncheck). While a knot is checked
-off, its detail page also shows a green **✓ Checked off · {date and time}** pill under the timestamp
-(in your Settings time zone and format). You get a **Checked off · Undo** (or **Unchecked · Undo**) toast, so a
-slip of the thumb is easy to reverse.
-
-- A checked-off knot stays in the Knots list, **faded and struck through**, until the next
-  **New day starts at** time — 03:00 by default, changeable in Settings, and evaluated in the
-  timezone you've chosen in Settings. A knot checked off at 01:00 leaves the list at 03:00 that
-  morning; one checked off at 23:00 leaves it at 03:00 the next day.
-- After that it's **hidden from the Knots list only**. It stays in the Calendar (faded) and on
-  its detail page, where you can uncheck it. A **Show N checked-off knots** toggle in
-  the top of the list brings the hidden ones back into view (and **Hide checked-off knots**
-  tucks them away again). The list updates by itself when a cutoff passes while it's open; if
-  every knot is checked off you'll see "All your knots are checked off."
-- Checking off is **not an edit**: it doesn't change the knot's content, so it never causes an
-  "edited on two devices" prompt and never re-uploads the knot's photos or recordings. It
-  syncs to your other devices on its own, and a check-off never restores a backup you deleted.
-- In **Manage backups**, a checked-off knot's backup carries a **Checked off** badge, so you can
-  see which backups are safe to delete.
-
-## Random knot
-
-Not sure which knot to deal with next? In the Knots list, tap **🎲 Random** (next to Select) to
-open a random knot that isn't checked off — even if the list is currently hiding checked-off
-ones. On that page, **Another random knot** draws a different one (never the one you're looking
-at). If nothing is left you'll see "No unchecked knots yet", or "This is your only unchecked
-knot" when only the current one remains. Random is hidden while you're selecting knots to share,
-and **Another random knot** is hidden while you're editing.
-
-## Sharing a knot
-
-Every knot has a **📤 Share** button on its detail page (`#/knot/{id}`), next to Edit and
-Delete. Tapping it opens your device's own share sheet — whatever it offers: email,
-messaging apps, Bluetooth, AirDrop, "Copy", and so on.
-
-- The shared **text** is built from the knot: its timestamp, its place (a resolved address
-  or coordinates, plus a Google Maps link, or a manually-entered label), every text item,
-  every transcript, and a summary line like `(1 photo, 1 voice recording attached in
-  e-Handkerchief)`.
-- **Photos, videos, and voice recordings** are attached as files too, but only when the
-  browser supports sharing files and their combined size is 50 MB or less; otherwise just
-  the text is shared.
-- If the browser has no share sheet at all (`navigator.share` unsupported), the text is
-  copied to the clipboard instead, with a toast confirming the copy.
-- Cancelling the share sheet does nothing — no error, no toast.
-- By default the text ends with **— Shared from e-Handkerchief** and a link to the app, so
-  the people you share with can find it. Turn this off in **Settings → Sharing** ("Append
-  source when sharing").
-
-### Sharing several knots at once
-
-In the Knots list, tap **Select** to turn the entries into tick-boxes, pick the knots you want,
-and tap **Share (N)**. Tap **Cancel** to leave selection mode. Everything goes out as **one
-message**: a header line ("3 knots from e-Handkerchief"), each knot's text with a `———` line
-between knots, and the "Shared from e-Handkerchief" footer once at the end. Attached files are
-named so they never clash (`knot1-photo-1.jpg`, `knot2-photo-1.jpg`, …), and the 50 MB limit
-applies to all of them together — over that, just the text is shared.
-
-A **daily email summary** (an automatic digest of the day's knots, emailed to a recipient
-you configure) is planned but not built yet. Settings → Daily Email Summary still has the
-enable toggle and recipient field, saved for when it ships, but until then Share is how you
-get a knot out of the app.
-
-## Quick-capture notification and shortcut
-
-Two ways to open the Capture screen in one tap:
-
-- **Home-icon shortcut:** once the app is installed, long-press its home-screen icon and choose
-  **Tie a Knot**.
-- **Quick-capture notification:** a "Tap to tie a knot" notification in your notification
-  drawer. In **Settings → Notifications**, tap **Allow notifications**; your browser asks for
-  permission at that moment (and only then). Once allowed, **Quick-capture notification** is a
-  simple on/off toggle. If you've blocked notifications for the site, Settings says "Blocked in
-  browser settings" — change it in your browser's site settings. If your browser has no
-  notification support, that section isn't shown. If the notification can't be posted even though
-  it's allowed, Settings shows why: "Couldn't show the notification (<reason>). Switch this off and
-  on to try again." Opening Settings re-posts the notification once (it replaces the existing one,
-  it doesn't stack). Note that "Tap to copy the URL for this app" is Chrome's own notification for
-  an installed web app; the page can't change or remove it.
-
-**A limit worth knowing about:** web apps can't pin a notification. On Android you can still
-**swipe it away**. The app puts it back **every time you open it** and **after each tap**, but
-it can't keep it there permanently — that would need a native app, which this isn't. Tapping
-it opens the Capture screen (under the app's own address, including a GitHub Pages
-sub-path).
-
-## Cloud Backup & Sync (Google Drive)
-
-Google Drive backup is **always available** on a deployed site. Each user decides whether to
-tap **Connect** with their own Google account; until they do, knots stay local in IndexedDB.
-The app uses OAuth2 with PKCE and the Drive **app-data folder** scope, so it can only read
-and write its own backup files, never the rest of your Drive.
-
-How the pieces fit:
-
-- The OAuth **client ID** and the **OAuth broker URL** are injected into `config.js` at
-  deploy time from GitHub Actions secrets. The deploy **fails** if either is missing.
-- The OAuth **client secret** is held only by `oauth-worker/`, a small Cloudflare Worker
-  operated by the site owner. Google "Web application" clients require the secret even
-  with PKCE, so the Worker adds it when exchanging and refreshing tokens. See
-  `oauth-worker/README.md`.
-
-> **Why not put the client secret in GitHub Actions secrets too?** GitHub secrets are only
-> hidden inside CI. Anything injected into the static site ends up in `config.js`, which
-> anyone can read at `https://<site>/config.js`. The client ID is designed to be public; the
-> secret is not, and must stay on a server, which here is the Worker.
-
-### How sync works
-
-Once connected, sync is **automatic and two-way** — you don't have to do anything for a
-knot tied on one device to show up on another signed into the same Google account. A sync
-runs: on app startup (if already connected and online), whenever the device comes back
-online, immediately after you connect, and whenever you tap **Merge with Cloud** in
-Settings. For each knot, if only one side changed since the two last agreed — this device or
-Drive — the other side is updated to match. If **both** were edited, nothing is overwritten:
-you're asked to review it (see *When the same knot is edited on two devices* below).
-
-**Multiple devices, one account:** because every device connected to the same Google
-account shares one Drive app-data folder, a knot created on your phone appears on your
-tablet (and vice versa) after their next sync — no pairing step, no per-device setup beyond
-tapping Connect on each one.
-
-Settings → Cloud Backup shows which Google account you're connected to (e.g. "Connected as
-someone@gmail.com"), so it's easy to tell which account a device is syncing to.
-
-There are two different kinds of "delete", and the app explains both right in Settings, directly
-under the **Manage backups** button:
-
-> **Manage backups** deletes a knot's **cloud backup**. Copies already on your devices are
-> not deleted, and they won't be backed up again unless you edit them.
->
-> **Deleting a knot** (from Knots or its detail page) removes it from **this device only**.
-> Its cloud backup is kept, and your other devices keep their copies.
-
-**Why a separate "Manage backups" screen exists:** app-data-folder files are Google's
-*hidden* app data — they don't show up in the regular Drive web UI or the Drive app at
-all. The only built-in way to remove them yourself is Google's account-level "Delete
-hidden app data" tool, which is all-or-nothing (every app's hidden data, not just this
-one's) and only available from a desktop browser. "Manage backups" (Settings → Cloud
-Backup) is the only way to remove one knot's backup without nuking every hidden app-data
-file on your account from a desktop.
-
-**Knots that are not in Drive:** "Manage backups" lists what is in Google Drive, so a knot that
-exists only on this device never appears there. While Drive is connected, the Knots list and the
-knot page flag such knots instead: **☁ Not backed up** (it hasn't been uploaded yet, for example
-because you saved it offline or the upload failed; it backs up automatically when you're online)
-and **☁ Backup deleted** (you deleted its backup in Manage backups; edit the knot to back it up
-again). Nothing is shown while a knot is uploading, while it is waiting for a conflict review, or
-when Drive isn't connected.
-
-**Merge with Cloud / Last merged:** Settings → Cloud Backup has a **Merge with Cloud**
-button (greyed out, with a hint, when disconnected or offline) that runs a sync on demand
-and reports what happened: how many knots were brought in, how many were backed up (including
-any that were waiting to upload), and how many need your review — or "Already up to date —
-nothing to merge". Data is never deleted during a merge. If a knot was edited on two devices,
-you'll be asked which version to keep. Below it, **Last merged** shows the time of the most recent
-successful sync, or "Not merged yet".
-
-### When the same knot is edited on two devices
-
-If you edit a knot on your phone and, before the two devices have synced, edit the same knot on
-your tablet, the app can't tell which version you want — so it **never picks one for you**.
-Instead you'll see a message ("1 knot also has edits from another device — tap to review"), a
-**⚠ Also edited on another device** badge on the knot in the Knots list, and a **Review**
-banner on its detail page.
-
-The **Review changes** screen tells you which version is which — **On this device** and
-**Latest in the cloud**, with which device the cloud version came from and when — and then
-lists what's different: changed text (lines marked − exist only on this device, lines marked +
-only in the cloud version), photos, videos or voice recordings that are only in one of them,
-transcripts, and location. You choose:
-
-- **Keep this device's version** — this device's copy replaces the cloud one.
-- **Keep the cloud version** — the cloud copy replaces this device's.
-- **Keep both** — this device's version stays, and the cloud version is saved as a **new knot**,
-  which you can check off or delete later.
-
-Reviewing needs an internet connection. If the cloud version changes again while you're
-looking at it, nothing is overwritten — you're shown the newer version to review. With three or
-more devices, a review is always between the device you're holding and the newest version in the
-cloud, and only the device that has the unsynced edit is asked. (Checking a knot off never
-counts as an edit.)
-
-### Setting up cloud backup (site owner)
-
-1. In **Google Cloud Console**, create an **OAuth 2.0 Web application** client. Add an
-   **Authorized redirect URI** (and a matching JavaScript origin) that **exactly** matches
-   your deployed URL: `https://<username>.github.io/<repo-name>/` — note the trailing
-   slash. This value equals `location.origin + location.pathname` at runtime. Note the
-   client ID and client secret.
-2. Deploy the OAuth broker:
-
-   ```sh
-   cd oauth-worker
-   npm install
-   npx wrangler login
-   npx wrangler secret put GOOGLE_CLIENT_ID
-   npx wrangler secret put GOOGLE_CLIENT_SECRET
-   npx wrangler deploy
-   ```
-
-   Check that `ALLOWED_ORIGIN` in `oauth-worker/wrangler.toml` is your site's origin
-   (e.g. `https://sescc.github.io`). Copy the printed Worker URL.
-3. In the GitHub repo, go to **Settings → Secrets and variables → Actions → New repository
-   secret** and add:
-   - `GOOGLE_CLIENT_ID`: the client ID
-   - `OAUTH_BROKER_URL`: the Worker URL, e.g. `https://ehk-oauth.<subdomain>.workers.dev`
-4. Push to `main` (or re-run the deploy workflow).
-5. In the app, go to **Settings → Cloud Backup → Connect** to authorize.
-
-> Locally, the committed `config.js` holds only placeholders, so the app shows "Google
-> Drive client ID not configured" when you tap Connect. Neither value is ever committed.
-
-### Self-deploying / forks
-
-The OAuth client and broker are tied to the site owner. A fork **does not** inherit the
-repo's GitHub secrets. It also can't reuse the owner's client or broker: Google rejects the
-fork's redirect URI, and the broker rejects the fork's origin. To self-deploy, follow all
-the steps above with your **own** Google OAuth client, your own `oauth-worker` deployment,
-and your own two GitHub secrets. Until those exist, the fork's deploy workflow fails at
-"Inject Google Drive OAuth config".
-
-## Changing the domain / custom domain
-
-If the app moves to a different GitHub Pages repo name **or** a custom domain, update the
-following **external** configs. The app code itself needs no edits — all asset, manifest,
-service-worker, and OAuth paths are relative or derived at runtime.
-
-- **Google OAuth:** add or update the **Authorized redirect URI** and JavaScript origin in
-  Google Cloud Console to the new URL. It must match `location.origin + location.pathname`
-  exactly, including the trailing slash. No code change needed — the redirect URI is derived
-  at runtime.
-- **Cloudflare Worker CORS:** update `ALLOWED_ORIGIN` in `transcribe-worker/wrangler.toml`
-  to include the new origin, then redeploy the Worker (`npx wrangler deploy`). For a
-  zero-downtime migration, use the comma-separated list: add the new origin alongside the
-  old one and deploy, migrate traffic, then remove the old origin and deploy again.
-- **OAuth broker CORS:** update `ALLOWED_ORIGIN` in `oauth-worker/wrangler.toml` the same
-  way, then redeploy it. The GitHub secrets (`GOOGLE_CLIENT_ID`, `OAUTH_BROKER_URL`) are not
-  tied to the site URL and don't need changing. Only update `OAUTH_BROKER_URL` if the
-  Worker's own URL changes.
-- **Transcription server URL in the app:** if the Worker URL itself changes, update it in
-  the app's **Settings → Transcription server URL** (a per-user setting, not code).
-- **No hardcoded domain in the app code:** the PWA needs no code edits for a domain change —
-  only the external configs above.
-
-## Deploy to GitHub Pages
-
-The app is designed to run from a **subpath** such as
-`https://<username>.github.io/<repo-name>/`. All asset, manifest, service-worker,
-and OAuth paths are relative, so no configuration is needed for the subpath.
-
-1. Push the repo to GitHub (default branch `main`).
-2. In the repo, go to **Settings → Pages → Source** and select **"GitHub Actions"**.
-3. The included workflow (`.github/workflows/deploy.yml`) compiles the TypeScript
-   (`tsc` + `tsc -p tsconfig.sw.json`), injects a build version into `sw.js` and the
-   Google client ID and OAuth broker URL into `config.js` (failing if either secret is
-   missing), publishes the PWA's files
-   (`index.html app.css manifest.webmanifest sw.js config.js` plus `src/` and `icons/`),
-   and deploys automatically on every push to `main`. You can also trigger it manually
-   from the **Actions** tab (*workflow_dispatch*).
-4. Once the workflow finishes, the app is live at
-   `https://<username>.github.io/<repo-name>/`.
-5. **On your phone:** open that URL in Chrome (Android) or Safari (iOS), then tap
-   **"Add to Home Screen"**. After the first load it works fully offline — capture,
-   Knots, and settings all run from the local IndexedDB store and cached assets.
-
-> The compiled `.js` output is rebuilt fresh in CI, so the committed source of truth
-> is the TypeScript in `src/` and `sw.ts`. A `.nojekyll` file at the project root
-> disables Jekyll processing so the `src/` folder is served verbatim.
-
-## Project Structure
+## Project structure
 
 ```
-e-Handkerchief/
-├── index.html              # App shell
-├── app.css                 # All styles (mobile-first)
-├── manifest.webmanifest    # PWA manifest
-├── config.js               # Runtime config: Google client ID + OAuth broker URL injected at build time
-├── sw.ts / sw.js           # Service Worker
-├── tsconfig.json           # Compiles src/**/*.ts
-├── tsconfig.sw.json        # Compiles sw.ts separately (WebWorker lib)
-├── src/
-│   ├── app.ts              # Entry point
-│   ├── types.ts            # TypeScript interfaces
-│   ├── db.ts               # IndexedDB Promise helpers, DB_VERSION, store name constants
-│   ├── knotStore.ts        # Knot CRUD + local delete tombstones
-│   ├── settingsStore.ts    # Settings persistence
-│   ├── router.ts           # Hash-based routing
-│   ├── router.chartest.ts  # Test: parseHash
-│   ├── eventBus.ts         # Pub/sub event system
-│   ├── geoService.ts       # Geolocation + reverse geocoding
-│   ├── locateFailure.ts    # Pure: why a location request failed (off / unavailable)
-│   ├── locateFailure.chartest.ts # Test: classifyLocateFailure
-│   ├── addressBackfill.ts  # Pure: needsAddress / addPending / removePending
-│   ├── addressBackfill.chartest.ts # Test: addressBackfill helpers
-│   ├── addressBackfillService.ts # Fills in addresses of knots tied offline once back online
-│   ├── mediaService.ts     # Audio/photo/video capture
-│   ├── mediaImport.ts      # Pure: classify a picked file (photo / video / Whisper-supported audio)
-│   ├── mediaImport.chartest.ts # Test: classifyImport
-│   ├── mediaSummary.ts     # Pure: per-type media summary for the Calendar day list
-│   ├── mediaSummary.chartest.ts # Test: summarizeMedia / describeMediaSummary
-│   ├── saveError.ts        # Pure: user-facing message for a failed knot save
-│   ├── saveError.chartest.ts # Test: isMediaWriteError / saveErrorMessage
-│   ├── mapsLink.ts         # Maps link builder
-│   ├── dateFormat.ts       # Date/time formatting helpers
-│   ├── remoteTranscribe.ts # Deferred transcription via Worker
-│   ├── transcriptionService.ts
-│   ├── transcriptMerge.ts  # Pure: merge live speech text without repeats or losses
-│   ├── transcriptMerge.chartest.ts # Test: appendSegment / foldSegment / mergeFinalPieces
-│   ├── knotSummary.ts      # Pure: share summary text + media filenames
-│   ├── knotSummary.chartest.ts # Test: knotSummaryText / mediaFileName
-│   ├── randomKnot.ts       # Pure: pick a random unchecked knot
-│   ├── randomKnot.chartest.ts  # Test: pickRandomKnot
-│   ├── shareService.ts     # Web Share API wrapper (one or several knots) + clipboard fallback
-│   ├── syncPlan.ts         # Pure: base-aware push/pull/conflict/check-off/dedupe decisions
-│   ├── syncPlan.chartest.ts    # Test: planSync / remoteChangedSinceBase
-│   ├── backupStatus.ts     # Pure: which knots show "Not backed up" / "Backup deleted"
-│   ├── backupStatus.chartest.ts # Test: backupStatus
-│   ├── checkOffActions.ts  # Check off / uncheck / Undo, shared by the Knots list and detail screen
-│   ├── dayCutoff.ts        # Pure: when a checked-off knot leaves the Knots list
-│   ├── dayCutoff.chartest.ts   # Test: dayCutoff
-│   ├── knotDiff.ts         # Pure: diff of two versions of a knot (conflict review)
-│   ├── knotDiff.chartest.ts    # Test: knotDiff
-│   ├── deviceLabel.ts      # Pure: user agent -> "Android" / "Windows" / ...
-│   ├── deviceLabel.chartest.ts # Test: deviceLabel
-│   ├── mergeMessage.ts     # Pure: "Merge with Cloud" result wording
-│   ├── mergeMessage.chartest.ts # Test: mergeMessage
-│   ├── notificationService.ts
-│   ├── cloudSyncService.ts # Google Drive backup: OAuth2 PKCE, upsert, two-way sync, backups
-│   ├── toastService.ts
-│   ├── components/
-│   │   ├── mediaCapture.ts
-│   │   ├── timezoneCombobox.ts
-│   │   └── timezoneCombobox.proptest.ts # Test: the combobox's pure helpers
-│   └── screens/
-│       ├── captureScreen.ts
-│       ├── knotsScreen.ts
-│       ├── calendarScreen.ts
-│       ├── knotDetailScreen.ts
-│       ├── conflictScreen.ts
-│       └── settingsScreen.ts
-├── icons/                  # PWA icon assets
-├── oauth-worker/           # Cloudflare Worker: Google OAuth token broker, owner-operated (deploys separately via wrangler)
-└── transcribe-worker/      # Cloudflare Worker: Groq Whisper transcription proxy (deploys separately via wrangler)
+index.html, app.css, manifest.webmanifest, config.js   App shell, styles, PWA manifest, deploy-time config
+sw.ts                                                  Service worker (compiled to sw.js)
+src/                                                   App code (TypeScript, compiled in place), plus *.chartest.ts tests
+icons/                                                 PWA icons
+scripts/                                               Icon generator and the test runner
+oauth-worker/                                          Cloudflare Worker: Google OAuth token broker
+transcribe-worker/                                     Cloudflare Worker: Groq Whisper transcription proxy
+docs/guide/                                            User and operator guide (mirrored to the GitHub Wiki)
+.kiro/specs/e-handkerchief/                            Requirements and design (the spec of record)
 ```
+
+For the file-level tree, see [.kiro/specs/e-handkerchief/design.md](.kiro/specs/e-handkerchief/design.md).
+
+## Docs
+
+- [User and operator guide](docs/guide/Home.md), also published on the GitHub Wiki: getting started, capturing, organising, sharing, cloud backup, self-hosting, troubleshooting.
+- [Requirements](.kiro/specs/e-handkerchief/requirements.md) and [design](.kiro/specs/e-handkerchief/design.md).
+
+## Contributing and license
+
+Contributions are welcome; see [CONTRIBUTING.md](CONTRIBUTING.md).
+
+Licensed under the [PolyForm Noncommercial License 1.0.0](LICENSE). It permits non-commercial use, forking and self-hosting. It is a source-available license, not an OSI-approved open-source license.

@@ -80,10 +80,10 @@ const SCENARIOS: Scenario[] = [
     },
   },
   {
-    label: 'non-UTC zone: Asia/Singapore (UTC+8) 03:00 local = 19:00Z the previous day',
+    label: 'non-UTC zone: Asia/Tokyo (UTC+9, no DST) 03:00 local = 18:00Z the previous day',
     run: () => {
-      // 2026-01-15T12:00Z = 20:00 local on the 15th -> next 03:00 local is the 16th = 2026-01-15T19:00Z.
-      assertNext('2026-01-15T12:00:00Z', '03:00', 'Asia/Singapore', '2026-01-15T19:00:00Z');
+      // 2026-01-15T12:00Z = 21:00 JST on the 15th -> next 03:00 JST is the 16th = 2026-01-15T18:00Z.
+      assertNext('2026-01-15T12:00:00Z', '03:00', 'Asia/Tokyo', '2026-01-15T18:00:00Z');
     },
   },
   {

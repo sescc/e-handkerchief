@@ -18,7 +18,7 @@ secret therefore lives only here, as an encrypted Cloudflare secret.
 
 This Worker is **operated by the site owner** and is tied to the owner's Google OAuth client.
 Unlike the transcription Worker, other users do not point the app at their own copy. Someone
-who self-deploys the app deploys their own broker (see the main README).
+who self-deploys the app deploys their own broker (see `docs/guide/self-hosting.md`).
 
 ---
 
@@ -38,15 +38,26 @@ who self-deploys the app deploys their own broker (see the main README).
    npx wrangler secret put GOOGLE_CLIENT_SECRET
    ```
 
-3. **Check `ALLOWED_ORIGIN`** in `wrangler.toml`. It must list the PWA's origin (scheme + host,
-   no path), e.g. `https://sescc.github.io`. A comma-separated list is supported. If it is
-   **unset, every origin is denied**.
+3. **Set `ALLOWED_ORIGIN` as a secret** (it is deliberately not in `wrangler.toml`, so the repo
+   names no site). It must list the PWA's origin (scheme + host, no path):
+   ```bash
+   npx wrangler secret put ALLOWED_ORIGIN    # e.g. https://<your-user>.github.io
+   ```
+   A comma-separated list is supported, for example
+   `https://<your-user>.github.io,https://notes.example.com`. Matching is exact, so `*` is
+   **not** supported here, and if the secret is **unset, every origin is denied**. A secret takes
+   effect immediately; no redeploy is needed to change it.
 
 4. **Deploy**
    ```bash
    npx wrangler deploy
    ```
    Wrangler prints the Worker URL, e.g. `https://ehk-oauth.<your-subdomain>.workers.dev`.
+
+   **Migrating an existing deployment** that still has `ALLOWED_ORIGIN` as a plain variable:
+   deploy this version of `wrangler.toml` first (that removes the plain variable, and until the
+   secret exists the Worker denies all origins), then run `npx wrangler secret put
+   ALLOWED_ORIGIN` straight away.
 
 5. **Add the URL to GitHub:** repo → Settings → Secrets and variables → Actions → New
    repository secret. Name it `OAUTH_BROKER_URL` and set the value to the Worker URL, with
@@ -61,8 +72,9 @@ cp .dev.vars.example .dev.vars   # fill in the client ID and secret
 npm run dev                      # http://localhost:8787
 ```
 
-To test from a local PWA, temporarily add its origin (e.g. `http://localhost:8080`) to
-`ALLOWED_ORIGIN`.
+`wrangler dev` doesn't read the deployed secrets, so `.dev.vars` must also set `ALLOWED_ORIGIN`
+(the example uses `http://localhost:8080`, the origin of a local PWA); otherwise every origin is
+denied.
 
 ---
 
@@ -93,6 +105,6 @@ To test from a local PWA, temporarily add its origin (e.g. `http://localhost:808
 - The client ID and secret come **only** from Worker secrets, never from the request, so the
   Worker can't be used with other OAuth clients. It only proxies the `authorization_code`
   and `refresh_token` grants.
-- `ALLOWED_ORIGIN` is enforced by browsers (CORS). Google also refuses codes whose
+- `ALLOWED_ORIGIN` (a Worker secret) is enforced by browsers (CORS). Google also refuses codes whose
   `redirect_uri` isn't registered on the OAuth client.
 - Token values are never logged. `.dev.vars` is git-ignored.

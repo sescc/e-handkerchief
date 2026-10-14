@@ -11,7 +11,7 @@ The decision and edge-case log is in `CLAUDE.md` › "2026-10-03" and "2026-10-0
 
 **Next step:** the user commits the CLAUDE.md repair and this log, pushes or deploys, and then runs the P0 device checks in §6.
 
-**Resume command/check:** `wsl -e bash -c 'cd <repo> && git status --short && git log --oneline -3'`, then open `CLAUDE.md` › "Session status (as of 2026-10-03)".
+**Resume command/check:** `git status --short && git log --oneline -3`, then open `CLAUDE.md` › "Session status (as of 2026-10-03)".
 
 ## 1. Work completed
 **Round 1** (the open-items sweep and the user-reported mobile overflow):
@@ -74,7 +74,7 @@ The decision and edge-case log is in `CLAUDE.md` › "2026-10-03" and "2026-10-0
 | `node src/components/timezoneCombobox.proptest.js` | all properties passed | No regression. |
 | SW ASSETS existence | 40 entries, 0 missing | The precache install won't 404. |
 | Browser 320×640, round 1 | pass | Header fits (doc width 320); tick + Undo; tick hidden in edit mode; `?error=access_denied` → toast and clean URL. |
-| Browser 320×640 dark, round 2 | pass | "+" on Capture = #2d7a4f with a #1e1e1e/#4caf76 ring, normal elsewhere; Knots tab current on `#/knot/…`; pill shows local time and goes away on Undo; stubbed geolocation code 1 → blocked copy, code 2 → unavailable copy, success → coordinates; tapping a toast dismisses it with `cursor: pointer`. |
+| Browser 320×640 dark, round 2 | pass | "+" on Capture = #2d7a4f with a #1e1e1e/#4caf76 ring, normal elsewhere; Knots tab current on `#/knot/…`; pill shows local time (local zone) and goes away on Undo; stubbed geolocation code 1 → blocked copy, code 2 → unavailable copy, success → coordinates; tapping a toast dismisses it with `cursor: pointer`. |
 | Conflict screen at 320px | not stubbed | Reuses the header CSS; `.conflict-actions` is already a column. |
 | Real Google account / devices | not run | See §6. |
 
@@ -83,7 +83,7 @@ Testing gotcha: the in-app browser pane, when hidden, freezes CSS transitions, s
 ## 4. Live handoff state
 | Type | Handle / location | State | Inspect / resume | Stop / cleanup |
 | --- | --- | --- | --- | --- |
-| branch | `main` @ `4c70b9a` | dirty: `CLAUDE.md` (log repair) + this log | `wsl -e bash -c 'cd <repo> && git status --short'` | the user commits |
+| branch | `main` @ `4c70b9a` | dirty: `CLAUDE.md` (log repair) + this log | `git status --short` | the user commits |
 | process | scratchpad `serve.js` on 127.0.0.1:8765 | stopped | none | none |
 | data | browser-pane IndexedDB `e-handkerchief-db` and SW registration @127.0.0.1:8765 | deleted / unregistered | none | none |
 | artifact | scratchpad `serve.js` (session temp dir) | throwaway | none | disposable |

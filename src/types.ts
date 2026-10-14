@@ -115,7 +115,7 @@ export interface AppSettings {
   lastSyncAt: number | null;
   /** Email address of the connected Google account, or null if not connected / not yet fetched. */
   cloudAccountEmail: string | null;
-  /** IANA timezone name (e.g. "Asia/Singapore") or "auto" to follow the OS. Default "auto". */
+  /** IANA timezone name (e.g. "Europe/Paris") or "auto" to follow the OS. Default "auto". */
   timezone: string;
   /** Date format token. Default "DD MMM YYYY". */
   dateFormat: 'DD MMM YYYY' | 'MMM DD, YYYY' | 'YYYY-MM-DD' | 'DD/MM/YYYY' | 'MM/DD/YYYY';

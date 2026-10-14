@@ -1,0 +1,55 @@
+name: Publish guide to the Wiki
+
+# Mirrors docs/guide/*.md into the repository's GitHub Wiki.
+# The Wiki git repo only exists after the first page has been created in the
+# GitHub UI (enable Wiki in the repo settings, then create any page once).
+# If pushing with GITHUB_TOKEN is refused, add a fine-grained personal access
+# token with write access to the repo's contents as the secret WIKI_TOKEN.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'docs/guide/**'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: wiki
+  cancel-in-progress: true
+
+jobs:
+  wiki:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Sync docs/guide to the Wiki
+        env:
+          WIKI_TOKEN: ${{ secrets.WIKI_TOKEN || secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+        run: |
+          if ! git clone --quiet "https://x-access-token:${WIKI_TOKEN}@github.com/${REPO}.wiki.git" wiki; then
+            echo "::notice::Wiki not initialised — create the first page in the GitHub UI, then re-run this workflow."
+            exit 0
+          fi
+
+          cp docs/guide/*.md wiki/
+
+          # Wiki pages are addressed without the extension: (x.md) -> (x), (./x.md#a) -> (x#a).
+          # Only bare same-folder links are rewritten; absolute URLs (they contain ':' or '/') are left alone.
+          sed -i -E 's/\]\((\.\/)?([^):\/#]+)\.md(#[^)]*)?\)/](\2\3)/g' wiki/*.md
+
+          cd wiki
+          git add -A
+          if git diff --cached --quiet; then
+            echo "Wiki already up to date."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit --quiet -m "Sync docs/guide from ${GITHUB_SHA::8}"
+          git push --quiet
