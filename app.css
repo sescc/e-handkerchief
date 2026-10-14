@@ -2122,11 +2122,13 @@ mark.search-mark {
   padding: var(--space-xs) var(--space-sm);
 }
 
-/* Four chips on ONE line at 320px: 12px text, tight padding, never wrap. */
+/* Four chips fit on ONE line at 320px (12px text, tight padding); wrapping to a
+   second line is only a safety net for wider text or larger system fonts. */
 .backup-chips {
   display: flex;
-  flex-wrap: nowrap;
+  flex-wrap: wrap;
   gap: 4px;
+  row-gap: 4px;
   margin-top: var(--space-xs);
 }
 

@@ -3,9 +3,11 @@
 Tie a knot to remember: a mobile-first, offline-first PWA for quick, location-aware reminders you capture by voice, photo, video or text.
 
 <p align="center">
-  <img src="docs/images/capture.png" alt="Capture screen" width="240">
-  <img src="docs/images/knots.png" alt="Knots list with search" width="240">
-  <img src="docs/images/calendar.png" alt="Calendar with matching days highlighted" width="240">
+  <img src="docs/images/capture-dark.png" alt="Capture screen (dark mode): note, landmark photo, raw coordinates, Library menu" width="160">
+  <img src="docs/images/knot-light.png" alt="Saved knot (light mode): raw coordinates, note and photo, tied offline" width="160">
+  <img src="docs/images/calendar-dark.png" alt="Calendar (dark mode): search highlights matching days" width="160">
+  <img src="docs/images/search-light.png" alt="Knots list (light mode): search with highlighted matches" width="160">
+  <img src="docs/images/backups-dark.png" alt="Manage backups (dark mode): Backup only + Checked off filters" width="160">
 </p>
 
 ## Try it
@@ -74,15 +76,29 @@ Details (HTTPS for device testing, the service-worker rule, test layout) are in 
 ## Project structure
 
 ```
-index.html, app.css, manifest.webmanifest, config.js   App shell, styles, PWA manifest, deploy-time config
-sw.ts                                                  Service worker (compiled to sw.js)
-src/                                                   App code (TypeScript, compiled in place), plus *.chartest.ts tests
-icons/                                                 PWA icons
-scripts/                                               Icon generator and the test runner
-oauth-worker/                                          Cloudflare Worker: Google OAuth token broker
-transcribe-worker/                                     Cloudflare Worker: Groq Whisper transcription proxy
-docs/guide/                                            User and operator guide (mirrored to the GitHub Wiki)
-.kiro/specs/e-handkerchief/                            Requirements and design (the spec of record)
+e-handkerchief/
+├── index.html                  # App shell
+├── app.css                     # All styles (mobile-first)
+├── manifest.webmanifest        # PWA manifest
+├── config.js                   # Deploy-time config (Google client ID, broker URL, Drive on/off)
+├── sw.ts / sw.js               # Service worker (sw.js is compiled)
+├── tsconfig.json               # Compiles src/**/*.ts (tsconfig.sw.json compiles sw.ts)
+├── icons/                      # PWA icons
+├── scripts/                    # Icon generator and the test runner (npm test)
+├── src/
+│   ├── app.ts                  # Entry point
+│   ├── components/             # Shared UI: media capture, search row, timezone picker
+│   ├── screens/                # Capture, Knots, Calendar, knot detail, conflict review, Settings
+│   ├── *Service.ts, knotStore.ts, db.ts, ...   # Services and local storage (IndexedDB)
+│   └── *.ts + *.chartest.ts    # Pure logic modules, each with its characterization test
+├── docs/
+│   ├── guide/                  # User and operator guide (mirrored to the GitHub Wiki)
+│   ├── images/                 # README screenshots
+│   └── sessions/               # Per-session hand-off logs
+├── .kiro/specs/e-handkerchief/ # Requirements and design (the spec of record)
+├── oauth-worker/               # Cloudflare Worker: Google OAuth token broker
+├── transcribe-worker/          # Cloudflare Worker: Groq Whisper transcription proxy
+└── .github/workflows/          # Deploy to Pages, mirror the guide to the Wiki
 ```
 
 For the file-level tree, see [.kiro/specs/e-handkerchief/design.md](.kiro/specs/e-handkerchief/design.md).

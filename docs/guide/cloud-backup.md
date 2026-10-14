@@ -55,7 +55,7 @@ Tap **Manage backups** (needs a connection) to list what's in Drive. Each row sh
 To find a backup in a long list:
 
 - Type in the **filter box** ("Filter by date, place or text"). Every word you type must appear in the row's main line (its description, or, for a backup without one, the "Backup from …" / "Old-format backup …" line), ignoring case and accents.
-- Use the chips **All · Backup only · Checked off · Local** to narrow the list: *Backup only* are backups with no copy on this device, *Checked off* are backups of knots you've checked off, *Local* are backups whose knot is also on this device. Old-format backups appear only under *All*.
+- Use the chips **All · Backup only · Checked off · On device** to narrow the list. They can be combined: *Backup only* are backups with no copy on this device, *On device* are backups whose knot is also on this device (turn both on to see either), and *Checked off* are backups of knots you've checked off, which narrows whatever the other chips show. Tap a chip again to turn it off; *All* clears the chips. Old-format backups appear only when no chip is on.
 - A "Showing N of M" line tells you how many rows match, or "No backups match".
 
 Filtering works on the list already loaded, so it doesn't call Google Drive again.

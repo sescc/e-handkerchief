@@ -351,9 +351,63 @@ Context (Claude): the repo was already public but unpublicised. The user asked f
 - **Known limits (accepted):**
   - a match only on the legacy knot-level transcript, while per-audio transcripts exist, lists the knot with no visible highlight;
   - the Calendar ‹ › scrolls to the day panel below the months, not to the cell.
-- **Open (not touched):** the `public/` and `static/` folders at the repo root look like leftovers (`scripts/generate-icons.js` writes to `static/icons`; `icons/` is what the site uses).
+- ~~**Open (not touched):** the `public/` and `static/` folders at the repo root look like leftovers (`scripts/generate-icons.js` writes to `static/icons`; `icons/` is what the site uses).~~ **Resolved 2026-10-14 (round 2):** both removed; see below.
+
+### 2026-10-14 (round 2) — Leftover `public/` and `static/` folders removed
+- **Finding (Claude):** nothing references either folder. `index.html`, `manifest.webmanifest`, the `sw.ts` precache list, `deploy.yml` (publishes only `index.html`, `app.css`, `manifest.webmanifest`, `sw.js`, `config.js`, `src/` and `icons/`), `src/`, `docs/`, the README and `design.md` all point at `icons/`. The only references were `scripts/generate-icons.js` (`static/icons` as its output folder) and the historical `tasks.md` / `tasks.meta.json`. Both folders date from the initial commit.
+  - `static/icons/` was a byte-identical copy of `icons/` (same SHA-1 for all five files).
+  - `public/icons/favicon.svg` was a different, unused drawing, which is still recoverable from the initial commit.
+- **Decision (user asked, Claude implemented):** delete `public/` and `static/`, and point `scripts/generate-icons.js` at `icons/`. A copy of the generator was run into a scratch folder first, and its three PNGs were byte-identical to `icons/*.png`, so regenerating changes nothing. The generator never writes `favicon.svg` (hand-made) or touches `.gitkeep`; its header comment now says so.
+- **Decision (Claude):** `tasks.md` and `tasks.meta.json` keep their `static/icons` mentions, because they are the historical task list, not the spec of record (2026-09-24 decision). `design.md`'s file tree only changed the `generate-icons.js` comment ("into icons/"); the README's project structure already listed only `icons/` and is unchanged.
+
+### 2026-10-14 (round 2) — Backup chips multi-select, Dictate half-word repeat
+- **Request (user):** reword the "Local" chip, and make the chips multi-selectable (for example "Checked off" + "Only in backup", or "Checked off" + "On this device").
+- **Decision (user): chips** **All · Backup only · Checked off · On device**. The id `local` becomes `on-device`; the row's meta line still says "On this device".
+  - **Multi-select:** the place chips (Backup only, On device) are alternatives (OR); Checked off narrows further (AND).
+  - All clears every chip and is pressed when none is selected. Old-format backups appear only under All.
+  - On narrow screens the chips wrap to a second line only when needed.
+- **Implementation (Claude): chips.**
+  - `backupFilter.ts`: `BackupChipSelection` (a set of the three non-All ids; empty = All), `backupMatchesChips`, and the new `filterBackups` signature.
+  - Each chip has `aria-pressed`. `.backup-chips` uses `flex-wrap: wrap` with a 4 px row gap.
+  - The chartest has 39 checks.
+  - **Browser-checked at 320×640:** the chips fit on one line, ending at x 292 of 304. Checked off → 2 rows; + Backup only → 1; Checked off + On device → 1; both place chips (without Checked off) → every knot backup; All restores all, including old-format.
+- **Bug (reported by user, phone, Dictate in airplane mode):** "Dictation in airplane mode" came out as "Dict Dictation Dictation in aeroplane mode".
+  - **Root cause (Claude):** the on-device recogniser delivered the final pieces ["Dict", "Dictation", "Dictation in aeroplane mode"] in one instance. Word-level comparison sees "dict" ≠ "dictation", so each piece was appended; the revision rule needs a tail of at least 2 words, so it didn't apply either.
+- **Fix (Claude, plan approved):** a character-level prefix rule, `charPrefix`: strict, case and punctuation ignored, at least 2 characters.
+  - `mergeFinalPieces` drops a final piece that is a char-prefix of the next piece.
+  - `appendSegment` returns `next` when the whole acc is a char-prefix of it.
+  - It is deliberately **not** in `foldSegment` (across restarts or pauses), and there is no "last word of acc" rule. **Why:** losing text is worse than a repeat. "Yes" + pause + "Yesterday I went" must keep both, and "Buy a car" + "Carpet cleaning" must keep "car".
+  - The first draft applied the rule in `foldSegment` too; Claude narrowed it in review.
+- **Known limits (accepted, pinned in the chartest):**
+  - within one instance, `appendSegment("Yes", "Yesterday I went")` keeps only "Yesterday I went";
+  - across a restart, a partial word left at the end of one instance repeats once (`foldSegment("Dict", "Dictation…")` gives "Dict Dictation…").
+- **Tests:** `transcriptMerge.chartest` has 53 cases (the 40 original cases unchanged, plus 13 new). Replayed through the real `transcriptionService` with a fake SpeechRecognition in the browser: the live text went "Dict" → "Dictation" → "Dictation in aeroplane mode", and the saved result is "Dictation in aeroplane mode".
+- **Spec reconciled:** requirements 7.5 and 11.15; design.md TranscriptMerge and Property 15, BackupFilter and Property 21; `docs/guide/cloud-backup.md`.
+
+### 2026-10-14 (round 3) — README tree restored, five light/dark screenshots
+- **Decision (user):** Project structure goes back to a tree-style block (`├──`), showing the top level plus one level inside `src/`, about 21 lines. It **supersedes** the round-1 "top-level map only" flat list; the file-level tree stays in `design.md`.
+- **Decision (user, from a grilling):** five screenshots in one row, alternating dark and light, dark first (`docs/images/`, each `width="160"`). It **supersedes** the round-1 three light-mode shots (`capture.png`, `knots.png`, `calendar.png`, now deleted and no longer referenced).
+  - `capture-dark.png`: Capture, mid-tie. The note "Check what this place is.", the landmark photo preview, raw coordinates, the Library menu open.
+  - `knot-light.png`: the traveller's knot page. Raw coordinates, the note, a large photo (the offline traveller story).
+  - `calendar-dark.png`: the search "check" with matching days highlighted and the open day list showing photo and voice thumbnails.
+  - `search-light.png`: Knots search for "milk", including a faded checked-off result.
+  - `backups-dark.png`: Manage backups with Backup only + Checked off, "Showing 2 of 6".
+- **Decision (user):** the landmark is the Colosseum. The photo is the CC0 file "Colosseum, Rome.jpg" from Wikimedia Commons (https://commons.wikimedia.org/wiki/File:Colosseum,_Rome.jpg); the user approved the download, using Commons' 1600 px preview.
+  - It was re-encoded through a canvas, so no source metadata survives.
+  - It is kept outside the repo; only its appearance in the screenshots ships.
+  - No credit is needed (CC0), so there is no caption or CREDITS file.
+  - The coordinates shown are the landmark's public ones (41.89021, 12.49223).
+- **Implementation (Claude):**
+  - The screenshots come from headless Edge over CDP, at 360 px, DPR 2, in UTC, from made-up data.
+  - The address lookup is made to fail, so the raw coordinates show.
+  - The photo is attached through the real file picker (a CDP file-chooser intercept).
+  - Drive is stubbed in the page for the Backups shot, with the account `someone@example.com`.
+  - The PNGs contain only IHDR, IDAT and IEND chunks (no metadata).
+  - The script is kept outside the repo.
+- **Observation (Claude, not changed):** the knot page shows coordinates as "+41.89021, +12.49223" (its own `formatCoords`), while Capture and the Knots list show "41.89021, 12.49223". A cosmetic inconsistency; the user can decide later.
 
 ## Session status (as of 2026-10-14)
+- **Round 3:** README tree and the five screenshots are done; no code changed.
 - **Implemented, reviewed and browser-checked at 320×640 in light and dark mode; not committed.**
   - `npm test`: 19/19 test files pass (knotSearch 59 checks, backupFilter 29, driveBackup 13, plus the earlier ones).
   - `tsc` (app + SW) and the SW classic-script parse check pass; the precache list has 55 entries.
@@ -361,13 +415,14 @@ Context (Claude): the repo was already public but unpublicised. The user asked f
   - agent A's follow-ups: the single `storedToken()` Drive-off gate (connection status, Drive calls, `disconnect`, badges), `notifyStatus`, the early returns in `connect` / `handleOAuthCallback` / `handleOAuthError` (the `app.ts` gates stay as a second layer), the `deploy.yml` message pointing to `docs/guide/self-hosting.md#google-drive-backup`, the 🔍 button taking its height from `.btn-sm`, and the neutral 21-zone timezone shortlist with Europe/Paris doc examples;
   - the README screenshots `docs/images/{capture,knots,calendar}.png`, made by headless Edge at 360 px in light mode with UTC, from made-up knots with generic labels. The Capture shot's address is a faked lookup reply ("12 Example Street, Old Town") at a mid-ocean position. The script is kept outside the repo;
   - `npm test` 19/19, the `sw.js` classic-script parse check and the drift check (0 dead) pass.
+  - Round 2 (backup chips multi-select, Dictate half-word repeat): implemented and checked. `npm test` 19/19 (`backupFilter` 39 checks, `transcriptMerge` 53), both tsc builds and the `sw.js` parse check pass; browser-checked at 320×640 (chip combinations; the Dictate replay through the real `transcriptionService`).
 - **Pending:**
   - ~~an independent personal-data review of the repo~~ **Done (independent verifier, 2026-10-14):** the only finding, a fragment of the Google project number in the 2026-09-22 log entry, is redacted to `<client-id>`. The username appears only in the README live link (user-approved); no email, path, timezone hint or secret was found in the working tree; the screenshots carry no metadata. Old commits still carry the personal email and that fragment, which the history rewrite handles;
-  - the user's phone checks: search on both screens (the keyboard opens from the 🔍 tap, ‹ › scrolling), the backups filter, Dictate in airplane mode, plus the 2026-10-09 checks;
+  - the user's phone checks: search on both screens (the keyboard opens from the 🔍 tap, ‹ › scrolling), the backups filter, Dictate in airplane mode, plus the 2026-10-09 checks. Round 2 adds: Dictate in airplane mode with "Dictation in airplane mode" (expect no "Dict" prefix repeat) and a longer two-sentence phrase (nothing dropped or repeated), and the backup chips on the phone (multi-select, wrapping, All);
   - the user's Wiki setup: enable the Wiki, create its first page, restrict editing to collaborators, and check that `GITHUB_TOKEN` can push (else add `WIKI_TOKEN`);
   - the history rewrite (the runbook is in the git-ignored `CLAUDE.local.md`; it is the last step);
   - redeploying each Worker: `npx wrangler deploy` first, then straight away `npx wrangler secret put ALLOWED_ORIGIN` (a secret can't be set while the deployed plain var of the same name exists);
-  - the `public/` and `static/` leftovers (noted, not touched).
+  - ~~the `public/` and `static/` leftovers (noted, not touched).~~ **Done (2026-10-14, round 2):** both removed; the icon generator writes to `icons/`.
 
 ## Session status (as of 2026-10-09) — superseded by 2026-10-14 above
 - **Implemented, reviewed and browser-checked; committed and pushed by the user** as `816dfe0` (the 2026-10-08 save-failure fix plus the 2026-10-09 features and grid fix) and `fd1e0d0` (Calendar time inline). Session log: `docs/sessions/2026-10-09-offline-gps-thumbs-badges.md`.
@@ -791,6 +846,13 @@ Context (Claude): the repo was already public but unpublicised. The user asked f
 - **A fork with a stored token and Drive off:** `getConnectionStatus()` reads `disconnected` (the `storedToken()` gate), no backup badges show, and there is no sync, upload or OAuth handling. Browser-checked.
 - **Wiki not initialised:** the workflow prints a notice and exits 0. Manual test (first run).
 - **Testing-status Google consent screen:** refresh tokens expire after 7 days, so "session expired — please reconnect" appears weekly. Documented; not code.
+- **Running `node scripts/generate-icons.js` now writes into the live `icons/` folder:** today it reproduces the same bytes (`git status` stays clean). If real artwork ever replaces the placeholder PNGs, running the generator would overwrite it; `favicon.svg` and `.gitkeep` are never touched. Verified by running it and checking `git status`.
+- **Backup chips, every combination:** All (no chip) shows everything, including old-format backups; "Checked off" alone narrows to checked-off backups; "Backup only" alone and "On device" alone select by place; "Backup only" + "On device" (without Checked off) gives every knot backup (OR); "Checked off" + a place chip gives the checked-off backups in that place (AND); tapping All clears every chip. Covered by `backupFilter.chartest.ts` (39 checks); browser-checked at 320×640 (Checked off → 2 rows; + Backup only → 1; Checked off + On device → 1; both place chips → every knot backup; All restores all).
+- **Old-format backups once any chip is on:** hidden; they appear only under All. Covered by `backupFilter.chartest.ts`.
+- **A half-word final piece within one instance** (the on-device recogniser delivering "Dict", "Dictation", "Dictation in aeroplane mode"): the earlier pieces are dropped and the text is "Dictation in aeroplane mode". Covered by `transcriptMerge.chartest.ts` (53 cases); replayed through the real `transcriptionService` with a fake SpeechRecognition in the browser.
+- **"I" + "Ice cream" in one instance:** not collapsed, because `charPrefix` needs at least 2 characters. Covered by `transcriptMerge.chartest.ts`.
+- **Known limit (within one instance):** `appendSegment("Yes", "Yesterday I went")` keeps only "Yesterday I went", because "yes" is a character prefix of "yesterday". Accepted; pinned in `transcriptMerge.chartest.ts`.
+- **Known limit (across a restart):** a partial word left at the end of one instance repeats once: `foldSegment("Dict", "Dictation…")` gives "Dict Dictation…". Accepted (the rule is deliberately not in `foldSegment`); pinned in `transcriptMerge.chartest.ts`. "Yes" + pause + "Yesterday I went" keeps both, and "Buy a car" + "Carpet cleaning" keeps "car".
 
 ## Refactoring Standard Operating Procedure (SOP)
 When instructed to refactor code, adopt the role of a principal software engineer and execute in four strict phases:

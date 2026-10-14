@@ -149,6 +149,65 @@ function main(): void {
   // Known limitation (documented): a deliberate 2+ word repeat collapses.
   eq('known limitation: "thank you" + "thank you" collapses', appendSegment('thank you', 'thank you'), 'thank you');
 
+  // --- Half-spoken words (character-level prefix rules) --------------------
+  eq(
+    'partial word: user sequence (Dict, Dictation, Dictation in aeroplane mode)',
+    mergeFinalPieces(['Dict', 'Dictation', 'Dictation in aeroplane mode']),
+    'Dictation in aeroplane mode',
+  );
+  eq(
+    'partial word after an earlier distinct piece',
+    mergeFinalPieces(['Hello there', 'Dict', 'Dictation in aeroplane mode']),
+    'Hello there Dictation in aeroplane mode',
+  );
+  eq(
+    'partial word chain of three mid-transcript',
+    mergeFinalPieces(['Hello there', 'Dic', 'Dict', 'Dictation', 'Dictation in aeroplane mode', 'and more']),
+    'Hello there Dictation in aeroplane mode and more',
+  );
+  eq(
+    'partial word: punctuation and case ignored',
+    mergeFinalPieces(['dict,', 'Dictation in aeroplane mode']),
+    'Dictation in aeroplane mode',
+  );
+  eq(
+    'trailing partial word at the very end is kept (nothing to complete it)',
+    mergeFinalPieces(['Hello there', 'Dict']),
+    'Hello there Dict',
+  );
+  eq(
+    'char-prefix is piece-to-piece only: trailing partial of a longer piece is kept',
+    mergeFinalPieces(['Buy a car', 'Carpet cleaning tomorrow']),
+    'Buy a car Carpet cleaning tomorrow',
+  );
+  eq(
+    '1-character piece is not collapsed (2-char minimum)',
+    mergeFinalPieces(['I', 'Ice cream']),
+    'I Ice cream',
+  );
+  eq('1-character acc is not replaced', appendSegment('I', 'Ice cream'), 'I Ice cream');
+  eq(
+    'append: lone partial word is replaced by the completed text (same instance)',
+    appendSegment('Dict', 'Dictation in aeroplane mode'),
+    'Dictation in aeroplane mode',
+  );
+  // foldSegment (across instances) never uses the char-prefix rule: losing text
+  // is worse than a repeat.
+  eq(
+    'known limitation: fold keeps a partial word left at the end of an instance (repeats once)',
+    foldSegment('Dict', 'Dictation in aeroplane mode'),
+    'Dict Dictation in aeroplane mode',
+  );
+  eq(
+    'fold: trailing partial of a longer acc is kept',
+    foldSegment('Buy a car', 'Carpet cleaning'),
+    'Buy a car Carpet cleaning',
+  );
+  eq('fold: lone "Yes" + "Yesterday I went" keeps both (nothing lost)', foldSegment('Yes', 'Yesterday I went'), 'Yes Yesterday I went');
+  // Known limitation (documented): within one instance, a short whole acc that
+  // happens to be the start of the next word is taken as a half-spoken word.
+  eq('known limitation: same-instance "Yes" + "Yesterday I went" collapses', appendSegment('Yes', 'Yesterday I went'), 'Yesterday I went');
+
   if (failureCount > 0) {
     console.error(`\n${failureCount} case(s) failed.`);
     const proc = (globalThis as unknown as { process?: { exitCode?: number } }).process;

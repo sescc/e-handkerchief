@@ -18,7 +18,7 @@ import {
   backupFilterSummary,
   backupMainLine,
   filterBackups,
-  type BackupChip,
+  type BackupChipId,
 } from '../backupFilter.js';
 import type { AppSettings } from '../types.js';
 
@@ -768,7 +768,8 @@ export function renderSettings(container: HTMLElement): () => void {
   // Manage-backups filter state. Kept here (not in the panel's DOM) so it
   // survives a reload of the panel, e.g. after Merge with Cloud.
   let backupQuery = '';
-  let backupChip: BackupChip = 'all';
+  /** Chips that are on; empty = All. */
+  const backupChips = new Set<BackupChipId>();
   let backupLoadSeq = 0;
 
   async function loadBackups(): Promise<void> {
@@ -813,14 +814,17 @@ export function renderSettings(container: HTMLElement): () => void {
       chipRow.className = 'backup-chips';
       chipRow.setAttribute('role', 'group');
       chipRow.setAttribute('aria-label', 'Filter backups');
-      const chipButtons = new Map<BackupChip, HTMLButtonElement>();
+      const chipButtons = new Map<string, HTMLButtonElement>();
       for (const chip of BACKUP_CHIPS) {
         const btn = document.createElement('button');
         btn.type = 'button';
         btn.className = 'backup-chip';
         btn.textContent = chip.label;
         btn.addEventListener('click', () => {
-          backupChip = chip.id;
+          // All clears the selection; the others toggle (multi-select).
+          if (chip.id === 'all') backupChips.clear();
+          else if (backupChips.has(chip.id)) backupChips.delete(chip.id);
+          else backupChips.add(chip.id);
           renderRows();
         });
         chipButtons.set(chip.id, btn);
@@ -841,7 +845,7 @@ export function renderSettings(container: HTMLElement): () => void {
 
       function renderRows(): void {
         for (const [id, btn] of chipButtons) {
-          const on = id === backupChip;
+          const on = id === 'all' ? backupChips.size === 0 : backupChips.has(id as BackupChipId);
           btn.classList.toggle('backup-chip--active', on);
           btn.setAttribute('aria-pressed', String(on));
         }
@@ -855,7 +859,7 @@ export function renderSettings(container: HTMLElement): () => void {
           rowsEl.appendChild(empty);
           return;
         }
-        const shown = filterBackups(loaded, localIds, backupQuery, backupChip, formatKnotTimestamp);
+        const shown = filterBackups(loaded, localIds, backupQuery, backupChips, formatKnotTimestamp);
         summaryEl.textContent = backupFilterSummary(shown.length, loaded.length);
         for (const b of shown) {
           rowsEl.appendChild(

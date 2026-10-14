@@ -3,6 +3,7 @@
  * generate-icons.js
  * Generates minimal valid PNG files for the e-Handkerchief PWA icons.
  * Uses only built-in Node.js modules: zlib, fs, crypto.
+ * Writes icon-192.png, icon-512.png and shortcut-capture.png into icons/ (favicon.svg is hand-made and not generated).
  *
  * Run: node scripts/generate-icons.js
  */
@@ -103,7 +104,7 @@ const R = 0x2d;
 const G = 0x7a;
 const B = 0x4f;
 
-const outDir = path.join(__dirname, '..', 'static', 'icons');
+const outDir = path.join(__dirname, '..', 'icons');
 fs.mkdirSync(outDir, { recursive: true });
 
 const icons = [

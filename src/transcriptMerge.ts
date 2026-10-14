@@ -7,6 +7,21 @@
 // recognition instance may also re-deliver all or part of the previous tail.
 // Joining such pieces naively duplicates words, so every join goes through
 // `appendSegment`, which compares on normalised WORDS but emits original text.
+//
+// The offline/on-device recogniser also delivers HALF-SPOKEN words as final
+// pieces (["Dict", "Dictation", "Dictation in aeroplane mode"]); word-level
+// comparison can't see that "dict" is the start of "dictation". Two
+// character-level rules cover it (`charPrefix`: the normalised text of one side
+// is a strict string prefix of the other's, and at least 2 characters long):
+//  - mergeFinalPieces drops a piece that is a char-prefix of the NEXT piece;
+//  - appendSegment (same instance only) returns `next` when the WHOLE of `acc`
+//    is a char-prefix of it.
+// `foldSegment` (across instances/pauses) does NOT use the char-prefix rule:
+// losing text is worse than a repeat, and a short sentence before a pause
+// ("Yes" ... "Yesterday I went") must survive. A partial word left at the end
+// of one instance therefore repeats once after a restart.
+// Non-goal: no "last word of acc is a prefix of next's first word" rule, so
+// "Buy a car" + "Carpet cleaning tomorrow" keeps "car".
 // ============================================================
 
 interface Word {
@@ -48,6 +63,19 @@ function endsWithWords(a: Word[], b: Word[]): boolean {
   return true;
 }
 
+/**
+ * Character-level prefix: is the normalised text of `a` (its words joined by
+ * single spaces) a STRICT prefix of `b`'s, and at least 2 characters long?
+ * Catches a half-spoken word the engine later completes ("dict" ->
+ * "dictation in aeroplane mode"), which the word-level comparisons can't see.
+ * The 2-character minimum keeps a lone letter ("I") from swallowing "Ice cream".
+ */
+function charPrefix(a: Word[], b: Word[]): boolean {
+  const as = a.map((w) => w.norm).join(' ');
+  const bs = b.map((w) => w.norm).join(' ');
+  return as.length >= 2 && bs.length > as.length && bs.startsWith(as);
+}
+
 /** Length of the longest common subsequence (in-order word overlap) of two word lists. */
 function lcsLength(a: Word[], b: Word[]): number {
   let prev = new Array<number>(b.length + 1).fill(0);
@@ -66,7 +94,8 @@ function lcsLength(a: Word[], b: Word[]): number {
 
 /**
  * Rules shared by both merges: empty side, cumulative growth, stale /
- * re-delivered. Returns the result, or null when none of them applies.
+ * re-delivered. Returns the result, or null when none of them applies. The
+ * character-level partial-word rule is deliberately NOT here (see `appendSegment`).
  */
 function trivialMerge(a: Word[], n: Word[]): string | null {
   // Empty side -> the other.
@@ -116,6 +145,9 @@ export function foldSegment(acc: string, next: string): string {
  *  1. Empty side -> the other.
  *  2. `next` starts with all of `acc` -> `next` (cumulative growth).
  *  3. `acc` starts or ends with all of `next` -> `acc` (stale / re-delivered).
+ *  3b. The whole of `acc` is a character-level prefix of `next` (>= 2 chars,
+ *     strict): "Dict" + "Dictation in aeroplane mode" -> the latter. Applied
+ *     right after rules 1-3, before the revision rule.
  *  4. Revision: `next` re-says the TAIL of `acc` with some words changed.
  *     Candidate tails are acc[s..] where acc[s] equals next's first word and
  *     the tail has m >= 2 words (a 1-word tail never merges, so "no" +
@@ -138,7 +170,8 @@ export function foldSegment(acc: string, next: string): string {
  * FIRST word of the revised tail ("wanna go" -> "I want to go") is not
  * detected unless the tail starts at a matching word; a short next that
  * changes most of a short tail ("bought apples" -> "bought oranges and
- * pears", l=1 of m=2) is appended, not revised.
+ * pears", l=1 of m=2) is appended, not revised; a short whole acc that merely
+ * starts next ("Yes" + "Yesterday I went") is taken as a partial word and replaced.
  * Use `foldSegment` across recognition instances instead of this.
  */
 export function appendSegment(acc: string, next: string): string {
@@ -146,6 +179,11 @@ export function appendSegment(acc: string, next: string): string {
   const n = tokenize(next);
   const trivial = trivialMerge(a, n);
   if (trivial !== null) return trivial;
+
+  // Rule 2b: the WHOLE of `acc` is a character-level prefix of `next` (a lone
+  // partial word that `next` completes) -> `next`. Same instance only, never in
+  // `foldSegment`. Whole-acc only: "Buy a car" + "Carpet cleaning" keeps "car".
+  if (charPrefix(a, n)) return render(n);
 
   // Rule 4
   let bestStart = -1;
@@ -173,15 +211,23 @@ export function appendSegment(acc: string, next: string): string {
 }
 /**
  * Merge the FINAL pieces of one recognition instance (index order) into one
- * transcript: trims pieces, drops empties, folds left with `appendSegment`.
- * ["1","1 2","1 2 3"] -> "1 2 3"; ["Hello","world"] -> "Hello world".
+ * transcript: trims pieces, drops empties, drops any piece that is a
+ * character-level prefix of the next piece (half-spoken words), then folds
+ * left with `appendSegment`.
+ * ["1","1 2","1 2 3"] -> "1 2 3"; ["Hello","world"] -> "Hello world";
+ * ["Dict","Dictation","Dictation in aeroplane mode"] -> "Dictation in aeroplane mode".
  */
 export function mergeFinalPieces(pieces: string[]): string {
+  const trimmed = pieces.map((p) => p.trim()).filter((p) => p.length > 0);
+  const words = trimmed.map(tokenize);
   let acc = '';
-  for (const piece of pieces) {
-    const p = piece.trim();
-    if (!p) continue;
-    acc = appendSegment(acc, p);
+  for (let i = 0; i < trimmed.length; i++) {
+    // A piece that is only a character-level prefix of the NEXT piece is a
+    // half-spoken word the engine then completed: drop it. Compared against the
+    // original next piece, so chains ("Dict", "Dictation", "Dictation in ...")
+    // collapse. Piece-to-piece only; earlier, distinct pieces are untouched.
+    if (i + 1 < trimmed.length && charPrefix(words[i]!, words[i + 1]!)) continue;
+    acc = appendSegment(acc, trimmed[i]!);
   }
   return acc;
 }
