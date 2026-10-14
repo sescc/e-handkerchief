@@ -1,7 +1,7 @@
 # 2026-09-29 — checkoff-conflicts-share
 
 ## 0. Continuation brief
-**Current state:** every feature from the approved plan (`~/.claude/plans/issue-even-though-the-sorted-moth.md`) is implemented and committed by the user as `fc1dc7c` on `main`, and the working tree is clean. That covers:
+**Current state:** every feature from the approved plan (`~/.claude/plans/issue-even-though-the-sorted-moth.md`) is implemented and committed by the user as `b9b26df` on `main`, and the working tree is clean. That covers:
 - the Merge toast fix;
 - knot check-off with a "New day starts at" cutoff, synced separately from content;
 - edit-conflict review, which replaces newest-wins (IDB v5 `syncState`);
@@ -85,7 +85,7 @@ This repo has no `docs/` architecture tree, no OpenSpec and no graphify graph. T
 ## 4. Live handoff state
 | Type | Handle / location | State | Inspect / resume | Stop / cleanup |
 | --- | --- | --- | --- | --- |
-| branch | `main` @ `fc1dc7c` | clean except this new log file | `git status` | user commits this log |
+| branch | `main` @ `b9b26df` | clean except this new log file | `git status` | user commits this log |
 | process | local smoke-test server (`node serve.js`, port 8765) | stopped | none | none |
 | artifact | scratchpad `serve.js` (session temp dir) | throwaway | none | disposable |
 | data | the browser pane's IndexedDB `e-handkerchief-db` @127.0.0.1:8765 | deleted after the test | none | none |
@@ -142,7 +142,7 @@ Known divergence risks, documented in `design.md` › Known Limitations:
 `drift-check.ps1 .` → "no docs/ tree here - nothing to check" (exit 0). There are no IMPLEMENTATION.md rows to verify.
 
 ## 10. Files changed
-All are in commit `fc1dc7c`.
+All are in commit `b9b26df`.
 - **Code:** `src/{app,cloudSyncService,db,eventBus,knotStore,knotSummary,notificationService,router,settingsStore,shareService,syncPlan,toastService,types}.ts`, `src/screens/{calendarScreen,knotDetailScreen,knotsScreen,settingsScreen}.ts`, `sw.ts`, `app.css`.
 - **New code:** `src/{checkOffActions,dayCutoff,deviceLabel,knotDiff,mergeMessage}.ts`, `src/screens/conflictScreen.ts`.
 - **Tests:** `src/{dayCutoff,deviceLabel,knotDiff,mergeMessage}.chartest.ts` (new); `src/{knotSummary,router,syncPlan}.chartest.ts` (extended; the rewritten syncPlan cases are documented in design.md Property 7).

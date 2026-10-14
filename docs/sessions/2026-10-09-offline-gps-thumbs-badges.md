@@ -1,11 +1,11 @@
 # 2026-10-09 — offline-gps-thumbs-badges
 
-This session ran from 2026-10-08 to 2026-10-09. It also covers the 2026-10-06 round (`19ad87b`), which never got its own log: that round is recorded in `CLAUDE.md` › "2026-10-06".
+This session ran from 2026-10-08 to 2026-10-09. It also covers the 2026-10-06 round (`88a2563`), which never got its own log: that round is recorded in `CLAUDE.md` › "2026-10-06".
 
 ## 0. Continuation brief
-**Current state:** all of this session's work is committed and pushed by the user, and `main` is even with `origin/main` at `fd1e0d0`. The commits are:
-- **`816dfe0`:** picked-media save failures (InvalidBlob) and the stuck edit screen; the offline GPS wait and the address backfill; Calendar thumbnails; centre-cropped thumbnails; "Not backed up" / "Backup deleted" badges; the Calendar month grid overflow.
-- **`fd1e0d0`:** the Calendar day list shows the time inline instead of the full date.
+**Current state:** all of this session's work is committed and pushed by the user, and `main` is even with `origin/main` at `c93df63`. The commits are:
+- **`cb2cb60`:** picked-media save failures (InvalidBlob) and the stuck edit screen; the offline GPS wait and the address backfill; Calendar thumbnails; centre-cropped thumbnails; "Not backed up" / "Backup deleted" badges; the Calendar month grid overflow.
+- **`c93df63`:** the Calendar day list shows the time inline instead of the full date.
 
 Everything was browser-checked at 320×640 in the in-app pane with stubs. Nothing has been checked on a real phone.
 
@@ -77,8 +77,8 @@ The decision and edge-case log is in `CLAUDE.md` › "2026-10-08" and "2026-10-0
 ## 4. Live handoff state
 | Type | Handle / location | State | Inspect / resume | Stop / cleanup |
 | --- | --- | --- | --- | --- |
-| branch | `main` @ `fd1e0d0` | clean except this log and the `CLAUDE.md` status line; even with `origin/main` | `git status -sb` | the user commits |
-| deployment | GitHub Pages `<owner>.github.io/e-handkerchief` | unknown (a push triggers deploy.yml) | check the Actions run for `fd1e0d0`, then fetch `sw.js` and read `BUILD_VERSION` | none |
+| branch | `main` @ `c93df63` | clean except this log and the `CLAUDE.md` status line; even with `origin/main` | `git status -sb` | the user commits |
+| deployment | GitHub Pages `<owner>.github.io/e-handkerchief` | unknown (a push triggers deploy.yml) | check the Actions run for `c93df63`, then fetch `sw.js` and read `BUILD_VERSION` | none |
 | port | 127.0.0.1:8765 (scratchpad `serve.js`) | free; the server was stopped after each check | none | none |
 | data | browser-pane IndexedDB `e-handkerchief-db` @127.0.0.1:8765 | deleted after each check | none | none |
 | agents | three Sonnet subagents (GPS/backfill, Calendar, badges) | idle, finished | none | none |
@@ -130,7 +130,7 @@ The decision and edge-case log is in `CLAUDE.md` › "2026-10-08" and "2026-10-0
 | `.kiro/specs/e-handkerchief/requirements.md` | 3.8, 5.6, 13.12 (10-08); 1.3/1.5 amended, 1.10, 1.11, 3.5 amended, 6.11, 11.14, 13.13 (incl. time inline), 13.14 (10-09). |
 | `.kiro/specs/e-handkerchief/design.md` | MediaService, SaveError, error table (and the stale geolocation row), GeoService, AddressBackfill, MediaSummary, BackupStatus, CloudSyncService, CalendarScreen, `formatKnotTime`, Properties 16–19, precache and test lists, src tree. |
 | `README.md` | Tests and src tree; the offline location paragraph; Calendar thumbnails; the "not in Drive" badges; the pick and save messages. |
-| `CLAUDE.md` | 2026-10-08 and 2026-10-09 decisions, edge cases and session status; the 10-09 status now names `816dfe0` / `fd1e0d0` as committed and pushed. |
+| `CLAUDE.md` | 2026-10-08 and 2026-10-09 decisions, edge cases and session status; the 10-09 status now names `cb2cb60` / `c93df63` as committed and pushed. |
 
 ## 9. Drift check
 `drift-check.ps1 .` → `0 dead / 0 refs`. There's no `docs/<component>` tree, so nothing to fix. The graph refresh is skipped: there's no `graphify-out/` (P3 KIV).

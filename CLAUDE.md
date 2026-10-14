@@ -174,7 +174,7 @@ Audit findings (Claude): the Knot theme was half-applied. The nav, list and cale
 - **Decision (user, feature request):** if location fails on Capture, tapping the line retries it with no page reload.
   - The copy, chosen by the user: "Location unavailable — tap to retry", or "Location blocked for this site — allow it in browser settings, then tap to retry".
   - The new `geoService.locate()` separates `denied` (PERMISSION_DENIED) from `unavailable`. `getCurrentPosition()` is now a wrapper. **(Extended 2026-10-04: `denied` is split further into `denied` / `off` / `unknown`; see below.)**
-- **Decision (Claude, end of session):** a broken earlier edit had cut off the round-1 "daily email digest" decision and spliced this section into the middle of round 1. That was committed in `4c70b9a`, and both are now repaired.
+- **Decision (Claude, end of session):** a broken earlier edit had cut off the round-1 "daily email digest" decision and spliced this section into the middle of round 1. That was committed in `39b05a2`, and both are now repaired.
 
 ### 2026-10-04 — Settings toggle overflow, Location off vs blocked, Sharing hint, Random knot, checked-off toggle at top (plan: `~/.claude/plans/decisions-proceed-with-p2-recursive-dawn.md`)
 - **Bug (reported by user, on a phone):** a Settings toggle spilled out to the right of the screen. **Root cause (found by Claude):** `buildToggle` returns `<label class="toggle-switch">`. Inside the plain `div.settings-row-control` of the Notifications row that label stayed inline, so its 44×26 size was ignored and the absolutely positioned slider and knob spilled out.
@@ -209,7 +209,7 @@ Audit findings (Claude): the Knot theme was half-applied. The nav, list and cale
 - **Decision (user):** at the end of every implementation, Claude puts the suggested commit message in the chat reply as a copyable code block, rather than only pointing to where it's recorded. **Why:** the user couldn't find it in this file. This is now a global rule in `~/.claude/CLAUDE.md` (all projects).
 
 ### 2026-10-05 — Location fallback, Manage-backups copy, m4a import, Mic quality, notification diagnostics (plan: `~/.claude/plans/p0-location-message-wise-kahn.md`)
-- **Bug (reported by user, on a phone):** with Location switched off, Capture still said "Location blocked for this site". **Finding (Claude):** the deployed `src/locateFailure.js` was the `5690324` code, so the Permissions API returned `denied`. Android Chrome folds a blocked site, the device's Location being off, and Chrome lacking Android's location permission into the same `denied`.
+- **Bug (reported by user, on a phone):** with Location switched off, Capture still said "Location blocked for this site". **Finding (Claude):** the deployed `src/locateFailure.js` was the `8fdd3f6` code, so the Permissions API returned `denied`. Android Chrome folds a blocked site, the device's Location being off, and Chrome lacking Android's location permission into the same `denied`.
   - **Decision (user):** when it's ambiguous, show the generic "Location unavailable — tap to retry". Only code 1 + `granted` gives "Location is off — turn it on, then tap to retry". The `denied` / `unknown` reasons and their copy are removed (`LocateFailureReason` is now `'off' | 'unavailable'`). **Supersedes** the 2026-10-04 `denied` / `unknown` copy.
   - The Permissions API lookup stays in `geoService.locate()`, because it is what identifies `off`.
 - **Finding (user + Claude):** "Tap to copy the URL for this app" is Chrome's own notification for an installed web app. A page can't change or remove it. Claude's earlier suggestion to reinstall as a WebAPK via "Install app" was **wrong and is withdrawn**: the app was already installed via Chrome › Install.
@@ -232,7 +232,7 @@ Audit findings (Claude): the Knot theme was half-applied. The nav, list and cale
 
 ### 2026-10-05 (round 2) — Service worker never registered
 - **Bug (reported by user, on a phone):** Settings showed "Couldn't show the notification (service worker not ready)", even after switching the toggle off and on many times.
-- **Root cause (Claude, verified):** `sw.ts` had `export {};` since the initial commit `edf2e59`, so the compiled `sw.js` ended with `export {};`. `app.ts` registers `sw.js` as a classic script, where `export` is a SyntaxError, so evaluation failed and **no service worker has ever run**: no notification, no offline precache, no update toast, no notification tap handling, no Background Sync message. The app could still be installed because Chrome no longer requires a service worker for that. `node -e "new Function(…sw.js…)"` on the old file gives `SyntaxError: Unexpected token 'export'`.
+- **Root cause (Claude, verified):** `sw.ts` had `export {};` since the initial commit `e4ffbbc`, so the compiled `sw.js` ended with `export {};`. `app.ts` registers `sw.js` as a classic script, where `export` is a SyntaxError, so evaluation failed and **no service worker has ever run**: no notification, no offline precache, no update toast, no notification tap handling, no Background Sync message. The app could still be installed because Chrome no longer requires a service worker for that. `node -e "new Function(…sw.js…)"` on the old file gives `SyntaxError: Unexpected token 'export'`.
 - **Decision (Claude, plan approved):** remove `export {};` and keep `sw.js` a classic script (a comment in `sw.ts` says so). Module registration (`type: 'module'`) was rejected because it isn't universal (older Firefox). A CI guard in `deploy.yml` ("Inject build version into service worker" step) parses the built file with `new Function` and fails the build if it isn't a valid classic script.
 - **Latent bugs fixed (Claude, plan approved):**
   - `SW_WAITING` was posted on every install, including the first, so the first install would have shown "New version available — tap to reload". It is now posted only when `sw.registration.active` already exists (an update over a running version).
@@ -357,7 +357,7 @@ Context (Claude): the repo was already public but unpublicised. The user asked f
 - **Finding (Claude):** nothing references either folder. `index.html`, `manifest.webmanifest`, the `sw.ts` precache list, `deploy.yml` (publishes only `index.html`, `app.css`, `manifest.webmanifest`, `sw.js`, `config.js`, `src/` and `icons/`), `src/`, `docs/`, the README and `design.md` all point at `icons/`. The only references were `scripts/generate-icons.js` (`static/icons` as its output folder) and the historical `tasks.md` / `tasks.meta.json`. Both folders date from the initial commit.
   - `static/icons/` was a byte-identical copy of `icons/` (same SHA-1 for all five files).
   - `public/icons/favicon.svg` was a different, unused drawing, which is still recoverable from the initial commit.
-- **Decision (user asked, Claude implemented):** delete `public/` and `static/`, and point `scripts/generate-icons.js` at `icons/`. A copy of the generator was run into a scratch folder first, and its three PNGs were byte-identical to `icons/*.png`, so regenerating changes nothing. The generator never writes `favicon.svg` (hand-made) or touches `.gitkeep`; its header comment now says so.
+- **Decision (user asked, Claude implemented):** delete `public/` and `static/`, and point `scripts/generate-icons.js` at `icons/`. **(Generator part superseded 2026-10-15: the script is deleted; see "App icon and favicon".)** A copy of the generator was run into a scratch folder first, and its three PNGs were byte-identical to `icons/*.png`, so regenerating changes nothing. The generator never writes `favicon.svg` (hand-made) or touches `.gitkeep`; its header comment now says so.
 - **Decision (Claude):** `tasks.md` and `tasks.meta.json` keep their `static/icons` mentions, because they are the historical task list, not the spec of record (2026-09-24 decision). `design.md`'s file tree only changed the `generate-icons.js` comment ("into icons/"); the README's project structure already listed only `icons/` and is unchanged.
 
 ### 2026-10-14 (round 2) — Backup chips multi-select, Dictate half-word repeat
@@ -406,7 +406,44 @@ Context (Claude): the repo was already public but unpublicised. The user asked f
   - The script is kept outside the repo.
 - **Observation (Claude, not changed):** the knot page shows coordinates as "+41.89021, +12.49223" (its own `formatCoords`), while Capture and the Knots list show "41.89021, 12.49223". A cosmetic inconsistency; the user can decide later.
 
+### 2026-10-15 — App icon and favicon (plan: `~/.claude/plans/purring-percolating-whale.md`)
+- **Finding (Claude):**
+  - The tab icon was `icons/icon-192.png`, a flat green placeholder square.
+  - `icons/favicon.svg` drew the 🪢 emoji as text and wasn't linked.
+  - The manifest marked one 512 PNG `"any maskable"`, so Android's mask cropped it.
+  - There was no apple-touch-icon, and the Capture shortcut used the same flat square.
+- **Decisions (user, from a grilling with drawn concept sheets):**
+  - **Motif:** "A3": a white handkerchief with a stitched (dashed) hem and a knot tied in its top-right corner (a round knot with two ends), on the brand green `#2d7a4f`.
+    - Rejected: a single rope knot; a tied bundle; a hanging diamond; four "cloth corner twisted into a rope loop" variants; and bolder, soft-cornered, mirrored and gathered-cloth variants of A3. The user picked A3 exactly as first drawn.
+  - **Colours:** white on brand green (the manifest `theme_color`).
+  - **Scope:** the full set:
+    - `favicon.svg` as the tab icon, plus a 32 px PNG fallback;
+    - 192/512 "any";
+    - a **separate** maskable 512 with the mark inside the 40 % safe zone;
+    - a full-bleed Apple 180 (iOS rounds it);
+    - the shortcut icon.
+  - **Small sizes:** one drawing at every size. The hem stays in the 16 px tab icon; Claude recommended a hem-less small variant and the user declined.
+  - **Shortcut:** the mark plus a white "+" badge in the bottom-right corner.
+  - **In-app emoji:** the 🪢 in the Knots nav tab and the empty state stays; this change covers icons only.
+  - **PNG export:** rendered **once** with headless Edge over CDP. The render script is kept outside the repo, like the screenshot script. Rejected: a `@resvg/resvg-js` devDependency.
+  - **Generator:** `scripts/generate-icons.js` is deleted, because running it would have overwritten the new PNGs with flat squares. The SVGs in `icons/` (`favicon.svg`, `icon-maskable.svg`, `apple-touch-icon.svg`, `shortcut-capture.svg`) are the source of truth.
+- **Implementation (Claude):**
+  - `index.html` links `favicon-32.png` (sizes 32x32), then `favicon.svg`, plus `apple-touch-icon.png`.
+  - The manifest lists 192 `any`, 512 `any` and `icon-maskable-512.png` `maskable`, each with a `type`; the shortcut icon gains a `type`.
+  - `sw.ts` ASSETS gains `favicon.svg`, `favicon-32.png`, `icon-maskable-512.png` and `apple-touch-icon.png`.
+  - The PNGs keep only their IHDR/IDAT/IEND chunks (no metadata).
+- **Verified (Claude):**
+  - `npm test` passes 19/19, and the `sw.js` classic-script parse check passes.
+  - ASSETS has 58 entries, all present. design.md had said 55; that number was stale and has been corrected.
+  - Every `index.html` and manifest icon path exists, and each PNG's IHDR size matches its declared `sizes`.
+  - Pixel (0,0) is transparent in the "any" and shortcut PNGs, and opaque `#2d7a4f` in the maskable and Apple PNGs.
+  - Claude viewed every PNG and each matches the approved preview.
+  - The maskable mark's farthest point is about 48 of the 51.2 units of the 40 % safe-zone radius.
+  - Pending (user, on a phone): the home-screen icon, the long-press shortcut icon and, on iOS, the home-screen icon.
+- **Spec reconciled:** design.md (file tree, Build System, the ASSETS listing and count, the Technology Stack "Icons / Illustrations" row, which wrongly said "SVG sprites inlined at build"); README project structure. requirements.md is unchanged: Req 9's shortcut criterion still holds.
+
 ## Session status (as of 2026-10-14)
+- **Session log:** `docs/sessions/2026-10-14-search-public-readme-scrub.md`. Rounds 1–3 are committed as `1d86466` and `c714607`; the hash remap, this status and the log are not committed yet.
 - **Round 3:** README tree and the five screenshots are done; no code changed.
 - **Implemented, reviewed and browser-checked at 320×640 in light and dark mode; not committed.**
   - `npm test`: 19/19 test files pass (knotSearch 59 checks, backupFilter 29, driveBackup 13, plus the earlier ones).
@@ -417,15 +454,15 @@ Context (Claude): the repo was already public but unpublicised. The user asked f
   - `npm test` 19/19, the `sw.js` classic-script parse check and the drift check (0 dead) pass.
   - Round 2 (backup chips multi-select, Dictate half-word repeat): implemented and checked. `npm test` 19/19 (`backupFilter` 39 checks, `transcriptMerge` 53), both tsc builds and the `sw.js` parse check pass; browser-checked at 320×640 (chip combinations; the Dictate replay through the real `transcriptionService`).
 - **Pending:**
-  - ~~an independent personal-data review of the repo~~ **Done (independent verifier, 2026-10-14):** the only finding, a fragment of the Google project number in the 2026-09-22 log entry, is redacted to `<client-id>`. The username appears only in the README live link (user-approved); no email, path, timezone hint or secret was found in the working tree; the screenshots carry no metadata. Old commits still carry the personal email and that fragment, which the history rewrite handles;
+  - ~~an independent personal-data review of the repo~~ **Done (independent verifier, 2026-10-14):** the only finding, a fragment of the Google project number in the 2026-09-22 log entry, is redacted to `<client-id>`. The username appears only in the README live link (user-approved); no email, path, timezone hint or secret was found in the working tree; the screenshots carry no metadata;
   - the user's phone checks: search on both screens (the keyboard opens from the 🔍 tap, ‹ › scrolling), the backups filter, Dictate in airplane mode, plus the 2026-10-09 checks. Round 2 adds: Dictate in airplane mode with "Dictation in airplane mode" (expect no "Dict" prefix repeat) and a longer two-sentence phrase (nothing dropped or repeated), and the backup chips on the phone (multi-select, wrapping, All);
-  - the user's Wiki setup: enable the Wiki, create its first page, restrict editing to collaborators, and check that `GITHUB_TOKEN` can push (else add `WIKI_TOKEN`);
-  - the history rewrite (the runbook is in the git-ignored `CLAUDE.local.md`; it is the last step);
+  - ~~the user's Wiki setup: enable the Wiki, create its first page, restrict editing to collaborators, and check that `GITHUB_TOKEN` can push (else add `WIKI_TOKEN`);~~ **Done (2026-10-14):** the guide is published on the Wiki by the workflow;
+  - ~~the history rewrite (the runbook is in the git-ignored `CLAUDE.local.md`; it is the last step);~~ **Done (user, 2026-10-14).** Claude then remapped the 61 short commit hashes quoted in this file, `docs/sessions/*.md` and the memory notes to the rewritten ones; every hash resolves to a commit. This is the second recorded exception to "session logs are immutable": only hashes changed. `CLAUDE.local.md` is deleted;
   - redeploying each Worker: `npx wrangler deploy` first, then straight away `npx wrangler secret put ALLOWED_ORIGIN` (a secret can't be set while the deployed plain var of the same name exists);
   - ~~the `public/` and `static/` leftovers (noted, not touched).~~ **Done (2026-10-14, round 2):** both removed; the icon generator writes to `icons/`.
 
 ## Session status (as of 2026-10-09) — superseded by 2026-10-14 above
-- **Implemented, reviewed and browser-checked; committed and pushed by the user** as `816dfe0` (the 2026-10-08 save-failure fix plus the 2026-10-09 features and grid fix) and `fd1e0d0` (Calendar time inline). Session log: `docs/sessions/2026-10-09-offline-gps-thumbs-badges.md`.
+- **Implemented, reviewed and browser-checked; committed and pushed by the user** as `cb2cb60` (the 2026-10-08 save-failure fix plus the 2026-10-09 features and grid fix) and `c93df63` (Calendar time inline). Session log: `docs/sessions/2026-10-09-offline-gps-thumbs-badges.md`.
   - `tsc` (app + SW) exits 0; the SW classic-script parse check passes.
   - All 15 chartests and the timezone proptest pass; all 49 ASSETS paths exist.
 - **Browser-checked at 320×640 (Claude):**
@@ -442,7 +479,7 @@ Context (Claude): the repo was already public but unpublicised. The user asked f
 - **Open items:** the badge copy is Claude-proposed; plus the 2026-10-06 items (merge known limits; the unsupported-format copy; P2 KIV; P3 KIV; the sync race window; the `appProperties` per-key merge).
 
 ## Session status (as of 2026-10-08) — superseded by 2026-10-09 above
-- **Implemented, reviewed and browser-checked; not committed.** The 2026-10-06 work is committed as `19ad87b`.
+- **Implemented, reviewed and browser-checked; not committed.** The 2026-10-06 work is committed as `88a2563`.
   - `tsc` (app + SW) exits 0; the SW classic-script parse check passes.
   - All 12 chartests and the timezone proptest pass.
 - **Browser-checked at 320×640 (Claude):**
@@ -457,7 +494,7 @@ Context (Claude): the repo was already public but unpublicised. The user asked f
 - **Open items:** unchanged from 2026-10-06 (merge known limits; the unsupported-format copy; P2 KIV; P3 KIV; the sync race window; the `appProperties` per-key merge).
 
 ## Session status (as of 2026-10-06) — superseded by 2026-10-08 above
-- **Implemented, reviewed and browser-checked; not committed.** The 2026-10-05 work is committed (`304a492`, `e3110c7`).
+- **Implemented, reviewed and browser-checked; not committed.** The 2026-10-05 work is committed (`7e68960`, `f819896`).
   - `tsc` (app + SW) exits 0.
   - All 11 chartests and the timezone proptest pass; the SW classic-script parse check passes.
   - SW ASSETS has 44 entries, all present.
@@ -481,8 +518,8 @@ Context (Claude): the repo was already public but unpublicised. The user asked f
   - The sync race window: accepted. `appProperties` per-key merge: unconfirmed.
 
 ## Session status (as of 2026-10-05) — superseded by 2026-10-06 above
-- **Round 2 (service worker fix, see the round-2 section above):** implemented, reviewed and verified in headless Edge. Committed and pushed by the user as **`e3110c7`**. It changes `sw.ts` (no `export`, `SW_WAITING` only on an update, no query-string caching) and `.github/workflows/deploy.yml` (classic-script parse guard); design.md and README are updated.
-- **Round 1:** implemented, reviewed and browser-checked. Committed and pushed by the user as **`304a492`**, together with the 2026-10-04 end-handoff log and the "🎲 Another random knot" label.
+- **Round 2 (service worker fix, see the round-2 section above):** implemented, reviewed and verified in headless Edge. Committed and pushed by the user as **`f819896`**. It changes `sw.ts` (no `export`, `SW_WAITING` only on an update, no query-string caching) and `.github/workflows/deploy.yml` (classic-script parse guard); design.md and README are updated.
+- **Round 1:** implemented, reviewed and browser-checked. Committed and pushed by the user as **`7e68960`**, together with the 2026-10-04 end-handoff log and the "🎲 Another random knot" label.
   - `tsc` (app + SW) exits 0.
   - All 10 chartests pass: dayCutoff, deviceLabel, knotDiff, knotSummary, locateFailure (12), mediaImport (23), mergeMessage, randomKnot, router, syncPlan. The timezone proptest passes.
   - SW ASSETS has 43 entries, all present.
@@ -512,7 +549,7 @@ Context (Claude): the repo was already public but unpublicised. The user asked f
   - `src/screens/knotDetailScreen.ts` has an uncommitted change made by neither agent ("Another random knot" → "🎲 Another random knot"). Both agents confirmed they didn't touch the file. The change is unexplained and was left as is; the user was asked whether it's theirs.
 
 ## Session status (as of 2026-10-04) — superseded by 2026-10-05 above
-- Implemented, reviewed and browser-checked. Committed by the user as **`5690324`**; the 2026-10-03 log repair and the 2026-10-03 session log were committed with it.
+- Implemented, reviewed and browser-checked. Committed by the user as **`8fdd3f6`**; the 2026-10-03 log repair and the 2026-10-03 session log were committed with it.
   - `tsc` (app + SW) exits 0.
   - All 9 chartests pass: dayCutoff, deviceLabel, knotDiff, knotSummary, locateFailure (12), mergeMessage, randomKnot (16), router (24), syncPlan. The timezone proptest passes.
   - SW ASSETS has 42 entries, none missing.
@@ -539,7 +576,7 @@ Context (Claude): the repo was already public but unpublicised. The user asked f
   - The `appProperties` per-key merge is unconfirmed on a device.
 
 ## Session status (as of 2026-10-03) — superseded by 2026-10-04 above
-- All 2026-10-03 items (both rounds) are implemented and reviewed, and the user committed them as **`4c70b9a`**. The only uncommitted change is the end-of-session repair of this file's log ordering, plus the final session log.
+- All 2026-10-03 items (both rounds) are implemented and reviewed, and the user committed them as **`39b05a2`**. The only uncommitted change is the end-of-session repair of this file's log ordering, plus the final session log.
   - `tsc` (app + SW) exits 0.
   - All 7 chartests pass (syncPlan has 7 new `remoteChangedSinceBase` cases), plus the timezone proptest.
   - Every SW ASSETS path exists (40 entries).
@@ -551,7 +588,7 @@ Context (Claude): the repo was already public but unpublicised. The user asked f
   - `/?error=access_denied#/knots` shows the toast, and the URL is cleaned to `/#/knots`.
   - The conflict screen wasn't stubbed this time. Its header reuses `.knot-detail-header`, and `.conflict-actions` is already a column.
 - **Round 2:** also implemented and browser-checked at 320×640 in dark mode: the toast tap, the 5 s notice, the pill, the nav state, the "+" ring and location retry. `tsc` and all tests pass (router chartest has 8 new cases).
-- **Committed** as `4c70b9a` by the user.
+- **Committed** as `39b05a2` by the user.
 - **Pending verification (user, on a phone):** the "+" ring on Capture; the checked-off pill; location retry after switching Location off and then on; tapping a toast to dismiss it.
 - **Pending verification (user, real Google account, two or more devices):** the 2026-09-29 list below still applies, and two checks are new:
   - Cancelling the Google consent screen on the deployed site shows "Google Drive connection cancelled" and returns to a clean URL.
@@ -846,13 +883,21 @@ Context (Claude): the repo was already public but unpublicised. The user asked f
 - **A fork with a stored token and Drive off:** `getConnectionStatus()` reads `disconnected` (the `storedToken()` gate), no backup badges show, and there is no sync, upload or OAuth handling. Browser-checked.
 - **Wiki not initialised:** the workflow prints a notice and exits 0. Manual test (first run).
 - **Testing-status Google consent screen:** refresh tokens expire after 7 days, so "session expired — please reconnect" appears weekly. Documented; not code.
-- **Running `node scripts/generate-icons.js` now writes into the live `icons/` folder:** today it reproduces the same bytes (`git status` stays clean). If real artwork ever replaces the placeholder PNGs, running the generator would overwrite it; `favicon.svg` and `.gitkeep` are never touched. Verified by running it and checking `git status`.
+- ~~**Running `node scripts/generate-icons.js` now writes into the live `icons/` folder:**~~ **Superseded 2026-10-15:** the generator is deleted, so nothing can overwrite the rendered icons. Old text: today it reproduces the same bytes (`git status` stays clean). If real artwork ever replaces the placeholder PNGs, running the generator would overwrite it; `favicon.svg` and `.gitkeep` are never touched. Verified by running it and checking `git status`.
 - **Backup chips, every combination:** All (no chip) shows everything, including old-format backups; "Checked off" alone narrows to checked-off backups; "Backup only" alone and "On device" alone select by place; "Backup only" + "On device" (without Checked off) gives every knot backup (OR); "Checked off" + a place chip gives the checked-off backups in that place (AND); tapping All clears every chip. Covered by `backupFilter.chartest.ts` (39 checks); browser-checked at 320×640 (Checked off → 2 rows; + Backup only → 1; Checked off + On device → 1; both place chips → every knot backup; All restores all).
 - **Old-format backups once any chip is on:** hidden; they appear only under All. Covered by `backupFilter.chartest.ts`.
 - **A half-word final piece within one instance** (the on-device recogniser delivering "Dict", "Dictation", "Dictation in aeroplane mode"): the earlier pieces are dropped and the text is "Dictation in aeroplane mode". Covered by `transcriptMerge.chartest.ts` (53 cases); replayed through the real `transcriptionService` with a fake SpeechRecognition in the browser.
 - **"I" + "Ice cream" in one instance:** not collapsed, because `charPrefix` needs at least 2 characters. Covered by `transcriptMerge.chartest.ts`.
 - **Known limit (within one instance):** `appendSegment("Yes", "Yesterday I went")` keeps only "Yesterday I went", because "yes" is a character prefix of "yesterday". Accepted; pinned in `transcriptMerge.chartest.ts`.
 - **Known limit (across a restart):** a partial word left at the end of one instance repeats once: `foldSegment("Dict", "Dictation…")` gives "Dict Dictation…". Accepted (the rule is deliberately not in `foldSegment`); pinned in `transcriptMerge.chartest.ts`. "Yes" + pause + "Yesterday I went" keeps both, and "Buy a car" + "Carpet cleaning" keeps "car".
+
+### Edge cases added 2026-10-15 (app icon)
+- **Already-installed Android app:** the home-screen icon changes only when Chrome next refreshes the WebAPK from the changed manifest icons, which can take a day or more. Uninstalling and reinstalling the app is immediate. Pending a phone check.
+- **iOS home-screen icon:** it is copied when the app is added to the home screen, so iOS users must remove the app and add it again. Manual test only.
+- **Old cached icons:** a deploy bumps `CACHE_NAME`, so the new install precaches the new PNGs and the activate step deletes the old cache.
+- **Browsers without SVG favicons:** they use `favicon-32.png` (the first `rel="icon"` link, with `sizes="32x32"`).
+- **Stitched hem at 16 px:** it blurs into a soft edge. The user accepted this ("one drawing everywhere").
+- **Android maskable crop (circle, squircle, rounded square):** the mark sits inside the 40 % safe-zone circle, so no shape cuts it.
 
 ## Refactoring Standard Operating Procedure (SOP)
 When instructed to refactor code, adopt the role of a principal software engineer and execute in four strict phases:

@@ -1,7 +1,7 @@
 # 2026-10-05 — location-m4a-mic-notif
 
 ## 0. Continuation brief
-**Current state:** all of this session's items are implemented, reviewed and browser-checked, but **not committed**. `main` is still at `5690324`. The items are:
+**Current state:** all of this session's items are implemented, reviewed and browser-checked, but **not committed**. `main` is still at `8fdd3f6`. The items are:
 - the location message fallback;
 - the Manage-backups explanation moved under its button;
 - m4a import through Library (playable and transcribable);
@@ -17,7 +17,7 @@ The decision and edge-case log is in `CLAUDE.md` › "2026-10-05". The status is
 **Resume command/check:** `git status --short && git log --oneline -3`, then `CLAUDE.md` › "Session status (as of 2026-10-05)".
 
 ## 1. Work completed
-- **Location:** `classifyLocateFailure` returns `off` only for code 1 + `granted`. Everything else returns `unavailable`, because Android folds a blocked site, device Location off, and Chrome lacking Android permission into `denied`. Claude confirmed the deployed `src/locateFailure.js` was the `5690324` code, so the phone report reflects the classifier, not stale code.
+- **Location:** `classifyLocateFailure` returns `off` only for code 1 + `granted`. Everything else returns `unavailable`, because Android folds a blocked site, device Location off, and Chrome lacking Android permission into `denied`. Claude confirmed the deployed `src/locateFailure.js` was the `8fdd3f6` code, so the phone report reflects the classifier, not stale code.
 - **Settings › Cloud Backup:** the delete explanation now sits directly under "Manage backups", with the Manage backups paragraph first.
 - **m4a:**
   - The new pure `src/mediaImport.ts` `classifyImport`: an `.m4a` name always means audio, stored as `audio/mp4`. It has 23 chartest cases.
@@ -60,7 +60,7 @@ The decision and edge-case log is in `CLAUDE.md` › "2026-10-05". The status is
 ## 4. Live handoff state
 | Type | Handle / location | State | Inspect / resume | Stop / cleanup |
 | --- | --- | --- | --- | --- |
-| branch | `main` @ `5690324` | dirty (see §10) | `git status --short` | the user commits |
+| branch | `main` @ `8fdd3f6` | dirty (see §10) | `git status --short` | the user commits |
 | process | scratchpad `serve.js` on 127.0.0.1:8765 | stopped | none | none |
 | data | browser-pane IndexedDB `e-handkerchief-db` @127.0.0.1:8765 | deleted | none | none |
 
@@ -102,7 +102,7 @@ The decision and edge-case log is in `CLAUDE.md` › "2026-10-05". The status is
 - **Not from this session's agents** (both confirmed): `src/screens/knotDetailScreen.ts` ("🎲 Another random knot"). It's unexplained, left as is, and the user was asked. Also the uncommitted `docs/sessions/2026-10-04-end-handoff.md`.
 
 ## 11. Round 2 — service worker fix
-- **Root cause (verified):** `sw.ts` had `export {};` since the initial commit `edf2e59`, so `sw.js` ended with `export {};`. `app.ts` registers it as a classic script, so evaluation threw a SyntaxError and **no service worker has ever run** (no notification, offline precache, update toast, notification tap, or Background Sync message). `serviceWorker.ready` never resolved, hence "Couldn't show the notification (service worker not ready)" on the phone.
+- **Root cause (verified):** `sw.ts` had `export {};` since the initial commit `e4ffbbc`, so `sw.js` ended with `export {};`. `app.ts` registers it as a classic script, so evaluation threw a SyntaxError and **no service worker has ever run** (no notification, offline precache, update toast, notification tap, or Background Sync message). `serviceWorker.ready` never resolved, hence "Couldn't show the notification (service worker not ready)" on the phone.
 - **Changes:** `sw.ts` drops `export {};` (comment: must stay a classic script); `SW_WAITING` is posted only when `sw.registration.active` exists (update, not first install); `networkFirst` skips `cache.put` for URLs with a query string (keeps the OAuth `?code=` out of Cache Storage); `.github/workflows/deploy.yml` parses `sw.js` with `new Function` after injection and fails on error. design.md (Service Worker section) and README (dev note) are updated; `CLAUDE.md` has the round-2 decision section, edge cases and status.
 - **Verification:** `tsc` app + SW exit 0; the rebuilt `sw.js` parses and has no `export` (the old one gave `SyntaxError: Unexpected token 'export'`). Headless Edge over CDP, fresh profile, local server: registered, `ready` true, controller true, cache `e-hk-__BUILD_VERSION__` with 43 precached entries, `index.html?code=secret123` fetched through the SW left 0 query-string entries, no `SW_WAITING` on first install. The in-app browser pane cannot register any SW (environment limit), so use headless Edge for SW checks (script in the session scratchpad, not in the repo).
 - **Updated P0 next action:** after deploy, on the phone: open the app online once, fully close and reopen; the Settings notification line should be gone and "Tap to tie a knot" in the drawer; tap it to open Capture; then airplane mode → the app loads offline. If a reason still shows in Settings, report it. All earlier SW-dependent pending checks were never testable before this fix.

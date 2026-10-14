@@ -2,10 +2,10 @@
 
 ## 0. Continuation brief
 **Current state:** all of this session's work is committed and pushed:
-- **`304a492`** (round 1): location fallback, Manage-backups copy placement, m4a import, Mic processing off, notification failure line. It also carries the 2026-10-04 end-handoff log and the "🎲 Another random knot" label.
-- **`e3110c7`** (round 2): the service worker had never registered, because of a stray `export {}`. It is now fixed, with a CI guard.
+- **`7e68960`** (round 1): location fallback, Manage-backups copy placement, m4a import, Mic processing off, notification failure line. It also carries the 2026-10-04 end-handoff log and the "🎲 Another random knot" label.
+- **`f819896`** (round 2): the service worker had never registered, because of a stray `export {}`. It is now fixed, with a CI guard.
 
-GitHub Pages serves the round-2 `sw.js` (build `e3110c73-29`, no `export` line), so the CI parse guard passed. The only change after the commits is this log plus the `CLAUDE.md` session-status line that records the commit hashes.
+GitHub Pages serves the round-2 `sw.js` (build `f819896b-29`, no `export` line), so the CI parse guard passed. The only change after the commits is this log plus the `CLAUDE.md` session-status line that records the commit hashes.
 
 For the full session, read `2026-10-05-location-m4a-mic-notif.md` (rounds 1 and 2) and this log.
 
@@ -15,7 +15,7 @@ For the full session, read `2026-10-05-location-m4a-mic-notif.md` (rounds 1 and 
 
 ## 1. Work completed
 - Since the round-1 log: the round-2 root cause and fix, recorded in that log's §11 and in `CLAUDE.md` › "2026-10-05 (round 2)".
-- End reconcile: the `CLAUDE.md` 2026-10-05 status now names `304a492` and `e3110c7` as committed and pushed. Before, it said "not committed".
+- End reconcile: the `CLAUDE.md` 2026-10-05 status now names `7e68960` and `f819896` as committed and pushed. Before, it said "not committed".
 
 ## 2. Decisions
 | Decision | Verdict | Why |
@@ -34,14 +34,14 @@ For the full session, read `2026-10-05-location-m4a-mic-notif.md` (rounds 1 and 
 | `node -e "new Function(require('fs').readFileSync('sw.js','utf8'))"` | exit 0 (the old file failed: `SyntaxError: Unexpected token 'export'`) | `sw.js` runs as a classic script. |
 | All 10 chartests + the timezone proptest | 0 failures | No regressions. |
 | Headless Edge (CDP), fresh profile | registered, ready, controller set, 43 precached, 0 query URLs cached, no `SW_WAITING` on first install | The SW works end to end locally. |
-| The deployed `https://<owner>.github.io/e-handkerchief/sw.js` | build `e3110c73-29`, no `export {}` | The fix is live and the CI guard passed. |
+| The deployed `https://<owner>.github.io/e-handkerchief/sw.js` | build `f819896b-29`, no `export {}` | The fix is live and the CI guard passed. |
 | `drift-check.ps1 .` | `0 dead / 0 refs` | No dead doc references. |
 
 ## 4. Live handoff state
 | Type | Handle / location | State | Inspect / resume | Stop / cleanup |
 | --- | --- | --- | --- | --- |
-| branch | `main` @ `e3110c7`, even with `origin/main` | clean except this log and `CLAUDE.md` | `git status -sb` | the user commits |
-| deployment | GitHub Pages `<owner>.github.io/e-handkerchief` | serving build `e3110c73-29` | fetch `sw.js` and read `BUILD_VERSION` | none |
+| branch | `main` @ `f819896`, even with `origin/main` | clean except this log and `CLAUDE.md` | `git status -sb` | the user commits |
+| deployment | GitHub Pages `<owner>.github.io/e-handkerchief` | serving build `f819896b-29` | fetch `sw.js` and read `BUILD_VERSION` | none |
 | port | 127.0.0.1:8765 (scratchpad `serve.js`) | free (stopped) | none | none |
 | port | 9333 (headless Edge CDP) | free (no process) | none | none |
 | artifact | scratchpad `edge-profile*` directories | partly left (locked cache files) | scratchpad only | disposable, deleted with the scratchpad |
@@ -67,7 +67,7 @@ None since the round-1 log. The SW (`Loc`: service worker; `Trn`: precache, netw
 ## 8. Docs reconciled
 | Doc | Change |
 | --- | --- |
-| `CLAUDE.md` | 2026-10-05 Session status: both rounds marked committed and pushed (`304a492`, `e3110c7`). |
+| `CLAUDE.md` | 2026-10-05 Session status: both rounds marked committed and pushed (`7e68960`, `f819896`). |
 
 ## 9. Drift check
 `drift-check.ps1 .` → `0 dead / 0 refs`. Graph refresh skipped: there is no `graphify-out/` (P3 KIV). gbrain: the round-1/2 log is indexed as `inbox/2026-10-05-d35c989e` and this log as `inbox/2026-10-05-76afd144`. This log was captured before this line was added.

@@ -83,8 +83,8 @@ e-handkerchief/
 ├── config.js                   # Deploy-time config (Google client ID, broker URL, Drive on/off)
 ├── sw.ts / sw.js               # Service worker (sw.js is compiled)
 ├── tsconfig.json               # Compiles src/**/*.ts (tsconfig.sw.json compiles sw.ts)
-├── icons/                      # PWA icons
-├── scripts/                    # Icon generator and the test runner (npm test)
+├── icons/                      # App icon and favicon (SVG sources + rendered PNGs)
+├── scripts/                    # The test runner (npm test)
 ├── src/
 │   ├── app.ts                  # Entry point
 │   ├── components/             # Shared UI: media capture, search row, timezone picker

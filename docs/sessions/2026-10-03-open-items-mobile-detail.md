@@ -1,7 +1,7 @@
 # 2026-10-03 — open-items-mobile-detail
 
 ## 0. Continuation brief
-**Current state:** every non-P3 open item from the 2026-09-29 log is done, plus two rounds of user requests on the knot page, the nav bar, Capture location and toasts. The user committed all code and docs as **`4c70b9a`** on `main`.
+**Current state:** every non-P3 open item from the 2026-09-29 log is done, plus two rounds of user requests on the knot page, the nav bar, Capture location and toasts. The user committed all code and docs as **`39b05a2`** on `main`.
 
 The only uncommitted changes are a repair to the `CLAUDE.md` decision-log ordering (an earlier edit had cut off the round-1 email-digest line and spliced the round-2 section into round 1) and this final log.
 
@@ -83,7 +83,7 @@ Testing gotcha: the in-app browser pane, when hidden, freezes CSS transitions, s
 ## 4. Live handoff state
 | Type | Handle / location | State | Inspect / resume | Stop / cleanup |
 | --- | --- | --- | --- | --- |
-| branch | `main` @ `4c70b9a` | dirty: `CLAUDE.md` (log repair) + this log | `git status --short` | the user commits |
+| branch | `main` @ `39b05a2` | dirty: `CLAUDE.md` (log repair) + this log | `git status --short` | the user commits |
 | process | scratchpad `serve.js` on 127.0.0.1:8765 | stopped | none | none |
 | data | browser-pane IndexedDB `e-handkerchief-db` and SW registration @127.0.0.1:8765 | deleted / unregistered | none | none |
 | artifact | scratchpad `serve.js` (session temp dir) | throwaway | none | disposable |
@@ -131,7 +131,7 @@ Testing gotcha: the in-app browser pane, when hidden, freezes CSS transitions, s
 `drift-check.ps1 .` → `0 dead / 0 refs`. There is no `docs/` architecture tree, so there are no IMPLEMENTATION.md rows to verify. Graph refresh skipped: this repo has no `graphify-out/` (P3, not requested). gbrain isn't installed, so this log is not indexed across repos.
 
 ## 10. Files changed
-- **In `4c70b9a`:**
+- **In `39b05a2`:**
   - `.github/workflows/deploy.yml`, `app.css`, `sw.ts`;
   - `src/{app,cloudSyncService,geoService,router,router.chartest,syncPlan,syncPlan.chartest,toastService,transcriptionService}.ts`;
   - `src/screens/{captureScreen,knotDetailScreen,settingsScreen}.ts`;

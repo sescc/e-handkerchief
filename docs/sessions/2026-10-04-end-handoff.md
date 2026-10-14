@@ -1,14 +1,14 @@
 # 2026-10-04 — end-handoff
 
 ## 0. Continuation brief
-**Current state:** all 2026-10-04 work is committed as **`5690324`** on `main`, and the tree is clean. This log adds only what happened after `2026-10-04-toggle-location-random.md` was committed; read that log for the full session.
+**Current state:** all 2026-10-04 work is committed as **`8fdd3f6`** on `main`, and the tree is clean. This log adds only what happened after `2026-10-04-toggle-location-random.md` was committed; read that log for the full session.
 
 **Next step:** the P0 phone checks (see §6).
 
 **Resume command/check:** `git status --short && git log --oneline -3`, then `CLAUDE.md` › "Session status (as of 2026-10-04)".
 
 ## 1. Work completed
-- The end-of-session reconcile: the `CLAUDE.md` 2026-10-04 status now says the work is committed as `5690324` (the suggested-commit-message bullet is removed).
+- The end-of-session reconcile: the `CLAUDE.md` 2026-10-04 status now says the work is committed as `8fdd3f6` (the suggested-commit-message bullet is removed).
 - The commit-message decision is logged in `CLAUDE.md` › "2026-10-04" and written into the global `~/.claude/CLAUDE.md`.
 
 ## 2. Decisions
@@ -20,12 +20,12 @@
 | Check | Result | What it proved |
 | --- | --- | --- |
 | `drift-check.ps1 .` | `0 dead / 0 refs` | No dead doc references. |
-| `git status --short` | clean (before this reconcile) | Everything was committed as `5690324`. |
+| `git status --short` | clean (before this reconcile) | Everything was committed as `8fdd3f6`. |
 
 ## 4. Live handoff state
 | Type | Handle / location | State | Inspect / resume | Stop / cleanup |
 | --- | --- | --- | --- | --- |
-| branch | `main` @ `5690324` | clean except for this log and `CLAUDE.md` | `git status --short` | the user commits |
+| branch | `main` @ `8fdd3f6` | clean except for this log and `CLAUDE.md` | `git status --short` | the user commits |
 | port | 127.0.0.1:8765 | free (the server is stopped) | none | none |
 
 There is no other live state.
@@ -47,7 +47,7 @@ There is no other live state.
 ## 8. Docs reconciled
 | Doc | Change |
 | --- | --- |
-| `CLAUDE.md` | The 2026-10-04 status is now committed (`5690324`); the commit-message decision is added. |
+| `CLAUDE.md` | The 2026-10-04 status is now committed (`8fdd3f6`); the commit-message decision is added. |
 | `~/.claude/CLAUDE.md` (global, outside the repo) | The commit-message rule. |
 
 ## 9. Drift check

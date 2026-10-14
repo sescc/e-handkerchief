@@ -1,7 +1,7 @@
 # 2026-10-04 — toggle-location-random
 
 ## 0. Continuation brief
-**Current state:** the Settings toggle overflow is fixed, Capture now tells "Location is off" apart from "blocked for this site", the Sharing setting has its new label and hint, the Random knot feature is in, the "Show N checked-off knots" toggle is at the top of the Knots list, and the dark-mode combobox highlight uses the shared token. All of it is implemented, reviewed and browser-checked at 320×640, but **not committed**. `main` is still at `4c70b9a`.
+**Current state:** the Settings toggle overflow is fixed, Capture now tells "Location is off" apart from "blocked for this site", the Sharing setting has its new label and hint, the Random knot feature is in, the "Show N checked-off knots" toggle is at the top of the Knots list, and the dark-mode combobox highlight uses the shared token. All of it is implemented, reviewed and browser-checked at 320×640, but **not committed**. `main` is still at `39b05a2`.
 
 The working tree also still holds the staged 2026-10-03 `CLAUDE.md` log repair and the 2026-10-03 session log, which the user hadn't committed yet.
 
@@ -71,7 +71,7 @@ The decision and edge-case log is in `CLAUDE.md` › "2026-10-04". The plan is `
 ## 4. Live handoff state
 | Type | Handle / location | State | Inspect / resume | Stop / cleanup |
 | --- | --- | --- | --- | --- |
-| branch | `main` @ `4c70b9a` | dirty: see §10 | `git status --short` | the user commits |
+| branch | `main` @ `39b05a2` | dirty: see §10 | `git status --short` | the user commits |
 | process | scratchpad `serve.js` on 127.0.0.1:8765 | stopped | none | none |
 | data | browser-pane IndexedDB `e-handkerchief-db` and SW registration @127.0.0.1:8765 | deleted / unregistered | none | none |
 

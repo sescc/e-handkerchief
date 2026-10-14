@@ -79,6 +79,10 @@ const ASSETS: string[] = [
   'icons/icon-192.png',
   'icons/icon-512.png',
   'icons/shortcut-capture.png',
+  'icons/favicon.svg',
+  'icons/favicon-32.png',
+  'icons/icon-maskable-512.png',
+  'icons/apple-touch-icon.png',
 ];
 
 // Full pathnames (including BASE) of every precached asset.

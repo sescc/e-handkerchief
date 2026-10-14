@@ -690,9 +690,10 @@ e-Handkerchief/
 │       └── settingsScreen.ts   # Settings screen render + logic
 ├── sw.ts                       # Service Worker source
 ├── config.js                   # Runtime config; Google client ID, OAuth broker URL and the Drive on/off flag injected at deploy
-├── icons/                      # PWA icons (192, 512, shortcut) and favicon
+├── icons/                      # SVG sources + PNGs rendered from them once: favicon.svg (tab icon, source of
+│                               # favicon-32 / icon-192 / icon-512), icon-maskable.svg → icon-maskable-512.png,
+│                               # apple-touch-icon.svg → apple-touch-icon.png (180), shortcut-capture.svg → .png (192)
 ├── scripts/
-│   ├── generate-icons.js       # Writes the placeholder PNG icons into icons/ (hand-written, not compiled)
 │   └── run-tests.js            # `npm test`: runs every compiled *.chartest.js / *.proptest.js with node
 ├── docs/
 │   ├── guide/                  # User and operator guide (source of the GitHub Wiki mirror)
@@ -722,7 +723,7 @@ tsc
 tsc -p tsconfig.sw.json
 ```
 
-`npm test` (`package.json`) runs `tsc && tsc -p tsconfig.sw.json && node scripts/run-tests.js`. `scripts/run-tests.js` (CommonJS, like `generate-icons.js`) finds every compiled `src/**/*.chartest.js` and `src/**/*.proptest.js` that still has a `.ts` sibling (compiled output is git-ignored, so stale files can linger), runs each with `node`, prints a summary and exits non-zero if any test fails or none are found. It currently runs 19 test files.
+`npm test` (`package.json`) runs `tsc && tsc -p tsconfig.sw.json && node scripts/run-tests.js`. `scripts/run-tests.js` (CommonJS) finds every compiled `src/**/*.chartest.js` and `src/**/*.proptest.js` that still has a `.ts` sibling (compiled output is git-ignored, so stale files can linger), runs each with `node`, prints a summary and exits non-zero if any test fails or none are found. It currently runs 19 test files.
 
 `tsc` reads `tsconfig.json`, compiles every `src/**/*.ts` source to a `.js` ES module in place. `sw.ts` is compiled separately via `tsconfig.sw.json`, because it needs the `WebWorker` lib (which conflicts with `DOM` in a single `tsconfig`) rather than `DOM`. Neither config bundles, tree-shakes, or requires an npm install step for end users. The output is deployable as static files served from any HTTP server.
 
@@ -1091,6 +1092,10 @@ const ASSETS: string[] = [
   'icons/icon-192.png',
   'icons/icon-512.png',
   'icons/shortcut-capture.png',
+  'icons/favicon.svg',
+  'icons/favicon-32.png',
+  'icons/icon-maskable-512.png',
+  'icons/apple-touch-icon.png',
 ];
 ```
 
@@ -1112,7 +1117,7 @@ const ASSETS: string[] = [
 
 **Update banner:** When a new SW installs while an old one is active (`sw.registration.active` is already set at install time), posts `{ type: "SW_WAITING" }` to all clients. The very first install has no active worker and posts nothing, so the banner never appears for the initial install. `app.ts` listens for this message and renders a "New version available — tap to reload" banner. Tapping it posts `{ type: "SKIP_WAITING" }` back to the SW, which calls `self.skipWaiting()`; then `app.ts` calls `location.reload()`.
 
-The list has 55 entries, including `knotSearch.js`, `searchState.js`, `backupFilter.js`, `driveBackup.js`, `components/searchRow.js` and `components/searchHighlight.js`. `ASSETS` must be kept in sync manually with the compiled JS file list (a small maintenance cost that replaces Workbox's build-time manifest injection).
+The list has 58 entries (including the 7 icon files), including `knotSearch.js`, `searchState.js`, `backupFilter.js`, `driveBackup.js`, `components/searchRow.js` and `components/searchHighlight.js`. `ASSETS` must be kept in sync manually with the compiled JS file list (a small maintenance cost that replaces Workbox's build-time manifest injection).
 
 ### ToastService (`src/toastService.ts`)
 
@@ -2016,7 +2021,7 @@ worker-src 'self';
 | **IndexedDB** | **Hand-written Promise wrappers (`db.ts`)** | Removes the `idb` library dependency. The wrapper covers all required operations. |
 | **Service Worker** | **Hand-written `sw.ts`** | No Workbox dependency; the precache list is small and static, making manual maintenance tractable. |
 | **CSS** | **Single `app.css` with custom properties** | Zero runtime, mobile-first media queries, dark mode via `prefers-color-scheme`. No preprocessor needed. Colour tokens include `--color-primary-soft`, a translucent green (light `rgba(45,122,79,0.15)`, dark `rgba(76,175,118,0.18)`) for the checked-off pill, check-off tick hover/focus, backup badges and the timezone combobox's highlighted option (so the highlight is correct in dark mode). |
-| **Icons / Illustrations** | **SVG sprites inlined at build** | No icon font dependencies; full control over contrast and sizing for accessibility. |
+| **Icons / Illustrations** | **Hand-drawn SVG app icons; emoji in the UI** | The app icon (a handkerchief with a stitched hem and a knot tied in one corner, white on `#2d7a4f`) lives as SVG sources in `icons/`; the PNGs the manifest, iOS and the 32 px fallback need were rendered from them once (headless browser) and are committed, with no build step or icon dependency. `favicon.svg` is the tab icon; the maskable icon keeps the mark inside the 40 % safe zone; the Capture shortcut adds a "+" badge. In-app glyphs (nav tabs, empty states) are emoji. |
 | **Reverse Geocoding** | **Nominatim (OpenStreetMap)** | Free, no API key required, HTTPS. Rate-limited to 1 req/s — acceptable for the app's usage pattern. |
 | **Testing** | **Framework-free `*.chartest.ts` / `*.proptest.ts`** | Plain TypeScript compiled by `tsc` and run with `node` (see *Correctness Properties and Testing*). No test runner dependency. Google Drive and Web Share behaviour are verified by hand in a browser. |
 
